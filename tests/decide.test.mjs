@@ -165,3 +165,33 @@ for (const [i, s] of WATCHDOG_SCENARIOS.entries()) {
       `\n   เหตุผล ${v.reason}`)
   })
 }
+
+// ── ตัวดึงเบอร์/LINE จากข้อความ ─────────────────────────────────────────────
+//    เพิ่มหลังเจอว่า extract_phone ไม่เคยทำงานเลยตั้งแต่ Phase 3
+//    (substring(text from pattern) คืนเฉพาะวงเล็บกลุ่มแรก ไม่ใช่ทั้งก้อน)
+//    29 ข้อข้างบนจับไม่ได้เพราะป้อน phone_in_text เข้า ctx ตรง ๆ ไม่ได้เดินผ่านตัวดึง
+const EXTRACT = [
+  ['ติดต่อกลับที่ 0812345678 นะคะ', '0812345678', 'เบอร์ปนอยู่กลางข้อความไทย'],
+  ['081-234-5678',                  '0812345678', 'มีขีดคั่น'],
+  ['โทร +66 81 2345678',            '0812345678', 'รูปแบบสากล +66'],
+  ['0912345678',                    '0912345678', 'ขึ้นต้น 09'],
+  ['0612345678',                    '0612345678', 'ขึ้นต้น 06'],
+  ['ราคาเท่าไหร่คะ',                 null,         'ไม่มีเบอร์'],
+  ['021234567',                     null,         'เบอร์บ้าน ไม่ใช่มือถือ'],
+  ['08123456',                      null,         'สั้นเกินไป'],
+]
+
+for (const [text, want, name] of EXTRACT) {
+  test(`ดึงเบอร์: ${name}`, async () => {
+    const [got] = await sql(`select coalesce(inbox.extract_phone(${quote(text)}), '(null)');`)
+    assert.equal(got === '(null)' ? null : got, want, `จาก "${text}"`)
+  })
+}
+
+test('ดึง LINE id จากข้อความ', async () => {
+  for (const [text, want] of [['line: somchai123', 'somchai123'], ['ไลน์ @asherdev', 'asherdev'],
+                              ['ราคาเท่าไหร่', null]]) {
+    const [got] = await sql(`select coalesce(inbox.extract_line_id(${quote(text)}), '(null)');`)
+    assert.equal(got === '(null)' ? null : got, want, `จาก "${text}"`)
+  }
+})
