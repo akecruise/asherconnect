@@ -334,6 +334,24 @@ test('ตัดท่อนที่ขึ้นบรรทัดใหม่ �
   assert.equal(cut.join(''), long)
 })
 
+test('reply_stats ให้ตัวเลขเดียวกับที่นับใหม่ (ชื่อฟังก์ชันเดิมของ cloud)', async () => {
+  // Phase 8 ย้ายชื่อนี้เข้ามาเพื่อให้คนที่คุ้นกับ cron ของ cloud หาเจอ
+  // ข้างในเรียก reply_episodes ตัวเดียวกัน จะได้ไม่มีนิยาม "หนึ่งรอบ" สองชุดในระบบ
+  const rows = await sql(`select responder, first_responses from inbox.reply_stats(
+    '${DAY}T00:00:00+07'::timestamptz, '${DAY}T00:00:00+07'::timestamptz + interval '1 day')
+    where responder <> 'bot' order by responder`)
+  const got = Object.fromEntries(rows.map(r => [r[0], Number(r[1])]))
+  const want = Object.fromEntries(fromJs.people.map(p => [p.responder, p.first_responses]))
+  assert.deepEqual(got, want)
+})
+
+test('build_reply_report_daily เขียนลงตารางเดียวกับ refresh_sales_staff_kpi_daily', async () => {
+  await sql(`delete from inbox.sales_staff_kpi_daily where report_date='${DAY}'`)
+  await sql(`select inbox.build_reply_report_daily('${DAY}')`)
+  const n = Number(await one(`select count(*) from inbox.sales_staff_kpi_daily where report_date='${DAY}'`))
+  assert.equal(n > 0, true, 'ชื่อเดิมของ cloud ต้องเขียนลงตารางของเราได้จริง')
+})
+
 test('เก็บกวาดฉากทดสอบ', async () => {
   await teardown()
   assert.equal(Number(await one(`select count(*) from inbox.inbox where name like '%${TAG}%'`)), 0)

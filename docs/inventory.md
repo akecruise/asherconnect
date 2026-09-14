@@ -295,3 +295,118 @@ PLAN ไม่ได้พูดถึงการ migrate ข้อมูลเ
 ## 7. สิ่งที่ยังไม่ได้ทำในเฟสนี้ (ตามที่ PLAN สั่ง)
 
 ไม่มีการแก้ไฟล์ใด ๆ นอกจากไฟล์นี้ · ไม่มี migration · ไม่แตะฐานข้อมูล (อ่านอย่างเดียว)
+
+---
+
+# Phase 8 — cron และ SQL function ที่หลุดจากสาม edge function หลัก
+
+อัปเดต 2026-09-14
+
+## 8.1 ไฟล์อ้างอิงที่ PLAN สั่งให้อ่าน
+
+| PLAN เรียกว่า | สถานะ | ใช้อะไรแทน |
+|---|---|---|
+| `reference/cloud-cron.sql` | **ไม่มี** (ค้น `reference/`, Downloads, Desktop, Documents) | `Downloads/01_schedule_and_report.sql` + `schedule.sql` ใน `asher-daily-report.zip` — มี cron ของจริงสี่ตัวพร้อมค่า UTC |
+| `reference/cloud-functions.sql` | **ไม่มี** | ไฟล์เดียวกันข้างบน มี `reply_stats` · `build_reply_report_daily/weekly/monthly` |
+
+ที่ยังขาดจริง ๆ คือโค้ดของ `build_turn_quality`, `cqx-realtime`, `report-cron`
+และบรรทัด cron ของ `asher-staff-kpi-refresh` · `turn_quality` · `cqx_realtime` · `asher-reply-digest`
+
+## 8.2 ทะเบียน cron ของ cloud เทียบกับที่นี่
+
+| งานบน cloud | เวลา (UTC) | ที่มาของค่า | สถานะที่นี่ |
+|---|---|---|---|
+| `asher-report-daily` | `10 17 * * *` | `01_schedule_and_report.sql` | ✔ ย้ายแล้ว → `inbox.build_reply_report_daily()` |
+| `asher-report-weekly` | `20 17 * * 0` | ไฟล์เดียวกัน | ⏸ รออนุมัติ ต้องสร้างตารางใหม่ |
+| `asher-report-monthly` | `30 17 * * *` | ไฟล์เดียวกัน | ⏸ รออนุมัติ ต้องสร้างตารางใหม่ |
+| `daily-report-2000` | `0 13 * * *` | `asher-daily-report.zip/schedule.sql` | ⏸ ยังไม่ port (ดู 8.4) |
+| `asher-reply-queue` | `* * * * *` | ไฟล์เดียวกัน | ❌ **ไม่สร้าง** — ของเดิมไม่เคยทำงาน ดู 8.3 |
+| `asher-bot-reply-worker` | ทุกนาที | PLAN | ✔ ไม่ต้องมี cron — `worker()` ใน `server.mjs` เดินเองทุก 3 วินาที |
+| `asher-reply-digest` | 09:00 ไทย (ไม่มีบรรทัดจริง) | PLAN | ✔ มีที่นี่ชื่อ `asher-daily-report` `0 2 * * *` |
+| `asher-staff-kpi-refresh` | **ไม่ทราบ** | — | ✔ ฟังก์ชันมีแล้ว (`refresh_sales_staff_kpi_daily`) แต่ยังไม่ตั้ง cron แยก เพราะ `asher-report-daily` เรียกให้อยู่แล้ว |
+| `turn_quality` | **ไม่ทราบ** | — | ❌ ไม่มีทั้งโค้ดและตาราง |
+| `cqx_realtime` | ทุก 5 นาที (ไม่มีบรรทัดจริง) | PLAN | ⏸ ดู 8.4 |
+
+**ที่นี่มีสามงาน ทั้งหมดเป็น SQL ล้วน ไม่มี `net.http_post` สักตัว**
+
+```
+asher-report-daily   10 17 * * *   select inbox.build_reply_report_daily()
+asher-daily-report    0 2 * * *    select inbox.enqueue_daily_report()
+asher-watchdog        * * * * *    select inbox.watchdog(now())
+```
+
+งานที่ต้องส่งข้อความออกจะ **หย่อนงานลงคิวขาออก** เท่านั้น แล้ว worker เป็นคนส่ง
+ของเดิมยิง HTTP กลับไปหา edge function ซึ่งแปลว่า "cron สำเร็จ" หมายถึงแค่คำขอถูกส่งออกไป
+ไม่ได้แปลว่าทีมได้รับข้อความ — และถ้า edge function ล่ม จะไม่มีใครรู้จนกว่าจะมีคนสังเกตว่ารายงานหาย
+
+## 8.3 `asher-reply-queue` ไม่เคยทำงานมาก่อน
+
+บรรทัดจริงใน `01_schedule_and_report.sql`
+
+```sql
+select cron.schedule('asher-reply-queue', '* * * * *', $$
+  select net.http_post(
+    url := 'https://hzwstpbipxqypzymzuse.supabase.co/functions/v1/<FUNCTION_NAME>',
+    headers := jsonb_build_object('content-type','application/json',
+                                  'x-internal-secret', '<INTERNAL_SECRET>'),
+    ...
+```
+
+`<FUNCTION_NAME>` กับ `<INTERNAL_SECRET>` เป็น placeholder ที่ไม่เคยถูกแทนค่า
+งานนี้จึงยิงไปยัง URL ที่ไม่มีอยู่จริงทุกนาที **ตั้งแต่วันแรก**
+
+ผลที่ตามมา: `reply_queue` ฝั่ง LINE ไม่เคยมีตัว drain
+คิว "รอคน 30 นาทีแล้วบอทค่อยตอบ" ของ LINE จึงไม่เคยทำงาน — ข้อความที่เข้าคิวไว้ค้างอยู่เฉย ๆ
+(ฝั่ง FB รอดเพราะมี `asher-bot-reply-worker` อีกตัวที่ใส่ URL ถูก)
+
+**ห้ามพึ่งพฤติกรรมเดิมนี้ตอนเทียบผล** — ถ้าเห็นว่าฝั่ง local ตอบ LINE มากกว่า cloud
+นั่นคือของที่ถูกต้องแล้ว ไม่ใช่ความผิดปกติ worker ที่นี่ดูแลทั้งสองช่องทางด้วยตัวเดียวกัน
+
+## 8.4 สาม edge function ที่เหลือ — ทำอะไร และควรทำยังไงต่อ
+
+### `daily-report` — **มีโค้ดครบ**
+
+`Downloads/asher-daily-report.zip` (09-09) และ `Downloads/daily-report.ts` (08-26 รุ่นเก่ากว่า)
+มี `index.ts` (17 KB) · `metrics.ts` · `README.md` (15 KB) · `schedule.sql` · `test.mjs`
+
+ทำอะไร: สรุปสถิติ **ของวันนี้เท่าที่ผ่านมา** ส่งเข้ากลุ่ม Telegram ตอน 20:00 ไทย
+นับ "รอบรอ" แบบเดียวกับที่เราใช้ (ข้อความลูกค้าติดกันจนมีคำตอบแรก = 1 รอบ)
+เพิ่มจากของเรา: SLA 5 นาที · ค่ากลางและ P90 (nearest rank) · งานค้างสะสมจากทุกวัน · Lead ใหม่
+
+**ข้อเสนอ: รวมกับ Phase 7** ไม่ใช่ port แยก
+- ตัวคำนวณซ้ำกับ `inbox.reply_episodes` เกือบทั้งหมด ต่างกันที่เกณฑ์ SLA และ P90
+- ของเดิมโหลดได้ถึง `maxRows: 100000` แถวเข้า memory ซึ่งเป็นสิ่งที่ PLAN ห้ามไว้ชัดเจน
+- `CONFIG` ในไฟล์ยังเว้นว่างหลายช่อง (`customerId`, `agentId`, `channelColumn`, `pageId`)
+  แปลว่ามันไม่เคยถูกตั้งค่าให้ตรงกับ schema จริง — สถิติรายคนน่าจะยังไม่เคยทำงาน
+- สิ่งที่ควรหยิบมาจริง ๆ มีสามอย่าง: **SLA 5 นาที · P90 · งานค้างสะสมข้ามวัน**
+  เติมสามอย่างนี้เข้า `inbox.reply_report()` แล้วตั้ง cron `0 13 * * *` เพิ่มอีกใบ
+  โดยใช้ `inbox.enqueue_daily_report()` ตัวเดิม เพิ่มพารามิเตอร์ว่าเอาช่วง "วันนี้ถึงตอนนี้"
+
+### `cqx-realtime` — **ไม่มีโค้ด**
+
+มีแต่เอกสาร `CQX_รายงานฉบับเต็ม.md` (38 KB) ซึ่งเป็นรายงานวิเคราะห์คุณภาพการตอบแชท
+ไม่ใช่โค้ด — หัวข้อเช่น "ราคา 6 เวอร์ชัน" · "ข้อความแรกเป็นโบรชัวร์ ไม่ใช่คำตอบ" ·
+"Lead ที่ยกมือแล้วหาย" · "บอทกับคนไม่มีใครถือ thread"
+
+PLAN บอกว่ามันคือ "SLA alert จาก CQX" ทุก 5 นาที
+
+**ข้อเสนอ: เลิกใช้** — `inbox.watchdog()` ที่ทำไปแล้วใน Phase 3 ทำงานเดียวกัน
+(ไล่เคสที่ค้างเกินเวลาแล้วแจ้งทีม) และเดินทุกนาทีซึ่งถี่กว่าเดิม
+ถ้ามีอย่างอื่นที่ CQX ทำนอกเหนือจากนี้ ต้องขอโค้ดมาดูก่อนตัดสิน
+
+### `report-cron` — **ไม่มีโค้ด**
+
+PLAN บอกว่า `asher-reply-digest` 09:00 ยิงไปที่ตัวนี้ และตั้งข้อสังเกตว่าอาจเป็น
+`fbline_report_TG` ตัวเดียวกัน
+
+**ข้อเสนอ: น่าจะเลิกใช้** — ถ้ามันคือรายงาน 09:00 จริง เราทำไปแล้วใน Phase 7
+(`asher-daily-report` `0 2 * * *` = 09:00 ไทย) ที่คำนวณในฐานทั้งหมด
+แต่ยืนยันไม่ได้จนกว่าจะเห็นโค้ด เพราะชื่อไม่ตรงกับ `fbline_report_TG` ที่ PLAN อ้างถึงตรง ๆ
+
+## 8.5 ที่ต้องตัดสินใจก่อนไปต่อ
+
+1. **สร้าง `sales_staff_kpi_weekly` / `_monthly` ไหม** — ถ้าอนุมัติจะทำโครงเดียวกับรายวัน
+   แล้วต่อ cron `20 17 * * 0` กับ `30 17 * * *` ตามค่าเดิม (ไม่แปลงโซนเวลา)
+2. **`build_turn_quality` ขอโค้ด** — เดาไม่ได้ว่า "turn quality" วัดอะไร
+3. **`cqx-realtime` / `report-cron` ขอโค้ด** ถ้าอยากให้ประเมินมากกว่าที่เขียนไว้ข้างบน
+4. **`daily-report` 20:00** — เอาสามอย่าง (SLA 5 นาที · P90 · งานค้างสะสม) มารวมกับ Phase 7 ไหม
