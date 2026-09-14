@@ -1,6 +1,7 @@
 # ── ของลับ: ห้ามเข้า git เด็ดขาด ──────────────────────────────────────────
 # .env* ครอบทั้ง .env.local, .env.bak-* ที่เคยหลุดออกมาจากการทดลอง
 .env*
+!.env.example
 channels.json
 channels.json.*
 .secrets-archive/
