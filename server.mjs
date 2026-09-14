@@ -462,7 +462,19 @@ async function inboundWorker() {
  * ขาออกเงียบในโหมดเงาคือเรื่องปกติ แต่ขาเข้าเงียบแปลว่าข้อความลูกค้าค้างอยู่ในคิวไม่ถูกแตะ
  * ซึ่งไม่ปกติไม่ว่าโหมดไหน
  */
+// เพดาน heap ของ V8 คือ 160 MB (ตั้งใน Dockerfile) เตือนตั้งแต่ 140
+// เพื่อให้เห็นก่อนที่มันจะเริ่มเก็บกวาดถี่จนช้า และก่อนที่ container จะถูกฆ่าที่ 256
+const RSS_WARN_MB = 140
+let rssWarnedAt = 0
+
 function health() {
+  const mem = process.memoryUsage()
+  const rssMb = Math.round(mem.rss / 1048576)
+  // เตือนได้ แต่ห้ามถี่ — /health ถูกเรียกทุก 30 วินาทีจาก healthcheck ของ docker
+  if (rssMb >= RSS_WARN_MB && Date.now() - rssWarnedAt > 600000) {
+    rssWarnedAt = Date.now()
+    log.warn('memory_high', { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 })
+  }
   const idle = since => Date.now() - (since ? Date.parse(since) : startedAt)
   const idleFor = idle(workerLastSuccess), inboundIdleFor = idle(inboundLastSuccess)
   const outboundOk = shadow || !activeChannels.length || idleFor <= WORKER_STALE_MS
@@ -470,6 +482,9 @@ function health() {
   return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, account: accountEmail,
            workerLastSuccess, idleFor, inboundLastSuccess, inboundIdleFor,
            activeChannels: activeChannels.length, edgeFunctions, projects,
+           // หน่วยเป็น MB เพราะไบต์ดิบไม่มีใครอ่านออกตอนตีสาม
+           // rss คือของที่ docker วัดจริง ส่วน heapUsed คือของที่ V8 ถืออยู่
+           memory: { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 },
            // สวิตช์ของบอทต้องมองเห็นจากข้างนอกเสมอ
            // ไม่งั้น "บอทไม่ตอบ" กับ "บอทถูกปิดไว้" จะแยกกันไม่ออกตอนมีคนถามว่าทำไมเงียบ
            bot: jobQueue }

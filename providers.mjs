@@ -46,8 +46,17 @@ export function matchesDestination(channel, body, config) {
 // จนกว่าจะถึงตอนนั้น เส้นทางที่วิ่งอยู่จริงต้องเห็นเท่าเดิม — จึงกรองไว้ตรงนี้
 // ไม่ใช่ไปแก้ที่ผู้เรียก (Phase 2 ห้ามแตะ server.mjs)
 
-/** event ที่ receive() รุ่นปัจจุบันรับได้ — นอกจากนี้ต้องรอ Phase 3 */
-const RECEIVE_TYPES = new Set(['message', 'postback', 'follow', 'unfollow', 'referral'])
+/**
+ * event ที่ receive() รุ่นปัจจุบันรับได้
+ *
+ * echo อยู่ในนี้ตั้งแต่ Phase 3 เพราะ receive() รู้วิธีจัดการแล้ว —
+ * บันทึกเป็นข้อความของฝั่งเรา ตั้ง last_human_reply_at และยกเลิกงานที่บอทจ่อจะส่ง
+ * ★ ขาดตัวนี้ไม่ได้: last_human_reply_at คือค่าที่ decide_reply ใช้ตัดสิน human_owns_convo
+ *   ถ้าไม่รับ echo ฝั่งเราจะไม่มีวันรู้ว่าทีมตอบไปแล้ว แล้วผลการตัดสินใจจะไม่มีทางตรงกับ cloud
+ *
+ * ที่ยังไม่รับคือคำสั่งในกลุ่ม LINE (group_command) กับ join — รอ Phase 6
+ */
+const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral'])
 
 const iso = ms => new Date(ms ?? Date.now()).toISOString()
 

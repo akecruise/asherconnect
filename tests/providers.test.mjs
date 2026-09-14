@@ -193,15 +193,22 @@ test('Messenger: read / delivery receipt ไม่ใช่เหตุการ
  assert.deepEqual(normalizeEvents('messenger',body,FB),[])
 })
 
-test('echo กับคำสั่งกลุ่มต้องไม่หลุดเข้า receive ของวันนี้',()=>{
- // ถ้าหลุด คำตอบของทีมจะถูกบันทึกเป็นคำถามของลูกค้า พังทั้งบทสนทนาและสถิติ
+test('echo ต้องถึง receive ด้วย ไม่ใช่ถูกกรองทิ้ง',()=>{
+ // receive() รู้วิธีจัดการ echo แล้ว (บันทึกเป็นข้อความของฝั่งเรา ไม่ใช่ของลูกค้า)
+ // และ last_human_reply_at ที่ได้จาก echo คือค่าที่ decide_reply ใช้ตัดสินว่าคนรับช่วงไปแล้ว
  const body=page({messaging:[
    {sender:{id:FB.account_id},recipient:{id:'PSID-8'},timestamp:1757836800000,message:{mid:'e1',is_echo:true,text:'ตอบแล้วค่ะ'}},
    {sender:{id:'PSID-8'},recipient:{id:FB.account_id},timestamp:1757836800001,message:{mid:'c1',text:'ขอบคุณค่ะ'}}]})
- assert.equal(normalizeEvents('messenger',body,FB).length,2)
  const forReceive=normalizeWebhook('messenger',body,FB)
- assert.equal(forReceive.length,1)
- assert.equal(forReceive[0].event_id,'c1')
+ assert.deepEqual(forReceive.map(e=>e.event_type),['echo','message'])
+ assert.equal(forReceive[0].external_id,'PSID-8')   // ปลายทางคือลูกค้า ไม่ใช่เพจ
+})
+
+test('คำสั่งในกลุ่ม LINE ยังไม่เข้า receive — รอ Phase 6',()=>{
+ const body=lineBody({type:'message',webhookEventId:'01J-g9',timestamp:1757836800000,
+   source:{type:'group',groupId:'Cg1',userId:'Us1'},message:{id:'m',type:'text',text:'สถานะ'}})
+ assert.equal(normalizeEvents('line',body,LN).length,1)
+ assert.deepEqual(normalizeWebhook('line',body,LN),[])
 })
 
 test('LINE: ข้อความในกลุ่มคือทีมสั่งงาน ไม่ใช่ลูกค้า — เก็บไว้แต่ไม่เข้า receive',()=>{

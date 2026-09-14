@@ -722,6 +722,29 @@ async function main() {
       const text = Array.isArray(denied) ? denied.map(x => Array.isArray(x) ? x[0] : x).join(' ') : String(denied)
       ck(49, 'เซลส์ทั่วไปกดสวิตช์บอทไม่ได้', text.includes('not_allowed'), text.slice(0, 120))
     }
+
+    // ── 50 echo เดินครบเส้นทางจริง: webhook → คิวขาเข้า → receive → last_human_reply_at
+    //    เส้นนี้คือหัวใจของการเทียบผลกับ cloud — ถ้าฝั่งเราไม่รู้ว่าทีมตอบไปแล้ว
+    //    decide_reply จะไม่มีวันตอบ human_owns_convo แล้วตัวเลขจะไม่ตรงกันตลอดกาล
+    {
+      const id = `${TAG}-echo-${Date.now()}`
+      const raw = JSON.stringify({ object: 'page', entry: [{ id: PAGE_ID, time: Date.now(), messaging: [{
+        sender: { id: PAGE_ID }, recipient: { id: `FB-${TAG}` }, timestamp: Date.now(),
+        message: { mid: id, is_echo: true, text: 'ทีมตอบจาก Business Suite แล้วนะคะ' } }] }] })
+      const r = await post('/webhooks/fb-test', raw, { 'x-hub-signature-256': 'sha256=' + sign(raw, META_SECRET, 'hex') })
+      await settle()
+      const row = await sql(`select m.sender_type, m.content,
+                                    (c.last_human_reply_at is not null)::text
+                               from inbox.message m join inbox.conversation c on c.id=m.conversation_id
+                              where m.external_message_id='${id}'`)
+      const [sender, content, humanAt] = row[0] || []
+      const outbound = await one(`select count(*) from connect_private.delivery d
+                                    join inbox.message m on m.id=d.message_id
+                                   where m.external_message_id='${id}'`)
+      ck(50, 'คำตอบของทีมจาก Business Suite เข้าระบบเป็นข้อความของเรา และไม่ถูกส่งกลับหาลูกค้า',
+        r.status === 200 && sender === 'agent' && humanAt === 'true' && Number(outbound) === 0,
+        `HTTP ${r.status} · ผู้ส่ง ${sender} · บันทึกเวลาคนตอบ ${humanAt} · งานขาออกที่เกิด ${outbound}`)
+    }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }
     if (server) { server.child.kill('SIGTERM'); await rm(server.dir, { recursive: true, force: true }).catch(() => {}) }

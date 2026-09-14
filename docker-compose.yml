@@ -11,6 +11,26 @@ services:
       CONNECT_CHANNELS_FILE: /run/connect/channels.json
     volumes:
       - ./channels.json:/run/connect/channels.json:ro
+
+    # ── เพดานหน่วยความจำ ──────────────────────────────────────────────────
+    # เครื่องนี้รัน Supabase ทั้งสแตกอยู่ด้วย ถ้าตัวนี้รั่วแล้วกินไม่หยุด
+    # ของที่ตายตามคือฐานข้อมูล ซึ่งแย่กว่าบอทตาย
+    #
+    # 256m เป็นเพดานแข็งของ container ส่วน --max-old-space-size=160 ใน Dockerfile
+    # เป็นเพดานของ V8 ที่ต่ำกว่าอยู่หนึ่งช่วง — ให้ V8 เก็บกวาดก่อน ไม่ใช่ให้ kernel ฆ่า
+    # โดนฆ่าแล้วจะไม่มี log ว่าตอนนั้นทำอะไรอยู่
+    mem_limit: 256m
+    mem_reservation: 96m
+
+    # ประกาศไว้ที่นี่ด้วย ทั้งที่ Dockerfile มีแล้ว เพื่อให้ไฟล์นี้อ่านจบแล้วรู้ครบ
+    # ว่าใครเป็นคนตัดสินว่า container นี้ยังไหวอยู่
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3200/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
     networks:
       - supabase_default
     security_opt:
