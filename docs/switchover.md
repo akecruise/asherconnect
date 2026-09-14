@@ -16,7 +16,9 @@
 | สวิตช์บอทเปิด (ปุ่มบนหน้าเว็บ) | `curl -s localhost:3200/health` ดู `bot.switches` | ☐ |
 | `CONNECT_SHADOW_MODE=true` | `curl -s localhost:3200/health` ดู `shadow: true` | ☐ |
 | webhook ของ LINE/Meta ยิงเข้า **ทั้งสองที่** | ดูของดิบเข้ามาจริงไหม (คิวรีข้อ 1) | ☐ |
-| ตัวตั้งเวลาเรียก `inbox.watchdog(now())` ทุกนาที | ยังไม่ได้ตั้ง — pg_cron ยังไม่ติดตั้ง | ☐ |
+| ตัวตั้งเวลาเรียก `inbox.watchdog(now())` ทุกนาที | `select jobname, schedule from cron.job` | ✔ ตั้งแล้ว |
+| รายงาน 09:00 เข้าคิว Telegram | `select * from cron.job where jobname='asher-daily-report'` | ✔ ตั้งแล้ว |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` ใน `.env` | ไม่ใส่ = รายงานเข้าคิวแล้วถูกข้ามด้วยเหตุผล `no_target` | ☐ |
 
 **เรื่องที่ต้องตัดสินก่อน:** ตอนนี้ cloud ยังเป็นตัวที่ตอบลูกค้าจริงอยู่
 เครื่องนี้อยู่ในโหมดเงา — รับของเข้ามาคิดและบันทึก แต่ไม่ส่งอะไรออกไป
@@ -223,12 +225,34 @@ update connect_private.delivery
 
 | เรื่อง | สถานะ |
 |---|---|
-| `pg_cron` | ยังไม่ติดตั้ง → `inbox.watchdog()` ยังไม่มีใครเรียก → **ยังไม่มีการแจ้งค้างตอบ** |
+| `pg_cron` | ✔ ติดตั้งแล้ว · `asher-watchdog` ทุกนาที · `asher-daily-report` 02:00 UTC (09:00 ไทย) |
 | คำสั่งในกลุ่ม LINE | ยังไม่เข้า `receive` (รอ Phase 6) |
 | `[AD:xxx]` prefix ของ LINE | ยังไม่ได้แปล (รอ Phase 6) |
-| รายงาน Telegram 09:00 | รอ Phase 7 และยังไม่มีโค้ดอ้างอิง (`fbline_report_TG.ts` หาไม่เจอ) |
+| รายงาน Telegram 09:00 | ✔ ทำแล้ว — แต่เทียบกับของเดิมไม่ได้เพราะ `fbline_report_TG.ts` ยังหาไม่เจอ ดูหัวข้อ 8 |
 | ข้อมูลโครงการ Asher Vibe | ยังไม่มี — บอทถูกสั่งให้ไม่ตอบคำถามเชิงข้อมูลของโครงการนี้ |
 | RAG (`match_knowledge`) | ไม่มี pgvector และไม่มีตาราง knowledge — ของเดิมก็ข้ามเมื่อไม่มี OpenAI key |
 
-สามข้อแรกกระทบตัวเลขเทียบโดยตรง — `watchdog` ที่ไม่เดินแปลว่าฝั่งเราจะไม่มีแถว
-"แจ้งค้างตอบ" ที่ cloud มี ให้แยกนับต่างหาก อย่าเอาไปรวมกับ `reply_go` ที่ไม่ตรง
+---
+
+## 8. รายงานรายวัน — สิ่งที่เทียบได้และเทียบไม่ได้
+
+ตรรกะการนับ "รอบถาม-ตอบ" ยกมาจาก `reply_stats()` ของ cloud
+(`Downloads/01_schedule_and_report.sql`) ซึ่งเป็นนิยามที่เป็นลายลักษณ์อักษร
+และมีเทสต์เทียบกับตัวนับที่เขียนขึ้นใหม่อิสระใน `tests/report.test.mjs`
+
+**แต่ `fbline_report_TG.ts` ยังหาไม่เจอ** จึงเทียบสองอย่างนี้ไม่ได้
+- ถ้อยคำของ `buildDailyDigest` ตัวจริง — ที่นี่ยกสำนวนจาก `sendReplyDigest()` ใน bot-webhook แทน
+- เงื่อนไขปลีกย่อยใน `loadReportData` ที่อาจต่างจาก `reply_stats` (ถ้ามี)
+
+ถ้าได้ไฟล์นั้นมา ให้เอา `loadReportData` ไปแทนตัวนับอิสระในเทสต์ แล้วเทสต์ต้องยังผ่าน
+ก่อนถึงตอนนั้น ให้เทียบรายงานหนึ่งวันด้วยตาก่อนใช้จริง
+
+```sql
+select jsonb_pretty(inbox.reply_report('2026-09-13'));
+```
+
+หรือดูเป็นข้อความไทยเลยโดยไม่ส่งออกไปไหน
+
+```bash
+curl -s -X POST http://127.0.0.1:3200/api/command -H 'Content-Type: application/json'   -H 'Origin: http://localhost:3200'   -d '{"action":"report_preview","data":{"date":"2026-09-13"}}'
+```

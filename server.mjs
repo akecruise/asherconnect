@@ -23,6 +23,7 @@ import { verifySignature, matchesDestination, normalizeWebhook, deliver } from '
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
+import { buildDailyDigest } from './reports/reply-digest.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -391,7 +392,9 @@ async function runOutbound(job) {
   // งานที่รู้ปลายทางของตัวเองอยู่แล้ว (เช่นตอบกลับเข้ากลุ่ม LINE) ส่งตรงไปเลย
   // ตัวกระจายของทีมข้างล่างมีไว้สำหรับ channel 'team' ซึ่งแปลว่า "แจ้งใครก็ได้ที่เฝ้าอยู่"
   if (job.channel !== 'team') {
-    const result = await deliver(job, inboxConfig)
+    const { config, target, payload } = outboundRoute(job, inboxConfig)
+    if (!target) return finishJob(job, { status: 'skipped', skip_reason: 'no_target' })
+    const result = await deliver({ ...job, target, payload }, config)
     if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
     return finishJob(job, result)
   }
@@ -409,6 +412,37 @@ async function runOutbound(job) {
   const sent = results.filter(r => r.status === 'sent')
   if (sent.length) return finishJob(job, { status: 'done', provider_id: sent[0].provider_id ?? null })
   return finishJob(job, { status: 'retry', error: results.map(r => r.error).filter(Boolean).join(' · ') || 'notify_failed' })
+}
+
+/**
+ * ปลายทางกับกุญแจของงานขาออกที่ไม่ได้ส่งหาลูกค้า
+ *
+ * ★ ปลายทางพวกนี้มาจาก env เสมอ ไม่ได้อยู่ในฐาน (กติกาข้อ 6)
+ *   ฐานสั่งว่า "ส่งทาง telegram" ส่วนส่งเข้าห้องไหนเป็นเรื่องของเครื่องที่รันอยู่
+ *
+ * รายงานรายวันถูกแปลงเป็นข้อความตรงนี้ ไม่ใช่ตอนเข้าคิว
+ * เพราะสิ่งที่เก็บไว้ในคิวควรเป็นตัวเลข ไม่ใช่ถ้อยคำ — วันที่อยากเปลี่ยนสำนวน
+ * จะได้ไม่ต้องไปแก้ของที่ค้างอยู่ในคิว
+ */
+function outboundRoute(job, inboxConfig) {
+  const env = process.env
+  const payload = job.payload?.kind === 'daily_report'
+    ? { type: 'text', text: buildDailyDigest(job.payload.report ?? {}) }
+    : job.payload
+
+  if (job.channel === 'telegram') {
+    return { config: { telegram_bot_token: env.TELEGRAM_BOT_TOKEN },
+             target: job.target ?? env.TELEGRAM_CHAT_ID ?? null, payload }
+  }
+  if (job.channel === 'email') {
+    return { config: { resend_api_key: env.RESEND_API_KEY, email_from: env.LEAD_EMAIL_FROM },
+             target: job.target ?? env.LEAD_EMAIL_TO ?? null, payload }
+  }
+  if (job.channel === 'line_group') {
+    return { config: inboxConfig.access_token ? inboxConfig : { access_token: env.LINE_NOTIFY_TOKEN },
+             target: job.target ?? env.LINE_NOTIFY_GROUP_ID ?? null, payload }
+  }
+  return { config: inboxConfig, target: job.target ?? null, payload }
 }
 
 const channelLabel = job => {
@@ -608,6 +642,8 @@ async function handleCommand(req, res) {
   if (input.action === 'bootstrap') {
     data.channels = channels.map(c => ({ name: c.name || c.key, channel: c.channel, enabled: activeChannels.includes(c) }))
   }
+  // ตัวเลขมาจากฐาน ถ้อยคำมาจากที่นี่ — คนละหน้าที่กัน และแยกกันไว้ตั้งแต่แรก
+  if (input.action === 'report_preview' && data?.report) data.text = buildDailyDigest(data.report)
   return json(res, 200, data)
 }
 

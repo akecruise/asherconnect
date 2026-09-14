@@ -4,6 +4,7 @@ COPY --chown=node:node package.json server.mjs providers.mjs ./
 # bots/ ต้องเข้า image ด้วย — server.mjs อ่านข้อมูลโครงการจาก bots/project-data/ ตอนบูต
 # ถ้าลืมบรรทัดนี้ container จะขึ้นไม่ได้เลย (ไม่ใช่ขึ้นแล้วบอทเงียบ)
 COPY --chown=node:node bots ./bots
+COPY --chown=node:node reports ./reports
 COPY --chown=node:node public ./public
 USER node
 ENV PORT=3200 NODE_ENV=production

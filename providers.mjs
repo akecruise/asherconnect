@@ -9,6 +9,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { chunkText } from './reports/reply-digest.mjs'
 
 export function verifySignature(raw, supplied, secret, channel) {
   if (!supplied || !secret) return false
@@ -409,16 +410,38 @@ async function sendMessenger(job, base, kind, target, config, fetcher) {
   return { ...base, status: 'sent', provider_id: data.message_id ?? null }
 }
 
+/**
+ * Telegram รับข้อความละไม่เกิน 4,096 ตัวอักษร รายงานรายวันยาวเกินนั้นได้ง่าย
+ *
+ * ตัดที่ 3,500 เผื่อไว้ แล้วเว้น 1.1 วินาทีระหว่างท่อน เพราะ Telegram จำกัดอัตราการส่ง
+ * ยิงรัวจะโดน 429 แล้วท่อนหลัง ๆ หายไปโดยที่ท่อนแรกส่งไปแล้ว — รายงานครึ่งเดียว
+ * แย่กว่าไม่มีรายงาน เพราะคนอ่านไม่รู้ว่ามันขาด
+ *
+ * ★ การหน่วงตรงนี้อยู่ใน worker ไม่ใช่ในเส้นทางที่มีใครรอสายอยู่ (กติกาข้อ 1)
+ */
 async function sendTelegram(job, base, target, config, fetcher) {
   if (!config.telegram_bot_token) return { ...base, status: 'failed', error: 'telegram_token_missing' }
-  const response = await fetcher(`https://api.telegram.org/bot${config.telegram_bot_token}/sendMessage`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: target, text: payloadText(job.payload, job.text), disable_web_page_preview: true }),
-    signal: AbortSignal.timeout(15000),
-  })
-  if (!response.ok) return { ...base, status: outcome(response.status, 'telegram'), error: `provider_http_${response.status}` }
-  const data = await response.json().catch(() => ({}))
-  return { ...base, status: 'sent', provider_id: data?.result?.message_id != null ? String(data.result.message_id) : null }
+  const url = `https://api.telegram.org/bot${config.telegram_bot_token}/sendMessage`
+  const parts = chunkText(payloadText(job.payload, job.text), Number(config.telegram_chunk ?? 3500))
+  let last = null
+
+  for (const [i, part] of parts.entries()) {
+    if (i > 0) await new Promise(r => setTimeout(r, Number(config.telegram_gap_ms ?? 1100)))
+    const response = await fetcher(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: target, text: part, disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!response.ok) {
+      // ท่อนแรกไม่ผ่าน = ยังไม่มีอะไรถึงใคร ลองใหม่ได้ทั้งก้อน
+      // ท่อนหลังไม่ผ่าน = ทีมเห็นครึ่งเดียวไปแล้ว ยิงซ้ำจะกลายเป็นเห็นซ้ำ ให้คนตัดสิน
+      return { ...base, status: i === 0 ? outcome(response.status, 'telegram') : 'uncertain',
+               error: `provider_http_${response.status} (ท่อนที่ ${i + 1}/${parts.length})` }
+    }
+    last = await response.json().catch(() => ({}))
+  }
+  return { ...base, status: 'sent', parts: parts.length,
+           provider_id: last?.result?.message_id != null ? String(last.result.message_id) : null }
 }
 
 async function sendEmail(job, base, target, config, fetcher) {

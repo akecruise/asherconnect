@@ -238,3 +238,21 @@ test('ปลายทางของการแจ้งมาจาก env · 
     ['line_group', 'telegram', 'email'])
   assert.deepEqual(notifyTargets({ phone: '0812345678' }, {}), [])   // ไม่ตั้ง env = ไม่มีปลายทาง
 })
+
+// ── กันพลาดซ้ำ ─────────────────────────────────────────────────────────────
+test('ทุกโฟลเดอร์ที่โค้ดฝั่งเซิร์ฟเวอร์ import ต้องถูก COPY เข้า image', async () => {
+  // เจอมาสองรอบแล้วว่าลืม COPY แล้ว container ขึ้นไม่ได้เลย (bots/ ตอน Phase 4, reports/ ตอน Phase 7)
+  // เป็นความพลาดที่เห็นตอน build จริงเท่านั้น เทสต์ปกติไม่เจอเพราะรันจากซอร์ส
+  const { readFile } = await import('node:fs/promises')
+  const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8')
+  const dirs = new Set()
+  for (const file of ['server.mjs', 'providers.mjs']) {
+    const src = await readFile(new URL('../' + file, import.meta.url), 'utf8')
+    for (const m of src.matchAll(/from\s+'\.\/([a-z-]+)\//g)) dirs.add(m[1])
+  }
+  assert.equal(dirs.size > 0, true, 'อ่าน import ไม่เจอเลย แปลว่า regex พัง ไม่ใช่ว่าไม่มีโฟลเดอร์')
+  for (const dir of dirs) {
+    assert.equal(dockerfile.includes(`COPY --chown=node:node ${dir} ./${dir}`), true,
+      `Dockerfile ไม่ได้ COPY ${dir}/ ทั้งที่โค้ด import จากตรงนั้น — container จะขึ้นไม่ได้`)
+  }
+})
