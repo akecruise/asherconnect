@@ -646,6 +646,31 @@ async function main() {
           && !(kinds || '').includes('generate'),
         `reply ${go3}/${reason3} · งานที่เกิด ${kinds}`)
     }
+
+    // ── 46 โหมดเงากันการส่งด้วยโครงสร้าง ไม่ใช่ด้วย if ในโค้ด
+    //    worker ตอนโหมดเงาขอเฉพาะชนิด generate/classify งานส่งจึงไม่ถูกแตะแม้แต่การ claim
+    //    (ถ้ากันด้วย if หลัง claim งานจะถูกนับ attempts และเสียลำดับไปเรื่อย ๆ)
+    {
+      const ib = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
+        values('line','${scene.project}','LINE ${TAG} คิวงาน','TEST_ONLY',true) returning id`)
+      await sql(`insert into connect_private.job(kind,channel,inbox_id,payload,send_after)
+                 values('notify','team','${ib}','{}'::jsonb, now() - interval '1 minute'),
+                        ('generate','line','${ib}','{}'::jsonb, now() - interval '1 minute')`)
+
+      const claim = kinds => sql(asService(
+        `select coalesce(connect_private.worker('claim_job', jsonb_build_object(
+           'kinds', '${JSON.stringify(kinds)}'::jsonb,
+           'inbox_ids', jsonb_build_array('${ib}')))->>'kind', '(ไม่ได้งาน)');`))
+        .then(r => r.map(x => x[0]).find(v => v && !['BEGIN','COMMIT','SET'].includes(v)) ?? '(ไม่ได้งาน)')
+
+      const shadowPick = await claim(['generate', 'classify'])
+      const livePick = await claim(['generate', 'classify', 'notify', 'typing'])
+      const notifyStatus = await one(`select status from connect_private.job where inbox_id='${ib}' and kind='notify'`)
+
+      ck(46, 'โหมดเงา: ขอเฉพาะงานของบอท งานส่งไม่ถูกแตะแม้แต่การหยิบ',
+        shadowPick === 'generate' && livePick === 'notify' && notifyStatus === 'processing',
+        `โหมดเงาได้ ${shadowPick} · โหมดปกติได้ ${livePick} · งานแจ้งตอนนี้ ${notifyStatus}`)
+    }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }
     if (server) { server.child.kill('SIGTERM'); await rm(server.dir, { recursive: true, force: true }).catch(() => {}) }

@@ -20,6 +20,9 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifySignature, matchesDestination, normalizeWebhook, deliver } from './providers.mjs'
+import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
+import { classifyOnly, intentRow } from './bots/classify.mjs'
+import { formatNotify, notifyTargets } from './bots/notify.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -72,6 +75,10 @@ const edgeFunctions = (process.env.CONNECT_EDGE_FUNCTIONS || '')
   .split(',').map(s => s.trim()).filter(Boolean)
 const badName = edgeFunctions.find(n => !/^[a-z0-9][a-z0-9._-]*$/.test(n))
 if (badName) throw new Error(`ชื่อ Edge Function ใช้ไม่ได้: ${badName}`)
+
+// ข้อมูลโครงการอ่านครั้งเดียวตอนบูต ไม่ใช่ทุกครั้งที่ตอบ
+// ไฟล์พวกนี้เป็นของนิ่ง แก้แล้วรีสตาร์ตทีเดียว
+const projects = await loadProjectData()
 
 const startedAt = Date.now()
 
@@ -224,25 +231,162 @@ async function withAccount(run) {
 }
 
 // ───────────────────────────────────────────────────────── คิวขาออก
+//
+// งานในคิวมีหลายชนิด ไม่ใช่แค่ "ส่งข้อความ" อีกต่อไป
+//
+//   generate  คิดคำตอบด้วย Claude แล้วบันทึกเป็นข้อความของบอท
+//   classify  ถอดหมวดคำถามเก็บไว้ ตอนที่บอทไม่ได้ตอบ
+//   notify    แจ้งทีม (กลุ่ม LINE / Telegram / อีเมล)
+//   typing    สัญญาณกำลังพิมพ์
+//   send      ส่งข้อความออกไปหาลูกค้า — ยังอยู่ในคิวเดิม (connect_private.delivery)
+//             เพราะข้อความของบอทกับของเซลส์เข้าคิวด้วย trigger ตัวเดียวกัน
+//             ทางออกสู่ลูกค้าจึงมีทางเดียวทั้งระบบ ไม่ว่าใครเป็นคนพิมพ์
+//
+// ★ โหมดเงากันการส่งด้วย "ไม่ขอชนิดนั้นมาตั้งแต่แรก" ไม่ใช่หยิบมาแล้วค่อย if ทิ้ง
+//   งานส่งจะไม่ถูกแตะเลยแม้แต่การ claim — attempts ไม่ขยับ ลำดับไม่เสีย
+//   วันที่ปิดโหมดเงา ของที่ค้างอยู่จะถูกส่งตามลำดับเดิมทุกชิ้น
+
+const WORKER_BATCH = 20
+const BOT_KINDS = ['generate', 'classify']
+const SEND_KINDS = ['notify', 'typing']
 
 let workerRunning = false, workerLastSuccess = null
 
 async function worker() {
-  if (shadow || workerRunning || !activeChannels.length) return
+  if (workerRunning || !activeChannels.length) return
   workerRunning = true
   try {
-    const job = await rpc(service, 'claim', { inbox_ids: activeChannels.map(c => c.inbox_id) }, true)
-    if (job) {
-      const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-      await rpc(service, 'finish', await deliver(job, config), true)
+    // วนจนคิวว่าง แต่ไม่เกินรอบละ 20 ชิ้น
+    // ไม่จำกัดเลย = คิวยาว ๆ จะกินทั้งรอบแล้วงานอื่นไม่ได้เดิน
+    let done = 0
+    while (done < WORKER_BATCH) {
+      const job = await nextJob()
+      if (!job) break
+      await runJob(job)
+      done++
     }
-    workerLastSuccess = new Date().toISOString()
+    // ในโหมดเงาตัวส่งข้อความไม่เดินโดยตั้งใจ จึงไม่นับว่า "ยังส่งได้อยู่"
+    if (!shadow) workerLastSuccess = new Date().toISOString()
   } catch (e) {
     // ของเดิมพิมพ์ประโยคคงที่ออกมาโดยไม่รับตัว error เลย ทำให้ไล่สาเหตุไม่ได้จนต้องเดา
     log.error('worker_failed', { reason: e.message, status: e.status ?? null })
   } finally {
     workerRunning = false
   }
+}
+
+async function nextJob() {
+  const kinds = shadow ? BOT_KINDS : [...BOT_KINDS, ...SEND_KINDS]
+  const job = await rpc(service, 'claim_job',
+    { kinds, inbox_ids: activeChannels.map(c => c.inbox_id) }, true)
+  if (job) return { ...job, source: 'job' }
+
+  if (shadow) return null
+  const outbound = await rpc(service, 'claim', { inbox_ids: activeChannels.map(c => c.inbox_id) }, true)
+  return outbound ? { ...outbound, kind: 'send', source: 'delivery' } : null
+}
+
+async function runJob(job) {
+  try {
+    if (job.source === 'delivery') {
+      const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
+      return await rpc(service, 'finish', await deliver(job, config), true)
+    }
+    if (job.kind === 'generate') return await runGenerate(job)
+    if (job.kind === 'classify') return await runClassify(job)
+    return await runOutbound(job)
+  } catch (e) {
+    log.error('job_failed', { job_id: job.id, kind: job.kind, reason: e.message })
+    // error ที่บอกว่าลองใหม่ไม่ช่วย (ไม่มี key, ข้อมูลไม่ครบ) ไม่ต้องวนกลับมาอีก
+    await finishJob(job, { status: e.retryable === false ? 'failed' : 'retry', error: e.message })
+      .catch(err => log.error('finish_job_failed', { job_id: job.id, reason: err.message }))
+  }
+}
+
+const finishJob = (job, body) =>
+  rpc(service, 'finish_job', { job_id: job.id, lease_id: job.lease_id, ...body }, true)
+
+async function runGenerate(job) {
+  // เช็คอีกรอบก่อนคิด — งานนี้อาจรออยู่ในคิวมา 30 นาที ระหว่างนั้นคนอาจตอบไปแล้ว
+  const context = await rpc(service, 'reply_context',
+    { conversation_id: job.conversation_id, since: job.created_at,
+      history_limit: 12, is_new_chat: job.payload?.is_new_chat ?? false }, true)
+  if (context.skip_reason) {
+    log.info('generate_skipped', { job_id: job.id, reason: context.skip_reason })
+    return finishJob(job, { status: 'skipped', skip_reason: context.skip_reason })
+  }
+
+  const last = [...(context.history ?? [])].reverse().find(m => m.role === 'user')
+  const text = last?.content ?? ''
+  const known = [
+    context.known_phone ? `Customer ALREADY gave phone number: ${context.known_phone}. Do NOT ask for phone again.` : '',
+  ].filter(Boolean).join('\n')
+
+  const { reply, offTopic, intent } = await generateReply({
+    text, history: context.history, known, project: context.project,
+    style: context.style ?? {}, model: context.model, minConfidence: Number(context.min_confidence ?? 0.6),
+    ctx: { is_new_chat: context.is_new_chat },
+  })
+
+  await rpc(service, 'bot_reply',
+    { conversation_id: job.conversation_id, text: reply, offtopic: offTopic }, true)
+  await rpc(service, 'store_intent', intentRow(intent, {
+    conversation_id: job.conversation_id, message_id: job.message_id, external_id: job.target,
+    project: context.project, ad_id: context.ad_id, ad_title: context.ad_title,
+    is_new_chat: context.is_new_chat, bot_replied: true, raw_question: maskPII(text).slice(0, 500),
+  }), true).catch(e => log.warn('store_intent_failed', { job_id: job.id, reason: e.message }))
+
+  log.info('bot_replied', { job_id: job.id, conversation: job.conversation_id, offtopic: offTopic })
+  return finishJob(job, { status: 'done' })
+}
+
+async function runClassify(job) {
+  const text = job.payload?.text ?? ''
+  const intent = await classifyOnly(text, job.payload?.ad_title ?? null,
+    { onError: e => log.warn('classify_degraded', { job_id: job.id, reason: e.message }) })
+  await rpc(service, 'store_intent', intentRow(intent, {
+    conversation_id: job.conversation_id, message_id: job.message_id,
+    ad_title: job.payload?.ad_title ?? null, bot_replied: false,
+    raw_question: maskPII(text).slice(0, 500),
+  }), true)
+  return finishJob(job, { status: 'done' })
+}
+
+/**
+ * งานที่ออกไปข้างนอก — แจ้งทีม หรือสัญญาณกำลังพิมพ์
+ *
+ * ข้อความแจ้งหนึ่งชิ้นอาจไปได้หลายทาง (กลุ่ม LINE + Telegram + อีเมล)
+ * ถือว่าสำเร็จเมื่อมีอย่างน้อยหนึ่งทางถึง — ทีมเห็นแล้วคือเห็นแล้ว
+ * ถ้าไม่ถึงสักทางค่อยให้คิวลองใหม่
+ */
+async function runOutbound(job) {
+  if (job.kind === 'typing') {
+    const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
+    return finishJob(job, await deliver(job, config ?? {}))
+  }
+
+  const targets = notifyTargets(job.payload ?? {}, process.env)
+  if (!targets.length) {
+    log.warn('notify_no_target', { job_id: job.id })
+    return finishJob(job, { status: 'skipped', skip_reason: 'no_notify_target' })
+  }
+
+  const text = formatNotify({ ...job.payload, channel_label: channelLabel(job) }, { inboxUrl: inboxUrlFor(job) })
+  const results = await Promise.all(targets.map(t =>
+    deliver({ ...job, kind: 'notify', channel: t.channel, target: t.target, payload: { type: 'text', text } }, t.config)))
+
+  const sent = results.filter(r => r.status === 'sent')
+  if (sent.length) return finishJob(job, { status: 'done', provider_id: sent[0].provider_id ?? null })
+  return finishJob(job, { status: 'retry', error: results.map(r => r.error).filter(Boolean).join(' · ') || 'notify_failed' })
+}
+
+const channelLabel = job => {
+  const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
+  return config?.channel === 'line' ? ' LINE' : config?.channel === 'messenger' ? ' Messenger' : ''
+}
+const inboxUrlFor = job => {
+  const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
+  return config?.channel === 'line' ? 'https://chat.line.biz/' : 'https://business.facebook.com/latest/inbox/all'
 }
 
 // ───────────────────────────────────────────────────────── คิวขาเข้า
@@ -309,7 +453,7 @@ function health() {
   const inboundOk = !activeChannels.length || inboundIdleFor <= WORKER_STALE_MS
   return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, account: accountEmail,
            workerLastSuccess, idleFor, inboundLastSuccess, inboundIdleFor,
-           activeChannels: activeChannels.length, edgeFunctions }
+           activeChannels: activeChannels.length, edgeFunctions, projects }
 }
 
 // ───────────────────────────────────────────────────────── ตัวช่วย HTTP
