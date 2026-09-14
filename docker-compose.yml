@@ -1,0 +1,22 @@
+services:
+  asher-connect:
+    build: .
+    container_name: asher-connect
+    restart: unless-stopped
+    init: true
+    ports:
+      - '127.0.0.1:3200:3200'
+    env_file: .env
+    environment:
+      CONNECT_CHANNELS_FILE: /run/connect/channels.json
+    volumes:
+      - ./channels.json:/run/connect/channels.json:ro
+    networks:
+      - supabase_default
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+networks:
+  supabase_default:
+    external: true

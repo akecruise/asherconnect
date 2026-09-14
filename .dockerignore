@@ -1,0 +1,8 @@
+.env
+channels.json
+.sessions
+tests
+test-results
+database.sql
+README.md
+.git

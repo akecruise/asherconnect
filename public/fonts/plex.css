@@ -1,0 +1,9 @@
+/* IBM Plex Sans Thai — ชุดเดียวกับ ASHER Marketing
+   ไฟล์มาจากที่ next/font โหลดไว้ใน asher-web จึงไม่ต้องยิงออกนอกเครื่อง
+   สร้างโดย scratchpad/extract-fonts.mjs · แก้ด้วยมือแล้วจะถูกทับ */
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/plex-thai-400-latin.woff2) format("woff2");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/plex-thai-400-thai.woff2) format("woff2");unicode-range:U+2D7,U+303,U+331,U+E01-E5B,U+200C-200D,U+25CC}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/plex-thai-500-latin.woff2) format("woff2");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/plex-thai-500-thai.woff2) format("woff2");unicode-range:U+2D7,U+303,U+331,U+E01-E5B,U+200C-200D,U+25CC}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/plex-thai-600-latin.woff2) format("woff2");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/plex-thai-600-thai.woff2) format("woff2");unicode-range:U+2D7,U+303,U+331,U+E01-E5B,U+200C-200D,U+25CC}
