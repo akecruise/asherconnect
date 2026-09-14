@@ -8,8 +8,9 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/providers.test.mjs && node tests/http.integration.mjs",
+    "test": "node --test tests/providers.test.mjs && node --test tests/decide.test.mjs && node tests/http.integration.mjs",
     "check": "node --check server.mjs && node --check providers.mjs && node --check public/app.js",
-    "test:http": "node tests/http.integration.mjs"
+    "test:http": "node tests/http.integration.mjs",
+    "test:decide": "node --test tests/decide.test.mjs"
   }
 }

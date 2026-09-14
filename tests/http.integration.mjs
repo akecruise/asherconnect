@@ -593,6 +593,59 @@ async function main() {
           && parsed?.payload?.type === 'text',
         String(job).slice(0, 200))
     }
+
+    // ── 43-45 receive() ตัดสินใจแล้วเข้าคิวจริง (Phase 3)
+    //    ใช้กล่องแยกที่ seed ค่าของ LINE ไว้ (ตอบ 22:00-08:00 · คนตอบแล้วเงียบ 30 นาที)
+    //    แล้วป้อน p_now เองเพื่อคุมว่าอยู่ในช่วงไหน ไม่ต้องรอเวลาจริง
+    {
+      const ib = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
+        values('line','${scene.project}','LINE ${TAG} ตัดสินใจ','TEST_ONLY',true) returning id`)
+      await sql(asService(`select inbox.seed_bot_defaults('${ib}');`))
+      const uid = `U-${TAG}-decide`
+      const fire = (id, text, now, extra = {}) => sql(asService(
+        `select connect_private.receive_event('${JSON.stringify({ inbox_id: ib, external_id: uid,
+          event_id: id, event_type: 'message', text, ...extra })}'::jsonb, '${now}'::timestamptz, 0);`))
+
+      // 23:00 อยู่ในช่วงที่บอทตอบ → ต้องได้งานคิดคำตอบพร้อมเวลาหน่วง 15 วินาที
+      await fire(`${TAG}-d1`, 'สนใจห้อง 1 นอนค่ะ', '2026-01-02 23:00:00+07')
+      const row = await sql(`select d.reply_go, d.reply_reason, d.notify_go, d.notify_action,
+                                    j.kind, extract(epoch from (j.send_after - d.decided_at))::int
+                               from inbox.bot_decisions d
+                               join inbox.conversation c on c.id=d.conversation_id
+                               left join connect_private.job j on j.conversation_id=c.id and j.kind='generate'
+                              where c.inbox_id='${ib}'`)
+      const [replyGo, reason, notifyGo, action, kind, delay] = row[0] || []
+      ck(43, 'บอทตอบได้ → บันทึกการตัดสินใจ และเข้าคิวงานคิดคำตอบพร้อมเวลาหน่วง',
+        replyGo === 't' && reason === 'immediate' && kind === 'generate' && Number(delay) === 15,
+        `reply ${replyGo}/${reason} · notify ${notifyGo}/${action} · งาน ${kind} หน่วง ${delay} วิ`)
+
+      // คนตอบจาก Business Suite (echo) → งานที่บอทจ่อจะส่งต้องถูกยกเลิกทันที
+      await fire(`${TAG}-d2`, 'สวัสดีค่ะ เดี๋ยวส่งรายละเอียดให้นะคะ', '2026-01-02 23:01:00+07',
+        { event_type: 'echo' })
+      const after = await sql(`select j.status, j.skip_reason,
+                                      (c.last_human_reply_at is not null)::text
+                                 from connect_private.job j
+                                 join inbox.conversation c on c.id=j.conversation_id
+                                where c.inbox_id='${ib}' and j.kind='generate'`)
+      const [status, skip, humanAt] = after[0] || []
+      ck(44, 'คนตอบแล้ว งานที่บอทจ่อจะส่งถูกยกเลิก ไม่ใช่รอให้ถึงเวลาแล้วค่อยเช็ค',
+        status === 'skipped' && skip === 'human_replied' && humanAt === 'true',
+        `งาน ${status}/${skip} · บันทึกเวลาคนตอบ ${humanAt}`)
+
+      // 14:00 นอกช่วง → บอทเงียบ แต่ยังอยากรู้ว่าลูกค้าถามเรื่องอะไร
+      await fire(`${TAG}-d3`, 'ห้องว่างไหมคะ', '2026-01-03 14:00:00+07')
+      const silent = await sql(`select d.reply_go, d.reply_reason,
+                                       (select string_agg(distinct j.kind, ',' order by j.kind)
+                                          from connect_private.job j where j.message_id=d.message_id)
+                                  from inbox.bot_decisions d
+                                  join inbox.conversation c on c.id=d.conversation_id
+                                 where c.inbox_id='${ib}' and d.event_id='${TAG}-d3'`)
+      const [go3, reason3, kinds] = silent[0] || []
+      ck(45, 'บอทเงียบนอกเวลา → ไม่มีงานคิดคำตอบ แต่ยังเก็บหมวดคำถามไว้ทำโฆษณา',
+        go3 === 'f' && reason3.startsWith('outside_schedule') && (kinds || '').includes('classify')
+          && !(kinds || '').includes('generate'),
+        `reply ${go3}/${reason3} · งานที่เกิด ${kinds}`)
+    }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }
     if (server) { server.child.kill('SIGTERM'); await rm(server.dir, { recursive: true, force: true }).catch(() => {}) }
