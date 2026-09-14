@@ -306,7 +306,9 @@ async function runJob(job) {
   try {
     if (job.source === 'delivery') {
       const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-      return await rpc(service, 'finish', await deliver(job, config), true)
+      const result = await deliver(job, config)
+      if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
+      return await rpc(service, 'finish', result, true)
     }
     if (job.kind === 'generate') return await runGenerate(job)
     if (job.kind === 'classify') return await runClassify(job)
@@ -321,6 +323,12 @@ async function runJob(job) {
 
 const finishJob = (job, body) =>
   rpc(service, 'finish_job', { job_id: job.id, lease_id: job.lease_id, ...body }, true)
+
+// ลูกค้าบล็อกบัญชีเราแล้ว — ติดธงไว้ที่ผู้ติดต่อ จะได้ไม่เสียโควตากับคนที่ไม่ได้ยินเราอีก
+// ล้มตรงนี้ไม่ควรทำให้งานที่เพิ่งส่งไม่สำเร็จกลายเป็นล้มซ้ำ จึงกลืนไว้แต่ต้องบันทึก
+const markBlocked = conversationId =>
+  rpc(service, 'mark_blocked', { conversation_id: conversationId }, true)
+    .catch(e => log.warn('mark_blocked_failed', { conversation: conversationId, reason: e.message }))
 
 async function runGenerate(job) {
   // เช็คอีกรอบก่อนคิด — งานนี้อาจรออยู่ในคิวมา 30 นาที ระหว่างนั้นคนอาจตอบไปแล้ว
@@ -376,9 +384,16 @@ async function runClassify(job) {
  * ถ้าไม่ถึงสักทางค่อยให้คิวลองใหม่
  */
 async function runOutbound(job) {
-  if (job.kind === 'typing') {
-    const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-    return finishJob(job, await deliver(job, config ?? {}))
+  const inboxConfig = activeChannels.find(c => c.inbox_id === job.inbox_id) ?? {}
+
+  if (job.kind === 'typing') return finishJob(job, await deliver(job, inboxConfig))
+
+  // งานที่รู้ปลายทางของตัวเองอยู่แล้ว (เช่นตอบกลับเข้ากลุ่ม LINE) ส่งตรงไปเลย
+  // ตัวกระจายของทีมข้างล่างมีไว้สำหรับ channel 'team' ซึ่งแปลว่า "แจ้งใครก็ได้ที่เฝ้าอยู่"
+  if (job.channel !== 'team') {
+    const result = await deliver(job, inboxConfig)
+    if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
+    return finishJob(job, result)
   }
 
   const targets = notifyTargets(job.payload ?? {}, process.env)

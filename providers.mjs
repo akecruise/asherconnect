@@ -54,9 +54,12 @@ export function matchesDestination(channel, body, config) {
  * ★ ขาดตัวนี้ไม่ได้: last_human_reply_at คือค่าที่ decide_reply ใช้ตัดสิน human_owns_convo
  *   ถ้าไม่รับ echo ฝั่งเราจะไม่มีวันรู้ว่าทีมตอบไปแล้ว แล้วผลการตัดสินใจจะไม่มีทางตรงกับ cloud
  *
- * ที่ยังไม่รับคือคำสั่งในกลุ่ม LINE (group_command) กับ join — รอ Phase 6
+ * group_command เข้าได้ตั้งแต่ Phase 6 — receive() ส่งต่อให้ connect_private.group_command()
+ * แล้วตอบกลับเข้ากลุ่มผ่านคิวขาออก ไม่ได้แตะ contact หรือบทสนทนาของลูกค้าเลย
+ *
+ * ที่ยังไม่รับคือ join (บอทถูกเชิญเข้ากลุ่ม) — ยังไม่มีอะไรต้องทำนอกจาก log
  */
-const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral'])
+const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral', 'group_command'])
 
 const iso = ms => new Date(ms ?? Date.now()).toISOString()
 
@@ -226,7 +229,7 @@ function messengerEvents(body, config) {
  */
 export function normalizeWebhook(channel, body, config) {
   return normalizeEvents(channel, body, config)
-    .filter(e => RECEIVE_TYPES.has(e.event_type) && !e.is_redelivery && e.source_type !== 'group' && e.source_type !== 'room')
+    .filter(e => RECEIVE_TYPES.has(e.event_type) && !e.is_redelivery)
 }
 
 // ───────────────────────────────────────────────────────── ส่งของออก
@@ -296,7 +299,22 @@ const outcome = (status, channel) => {
 }
 
 const LINE_PUSH = 'https://api.line.me/v2/bot/message/push'
+const LINE_REPLY = 'https://api.line.me/v2/bot/message/reply'
 const LINE_LOADING = 'https://api.line.me/v2/bot/chat/loading/start'
+
+/**
+ * ตอบด้วย reply token ได้ไหม
+ *
+ * token ของ LINE ใช้ได้ครั้งเดียวและหมดอายุไวมาก ตอบทันได้จะถูกกว่าและไม่กินโควตา push
+ * แต่ถ้าเลยเวลาแล้วยังดันใช้ จะได้ 400 กลับมาแล้วลูกค้าไม่ได้ข้อความเลย
+ * จึงยอมเสียโควตา push ดีกว่าเสี่ยงไม่ถึง — เพดานเวลาอยู่ใน bot_config ต่อ inbox
+ *
+ * ใช้กับห้องแชทเดี่ยวเท่านั้น กลุ่มใช้ push เสมอเพราะคำสั่งมาจากคนละ event กับที่เราตอบ
+ */
+const canReplyToken = job =>
+  job.channel === 'line' && !!job.reply_token &&
+  Number.isFinite(Number(job.reply_token_age_sec)) &&
+  Number(job.reply_token_age_sec) <= Number(job.reply_token_max_sec ?? 20)
 
 /**
  * ส่งงานหนึ่งชิ้นออกไป
@@ -343,12 +361,15 @@ export async function deliver(job, config = {}, fetcher = fetch) {
 async function sendLine(job, base, channel, target, config, fetcher) {
   if (!config.access_token) return { ...base, status: 'failed', error: 'line_token_missing' }
   const rendered = renderPayload(channel, job.payload, job.text)
-  const response = await fetcher(LINE_PUSH, {
+  const reply = canReplyToken(job)
+  const response = await fetcher(reply ? LINE_REPLY : LINE_PUSH, {
     method: 'POST',
     headers: { Authorization: `Bearer ${config.access_token}`, 'Content-Type': 'application/json',
                // retry key ทำให้ยิงซ้ำแล้วไม่เกิดข้อความซ้ำ — ใช้ได้เฉพาะงานที่มีตัวตนถาวร
-               ...(base.message_id ? { 'X-Line-Retry-Key': base.message_id } : {}) },
-    body: JSON.stringify({ to: target, messages: [rendered] }),
+               // ทาง reply ไม่ต้องมี เพราะ token ใช้ได้ครั้งเดียวอยู่แล้ว
+               ...(base.message_id && !reply ? { 'X-Line-Retry-Key': base.message_id } : {}) },
+    body: JSON.stringify(reply ? { replyToken: job.reply_token, messages: [rendered] }
+                               : { to: target, messages: [rendered] }),
     signal: AbortSignal.timeout(15000),
   })
   // ยิงซ้ำด้วย retry key เดิมแล้วปลายทางบอกว่า "รับไปแล้ว" = สำเร็จ ไม่ใช่ชนกัน
@@ -357,8 +378,11 @@ async function sendLine(job, base, channel, target, config, fetcher) {
   }
   if (!response.ok) {
     // 403 ของ push แปลว่าลูกค้าบล็อกบัญชีไปแล้ว ยิงอีกกี่ครั้งก็ไม่ถึง
-    const error = response.status === 403 ? 'line_recipient_blocked' : `provider_http_${response.status}`
-    return { ...base, status: outcome(response.status, channel), error }
+    // blocked บอกชั้นบนให้ไปติดธงไว้ที่ผู้ติดต่อ จะได้ไม่เสียโควตากับคนที่บล็อกเราแล้ว
+    if (response.status === 403 && !reply) {
+      return { ...base, status: 'failed', error: 'line_recipient_blocked', blocked: true }
+    }
+    return { ...base, status: outcome(response.status, channel), error: `provider_http_${response.status}` }
   }
   const data = await response.json().catch(() => ({}))
   return { ...base, status: 'sent',

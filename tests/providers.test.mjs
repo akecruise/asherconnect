@@ -204,11 +204,40 @@ test('echo ต้องถึง receive ด้วย ไม่ใช่ถู�
  assert.equal(forReceive[0].external_id,'PSID-8')   // ปลายทางคือลูกค้า ไม่ใช่เพจ
 })
 
-test('คำสั่งในกลุ่ม LINE ยังไม่เข้า receive — รอ Phase 6',()=>{
- const body=lineBody({type:'message',webhookEventId:'01J-g9',timestamp:1757836800000,
-   source:{type:'group',groupId:'Cg1',userId:'Us1'},message:{id:'m',type:'text',text:'สถานะ'}})
- assert.equal(normalizeEvents('line',body,LN).length,1)
- assert.deepEqual(normalizeWebhook('line',body,LN),[])
+test('บอทถูกเชิญเข้ากลุ่ม (join) ยังไม่ต้องทำอะไร นอกจากเก็บไว้',()=>{
+ const body=lineBody({type:'join',webhookEventId:'01J-j9',timestamp:1757836800000,
+   source:{type:'group',groupId:'Cg1'},replyToken:'rt'})
+ assert.equal(normalizeEvents('line',body,LN)[0].event_type,'join')
+ assert.deepEqual(normalizeWebhook('line',body,LN),[])   // join ไม่เข้า receive
+})
+
+test('LINE: ตอบด้วย reply token เมื่อยังไม่หมดอายุ · เลยเวลาแล้วใช้ push',async()=>{
+ const c1=capture()
+ await deliver({kind:'send',channel:'line',target:'U1',payload:{type:'text',text:'ทันเวลา'},
+   reply_token:'rt-1',reply_token_age_sec:3,reply_token_max_sec:20},{access_token:'t'},c1.fetcher)
+ assert.equal(c1.seen.url,'https://api.line.me/v2/bot/message/reply')
+ assert.equal(c1.seen.body.replyToken,'rt-1')
+ assert.equal('to' in c1.seen.body,false)
+
+ const c2=capture()
+ await deliver({kind:'send',channel:'line',target:'U1',payload:{type:'text',text:'สายไป'},
+   reply_token:'rt-2',reply_token_age_sec:45,reply_token_max_sec:20},{access_token:'t'},c2.fetcher)
+ assert.equal(c2.seen.url,'https://api.line.me/v2/bot/message/push')
+ assert.equal(c2.seen.body.to,'U1')
+
+ // ไม่มี token มาเลยก็ push
+ const c3=capture()
+ await deliver({kind:'send',channel:'line',target:'U1',payload:{type:'text',text:'ไม่มี token'}},
+   {access_token:'t'},c3.fetcher)
+ assert.equal(c3.seen.url,'https://api.line.me/v2/bot/message/push')
+})
+
+test('push โดน 403 = ลูกค้าบล็อกแล้ว ต้องติดธงให้ชั้นบนรู้ ไม่ใช่ลองใหม่เรื่อย ๆ',async()=>{
+ const r=await deliver({kind:'send',channel:'line',target:'U1',payload:{type:'text',text:'สวัสดี'}},
+   {access_token:'t'},async()=>new Response('{}',{status:403}))
+ assert.equal(r.status,'failed')
+ assert.equal(r.error,'line_recipient_blocked')
+ assert.equal(r.blocked,true)
 })
 
 test('LINE: ข้อความในกลุ่มคือทีมสั่งงาน ไม่ใช่ลูกค้า — เก็บไว้แต่ไม่เข้า receive',()=>{
@@ -221,7 +250,11 @@ test('LINE: ข้อความในกลุ่มคือทีมสั�
  assert.equal(ev.external_id,'Usales1')
  assert.equal(ev.text,'ตอบแล้ว a1b2c3 มิ้นท์')
  assert.equal(ev.reply_token,'rt-group')
- assert.deepEqual(normalizeWebhook('line',body,LN),[])
+ // ตั้งแต่ Phase 6 คำสั่งกลุ่มต้องถึง receive เพราะฐานเป็นคนแปลคำสั่ง
+ const forReceive=normalizeWebhook('line',body,LN)
+ assert.equal(forReceive.length,1)
+ assert.equal(forReceive[0].event_type,'group_command')
+ assert.equal(forReceive[0].group_id,'Cgroup123')
 })
 
 test('LINE: บอทถูกเชิญเข้ากลุ่ม',()=>{

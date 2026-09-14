@@ -134,6 +134,8 @@ async function teardown(scene) {
     delete from core.contact where display_name like '%${TAG}%' or id in (select id from _ct);
     delete from inbox.inbox where name like '%${TAG}%';
     delete from connect_private.webhook_log where channel_key in ('line-test','fb-test');
+    delete from inbox.sales_staff_identity where external_id like '%${TAG}%';
+    delete from inbox.sales_staff where name like '%${TAG}%';
     commit;`)
 }
 
@@ -744,6 +746,187 @@ async function main() {
       ck(50, 'คำตอบของทีมจาก Business Suite เข้าระบบเป็นข้อความของเรา และไม่ถูกส่งกลับหาลูกค้า',
         r.status === 200 && sender === 'agent' && humanAt === 'true' && Number(outbound) === 0,
         `HTTP ${r.status} · ผู้ส่ง ${sender} · บันทึกเวลาคนตอบ ${humanAt} · งานขาออกที่เกิด ${outbound}`)
+    }
+
+    // ── 51-58 ของที่เป็นเรื่องเฉพาะ LINE (Phase 6)
+    //    ทุกข้อยิงผ่าน webhook จริงพร้อมลายเซ็น ไม่ได้เรียกฟังก์ชันลัด
+    const lineEvent = (ev) => JSON.stringify({ destination: 'U-bot-destination', events: [ev] })
+    const fireLine = async (ev) => {
+      const raw = lineEvent(ev)
+      const r = await post('/webhooks/line-test', raw, { 'x-line-signature': sign(raw, LINE_SECRET, 'base64') })
+      await settle()
+      return r
+    }
+    const CODE = 'abc123'
+    const CUSTOMER = `U-${TAG}-${CODE}`
+    const SALES = `U-${TAG}-sale01`
+    const GROUP = `C${TAG}group`
+
+    {
+      // เพิ่มเพื่อนใหม่ → ต้องได้ข้อความต้อนรับเข้าคิว และแจ้งทีม
+      await sql(asService(`select inbox.seed_bot_defaults('${scene.lineInbox}');`))
+      const r = await fireLine({ type: 'follow', webhookEventId: `${TAG}-follow-1`, timestamp: Date.now(),
+        source: { type: 'user', userId: CUSTOMER }, replyToken: 'rt-follow' })
+      const welcome = await one(`select count(*) from inbox.message m
+                                   join inbox.conversation c on c.id=m.conversation_id
+                                   join core.contact_identity ci on ci.contact_id=c.contact_id
+                                  where ci.external_id='${CUSTOMER}' and m.sender_type='bot'
+                                    and m.content like '%เพิ่มเพื่อน%'`)
+      const notified = await one(`select count(*) from connect_private.job j
+                                    join inbox.conversation c on c.id=j.conversation_id
+                                    join core.contact_identity ci on ci.contact_id=c.contact_id
+                                   where ci.external_id='${CUSTOMER}' and j.kind='notify'
+                                     and j.payload->>'kind'='follow'`)
+      ck(51, 'เพิ่มเพื่อนใหม่: ได้ข้อความต้อนรับเข้าคิว และทีมได้รับแจ้ง',
+        r.status === 200 && Number(welcome) === 1 && Number(notified) === 1,
+        `HTTP ${r.status} · ข้อความต้อนรับ ${welcome} · งานแจ้ง ${notified}`)
+    }
+    {
+      // [AD:xxx] จากลิงก์โฆษณา → ad_id ติดทั้งบทสนทนา และ prefix ต้องไม่ปนอยู่ในข้อความ
+      await fireLine({ type: 'message', webhookEventId: `${TAG}-ad-1`, timestamp: Date.now(),
+        source: { type: 'user', userId: CUSTOMER }, replyToken: 'rt-ad',
+        message: { id: 'lm-ad-1', type: 'text', text: '[AD:naii_carousel_01] สนใจห้อง 1 นอนค่ะ' } })
+      const row = await sql(`select c.ad_id, m.content from inbox.message m
+                               join inbox.conversation c on c.id=m.conversation_id
+                              where m.external_message_id='${TAG}-ad-1'`)
+      const [adId, content] = row[0] || []
+      ck(52, 'ข้อความจากลิงก์โฆษณา: ติด ad_id ให้บทสนทนา และตัด prefix ออกก่อนเก็บ',
+        adId === 'naii_carousel_01' && content === 'สนใจห้อง 1 นอนค่ะ',
+        `ad_id ${adId} · ข้อความที่เก็บ "${content}"`)
+    }
+    {
+      // ยิงซ้ำที่ผู้ให้บริการติดธงมาให้ ต้องไม่ถูกประมวลผลอีกรอบ
+      const before = await one(`select count(*) from inbox.message where external_message_id='${TAG}-redeliver'`)
+      await fireLine({ type: 'message', webhookEventId: `${TAG}-redeliver`, timestamp: Date.now(),
+        source: { type: 'user', userId: CUSTOMER }, replyToken: 'rt-re',
+        deliveryContext: { isRedelivery: true },
+        message: { id: 'lm-re', type: 'text', text: 'ของที่ยิงซ้ำ' } })
+      const after = await one(`select count(*) from inbox.message where external_message_id='${TAG}-redeliver'`)
+      ck(53, 'ของที่ผู้ให้บริการยิงซ้ำ ไม่ถูกประมวลผลอีกรอบ',
+        Number(before) === 0 && Number(after) === 0, `ก่อน ${before} · หลัง ${after}`)
+    }
+    {
+      // คำสั่งกลุ่มที่ไม่ต้องมีเคส
+      const ask = async (no, text, expect) => {
+        await fireLine({ type: 'message', webhookEventId: `${TAG}-g-${no}`, timestamp: Date.now(),
+          source: { type: 'group', groupId: GROUP, userId: SALES }, replyToken: `rt-g-${no}`,
+          message: { id: `lm-g-${no}`, type: 'text', text } })
+        return one(`select payload->>'text' from connect_private.job
+                     where channel='line_group' and target='${GROUP}'
+                     order by id desc limit 1`)
+      }
+
+      const gid = await ask(1, 'ไอดีกลุ่ม')
+      const status = await ask(2, 'สถานะ')
+      const reg = await ask(3, `ลงทะเบียน มิ้นท์ ${TAG}`)
+      const who = await ask(4, 'ฉันใคร')
+      ck(54, 'คำสั่งกลุ่ม: ไอดีกลุ่ม · สถานะ · ลงทะเบียน · ฉันใคร',
+        (gid || '').includes(GROUP) && (status || '').includes('สถานะบอท')
+          && (reg || '').includes('ลงทะเบียนให้แล้ว') && (who || '').includes('มิ้นท์'),
+        `ไอดีกลุ่ม "${(gid||'').slice(0,40)}" · สถานะ "${(status||'').slice(0,30)}" · ` +
+        `ลงทะเบียน "${(reg||'').slice(0,30)}" · ฉันใคร "${(who||'').slice(0,30)}"`)
+
+      const staff = await one(`select count(*) from inbox.sales_staff_identity si
+                                 join inbox.sales_staff st on st.id=si.staff_id
+                                where si.external_id='${SALES}' and st.name like '%${TAG}%'`)
+      ck(55, 'ลงทะเบียนแล้วผูก LINE ของคนในทีมกับชื่อไว้จริง', Number(staff) === 1, `${staff} แถว`)
+
+      // ตอบแล้ว <รหัส> — สัญญาณสำรองตอนทีมตอบจาก chat.line.biz
+      const convId = await one(`select c.id from inbox.conversation c
+                                 join core.contact_identity ci on ci.contact_id=c.contact_id
+                                where ci.external_id='${CUSTOMER}' limit 1`)
+      await sql(`insert into connect_private.job(kind,channel,inbox_id,conversation_id,payload,send_after)
+                 values('generate','line','${scene.lineInbox}','${convId}','{}'::jsonb, now()+interval '20 minutes')`)
+      const done = await ask(5, `ตอบแล้ว ${CODE}`)
+      const after = await sql(`select (c.last_human_reply_at is not null)::text,
+                                      (select j.status from connect_private.job j
+                                        where j.conversation_id=c.id and j.kind='generate' order by j.id desc limit 1),
+                                      (select e.source from inbox.human_reply_events e
+                                        where e.conversation_id=c.id order by e.id desc limit 1)
+                                 from inbox.conversation c where c.id='${convId}'`)
+      const [humanAt, jobStatus, source] = after[0] || []
+      ck(56, 'ตอบแล้ว <รหัส>: บันทึกเวลาคนตอบ · ยกเลิกงานที่บอทจ่อจะส่ง · ลงบันทึกว่าใครบอก',
+        (done || '').includes('บอทจะเงียบ') && humanAt === 'true'
+          && jobStatus === 'skipped' && source === 'group_cmd',
+        `ตอบ "${(done||'').slice(0,40)}" · เวลาคนตอบ ${humanAt} · งาน ${jobStatus} · ที่มา ${source}`)
+
+      const stop = await ask(6, `หยุด ${CODE}`)
+      const modeOff = await one(`select mode from inbox.conversation where id='${convId}'`)
+      const go = await ask(7, `บอท ${CODE}`)
+      const modeOn = await one(`select mode from inbox.conversation where id='${convId}'`)
+      ck(57, 'หยุด / บอท <รหัส>: สลับโหมดของเคสได้จากกลุ่ม',
+        (stop || '').includes('ปิดบอท') && modeOff === 'human'
+          && (go || '').includes('เปิดบอท') && modeOn === 'bot',
+        `หยุด → ${modeOff} · บอท → ${modeOn}`)
+
+      const unknown = await one(`select count(*) from connect_private.job
+                                  where channel='line_group' and payload->>'text' like '%ไม่พบเคส%'`)
+      await fireLine({ type: 'message', webhookEventId: `${TAG}-g-8`, timestamp: Date.now(),
+        source: { type: 'group', groupId: GROUP, userId: SALES }, replyToken: 'rt-g-8',
+        message: { id: 'lm-g-8', type: 'text', text: 'วันนี้กินอะไรดี' } })
+      const chatter = await one(`select count(*) from connect_private.job where channel='line_group'`)
+      const before8 = Number(await one(`select count(*) from connect_private.inbound_event where event_id='${TAG}-g-8'`))
+      ck(58, 'คุยกันเองในกลุ่ม บอทไม่ตอบ แต่ยังบันทึกว่าเคยเห็น event นั้น',
+        Number(chatter) === 7 && before8 === 1, `งานตอบกลับทั้งหมด ${chatter} ชิ้น · บันทึก event ${before8}`)
+    }
+    {
+      // unfollow: ติดธงว่าบล็อกแล้ว จะได้ไม่เสียโควตายิงหาคนที่ไม่ได้ยินเรา
+      await fireLine({ type: 'unfollow', webhookEventId: `${TAG}-unfollow-1`, timestamp: Date.now(),
+        source: { type: 'user', userId: CUSTOMER } })
+      const blocked = await one(`select ct.blocked::text from core.contact ct
+                                   join core.contact_identity ci on ci.contact_id=ct.id
+                                  where ci.external_id='${CUSTOMER}'`)
+      ck(59, 'ลูกค้าบล็อกบัญชี: ติดธงไว้ที่ผู้ติดต่อ', blocked === 'true', `blocked=${blocked}`)
+    }
+    {
+      // endpoint สำรองให้ Marketing OS บอกว่าคนตอบจาก chat.line.biz แล้ว
+      const convId = await one(`select c.id from inbox.conversation c
+                                 join core.contact_identity ci on ci.contact_id=c.contact_id
+                                where ci.external_id='${CUSTOMER}' limit 1`)
+      await sql(`update inbox.conversation set last_human_reply_at=null where id='${convId}'`)
+      const r = await command('human_reply', { channel: 'line', external_id: CUSTOMER, note: 'ตอบจาก chat.line.biz' })
+      const row = await sql(`select (c.last_human_reply_at is not null)::text,
+                                    (select e.source from inbox.human_reply_events e
+                                      where e.conversation_id=c.id order by e.id desc limit 1)
+                               from inbox.conversation c where c.id='${convId}'`)
+      const [humanAt, source] = row[0] || []
+      ck(60, 'endpoint human_reply: ระบุลูกค้าด้วยช่องทาง+id ได้ ไม่ต้องรู้จัก conversation ของเรา',
+        r.status === 200 && humanAt === 'true' && source === 'api',
+        `HTTP ${r.status} ${r.body.slice(0, 60)} · เวลาคนตอบ ${humanAt} · ที่มา ${source}`)
+    }
+
+    // ── 61 สัญญาณ "คนตอบแล้ว" ตัวหลัก: เซลส์กดส่งจากหน้าจอเรา
+    //    ใช้กล่องนอกสายตา worker เพื่อให้คุมจังหวะ claim/finish ได้เอง
+    {
+      const ib = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
+        values('line','${scene.project}','LINE ${TAG} เซลส์ตอบ','TEST_ONLY',true) returning id`)
+      const ct = await one(`select core.resolve_identity('line','U-${TAG}-ws','${ib}','ลูกค้า ${TAG} ws','${scene.project}')`)
+      const cv = await one(`insert into inbox.conversation(inbox_id,contact_id,assignee_id,status)
+        values('${ib}','${ct}','${scene.agent}','open') returning id`)
+      await sql(`insert into inbox.message(conversation_id,sender_type,content)
+                 values('${cv}','contact','ราคาเท่าไหร่คะ')`)
+      await sql(`insert into connect_private.job(kind,channel,inbox_id,conversation_id,payload,send_after)
+                 values('generate','line','${ib}','${cv}','{}'::jsonb, now()+interval '20 minutes')`)
+      const msg = await one(`insert into inbox.message(conversation_id,sender_type,sender_id,content)
+        values('${cv}','agent','${scene.agent}','เริ่ม 2.39 ลบ. ค่ะ') returning id`)
+
+      // หยิบงานส่งแล้วรายงานว่าส่งถึงลูกค้าแล้ว — เส้นเดียวกับที่ worker เดินจริง
+      const claimed = await sql(asService(`select connect_private.worker('claim',
+        jsonb_build_object('inbox_ids', jsonb_build_array('${ib}')))::text;`))
+      const job = JSON.parse(claimed.map(x => x[0]).find(v => v && v.startsWith('{')) ?? '{}')
+      await sql(asService(`select connect_private.worker('finish', jsonb_build_object(
+        'message_id','${msg}','lease_id','${job.lease_id}','status','sent','provider_id','p1'));`))
+
+      const row = await sql(`select (c.last_human_reply_at is not null)::text,
+                                    (select e.source from inbox.human_reply_events e
+                                      where e.conversation_id=c.id order by e.id desc limit 1),
+                                    (select j.status from connect_private.job j
+                                      where j.conversation_id=c.id and j.kind='generate' order by j.id desc limit 1)
+                               from inbox.conversation c where c.id='${cv}'`)
+      const [humanAt, source, jobStatus] = row[0] || []
+      ck(61, 'เซลส์กดส่งจากหน้าจอ: นับเป็นคนตอบทันทีที่ถึงลูกค้า และบอทหยุดจ่อ',
+        humanAt === 'true' && source === 'workspace' && jobStatus === 'skipped',
+        `เวลาคนตอบ ${humanAt} · ที่มา ${source} · งานที่บอทจ่อ ${jobStatus}`)
     }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }
