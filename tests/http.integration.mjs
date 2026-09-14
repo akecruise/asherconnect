@@ -79,10 +79,10 @@ async function env() {
   return map
 }
 
-async function testUser() {
+async function testUser(prefix = 'sales.a.test@') {
   const raw = await readFile(join(root, '..', '.asher-test-users'), 'utf8')
-  const line = raw.split(/\r?\n/).find(l => l.startsWith('sales.a.test@'))
-  if (!line) throw new Error('ไม่พบบัญชีทดสอบ — รัน node scripts/seed-test-users.mjs --apply ก่อน')
+  const line = raw.split(/\r?\n/).find(l => l.startsWith(prefix))
+  if (!line) throw new Error(`ไม่พบบัญชีทดสอบ ${prefix} — รัน node scripts/seed-test-users.mjs --apply ก่อน`)
   const [email, password] = line.split('|')
   return { email, password }
 }
@@ -653,6 +653,10 @@ async function main() {
     {
       const ib = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
         values('line','${scene.project}','LINE ${TAG} คิวงาน','TEST_ONLY',true) returning id`)
+      // เปิดสวิตช์บอทของกล่องนี้ก่อน — ข้อนี้ทดสอบเรื่องโหมดเงา ไม่ใช่เรื่องสวิตช์
+      await sql(`insert into inbox.bot_config(inbox_id,key,value)
+                 values('${ib}','bot.generate_enabled','true'::jsonb)
+                 on conflict (inbox_id,key) do update set value=excluded.value`)
       await sql(`insert into connect_private.job(kind,channel,inbox_id,payload,send_after)
                  values('notify','team','${ib}','{}'::jsonb, now() - interval '1 minute'),
                         ('generate','line','${ib}','{}'::jsonb, now() - interval '1 minute')`)
@@ -670,6 +674,53 @@ async function main() {
       ck(46, 'โหมดเงา: ขอเฉพาะงานของบอท งานส่งไม่ถูกแตะแม้แต่การหยิบ',
         shadowPick === 'generate' && livePick === 'notify' && notifyStatus === 'processing',
         `โหมดเงาได้ ${shadowPick} · โหมดปกติได้ ${livePick} · งานแจ้งตอนนี้ ${notifyStatus}`)
+    }
+
+    // ── 47-49 ปุ่มเปิด/ปิดบอท
+    //    สวิตช์นี้คุม "การลงมือทำ" ไม่ใช่ "การตัดสินใจ" — ปิดแล้วยังต้องบันทึก bot_decisions
+    //    ตามปกติ ไม่งั้นตัวเลขที่เอาไปเทียบกับ cloud ตอน shadow จะเพี้ยนทันที
+    {
+      const ib = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
+        values('line','${scene.project}','LINE ${TAG} สวิตช์','TEST_ONLY',true) returning id`)
+      await sql(asService(`select inbox.seed_bot_defaults('${ib}'); select inbox.seed_bot_switches('${ib}');`))
+      await sql(`insert into connect_private.job(kind,channel,inbox_id,payload,send_after)
+                 values('generate','line','${ib}','{}'::jsonb, now() - interval '1 minute')`)
+
+      const claim = () => sql(asService(
+        `select coalesce(connect_private.worker('claim_job', jsonb_build_object(
+           'kinds', '["generate","classify"]'::jsonb,
+           'inbox_ids', jsonb_build_array('${ib}')))->>'kind', '(ไม่ได้งาน)');`))
+        .then(r => r.map(x => x[0]).find(v => v && !['BEGIN','COMMIT','SET'].includes(v)) ?? '(ไม่ได้งาน)')
+
+      const whileOff = await claim()
+      const stillPending = await one(`select status||' · หยิบไป '||attempts||' ครั้ง' from connect_private.job where inbox_id='${ib}'`)
+      ck(47, 'ปิดอยู่: งานไม่ถูกหยิบเลย และตัวนับครั้งไม่ขยับ',
+        whileOff === '(ไม่ได้งาน)' && stillPending === 'pending · หยิบไป 0 ครั้ง',
+        `หยิบได้ ${whileOff} · งานตอนนี้ ${stillPending}`)
+
+      // เปิดผ่านทางเดียวกับที่ปุ่มบนหน้าจอใช้
+      // ต้องยกเซิร์ฟเวอร์ที่ทำงานในนามผู้จัดการ เพราะตัวหลักทำงานในนามเซลส์
+      // ซึ่งกดสวิตช์ไม่ได้โดยตั้งใจ (ดูข้อ 49)
+      const manager = await testUser('manager.test@')
+      const s6 = await startServer(scene, cfg,
+        { CONNECT_ACCOUNT_EMAIL: manager.email, CONNECT_ACCOUNT_PASSWORD: manager.password }, PORT + 4)
+      extraServers.push(s6)
+      const flip = await fetch(s6.base + '/api/command', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s6.base },
+        body: JSON.stringify({ action: 'bot_switch', data: { switch: 'generate', enabled: true, inbox_id: ib } }) })
+      const whileOn = await claim()
+      ck(48, 'ผู้จัดการกดเปิดจากหน้าจอแล้วงานเดินต่อจากของที่ค้างไว้ ไม่ได้หายไป',
+        flip.status === 200 && whileOn === 'generate', `HTTP ${flip.status} · หยิบได้ ${whileOn}`)
+    }
+    {
+      // เซลส์ทั่วไปกดสวิตช์ไม่ได้ — เป็นเรื่องเงินและเป็นเรื่องที่ลูกค้าเห็น
+      const salesId = await one(`select id from auth.users where email='sales.a.test@asher.local'`)
+      const denied = await sql(`begin;
+        set local request.jwt.claims = '{"sub":"${salesId}","role":"authenticated"}';
+        select coalesce((select connect_private.api('bot_switch', '{"switch":"generate","enabled":true}')::text), 'ไม่มีข้อความ');
+        commit;`).catch(e => ['ปฏิเสธ: ' + e.message])
+      const text = Array.isArray(denied) ? denied.map(x => Array.isArray(x) ? x[0] : x).join(' ') : String(denied)
+      ck(49, 'เซลส์ทั่วไปกดสวิตช์บอทไม่ได้', text.includes('not_allowed'), text.slice(0, 120))
     }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }

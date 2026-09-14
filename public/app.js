@@ -44,6 +44,31 @@ let dialogAction,dialogData
 function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
 function stage(code){if(!detail||code===detail.lead?.stage_code)return;if(code==='appointment')return appointment();if(code==='booking'){if(!detail.units.length){note('ยังไม่มีห้องพร้อมจองใน ERP กรุณาให้ผู้ดูแลเพิ่มห้องก่อน',true);return}dialog('ยืนยันการจองห้อง',[{name:'unit_id',label:'ห้อง',options:detail.units.map(u=>({value:u.id,label:u.number+' · '+Number(u.price).toLocaleString()+' บาท'}))},{name:'amount',label:'ราคาสุทธิ (บาท)',type:'number',min:1,step:'.01'},{name:'deposit',label:'เงินจอง (บาท)',type:'number',min:0,step:'.01'}],'stage',{stage:code});return}if(code==='sale'){dialog('ยืนยันปิดการขาย',[{name:'reference',label:'เลขที่สัญญา / เอกสารอ้างอิง',maxLength:200}],'stage',{stage:code});return}dialog('ยืนยันสถานะ '+stageNames[code],[],'stage',{stage:code})}
 function appointment(){dialog('นัดเข้าชม · เวลาไทย',[{name:'appointment_at',label:'วันและเวลานัด',type:'datetime-local',value:local(detail.state?.appointment_at)}],'appointment')}
+let botState=[]
+// สถานะบอทต้องอ่านจากฐานเสมอ ไม่ใช่จำไว้ในหน้าจอ — ผู้จัดการอีกคนอาจเพิ่งกดปิดไป
+async function refreshBot(){
+ try{botState=await api('bot_status')}catch{botState=[]}
+ const btn=$('bot-toggle');if(!btn)return
+ const on=botState.some(b=>b.generate)
+ const pending=botState.reduce((n,b)=>n+Number(b.pending_generate||0),0)
+ const manager=['manager','admin'].includes(boot?.user?.role)
+ btn.hidden=!botState.length
+ btn.disabled=!manager
+ // งานที่ค้างเพราะปิดบอทไว้ ต้องโชว์ตรงปุ่ม ไม่งั้น "ปิดอยู่" กับ "พัง" แยกกันไม่ออก
+ btn.textContent=(on?'บอทเปิด · กดเพื่อปิด':'บอทปิด · กดเพื่อเปิด')+(pending?' (ค้าง '+pending+')':'')
+ btn.className='subtle'+(on?' bot-on':'')
+ btn.title=manager?(on?'ปิดแล้วจะไม่มีการเรียก AI อีก งานที่ค้างจะรออยู่ในคิว':'เปิดแล้วระบบจะเรียก AI คิดคำตอบทุกข้อความ ซึ่งมีค่าใช้จ่าย'):'เฉพาะผู้จัดการขึ้นไป'
+}
+$('bot-toggle').addEventListener('click',async()=>{
+ const next=!botState.some(b=>b.generate)
+ if(next&&!confirm('เปิดบอทแล้วระบบจะเรียก AI คิดคำตอบทุกข้อความที่ลูกค้าทักเข้ามา ซึ่งมีค่าใช้จ่ายจริงต่อข้อความ\n\nยืนยันเปิดหรือไม่?'))return
+ const btn=$('bot-toggle');btn.disabled=true
+ try{
+  await api('bot_switch',{switch:'generate',enabled:next})
+  await api('bot_switch',{switch:'classify',enabled:next})
+  await refreshBot();note(next?'เปิดบอทแล้ว ระบบจะเริ่มคิดคำตอบให้ลูกค้า':'ปิดบอทแล้ว ไม่มีการเรียก AI อีก')
+ }catch(e){note(e.message,true);btn.disabled=false}
+})
 $('reply').addEventListener('submit',e=>{e.preventDefault();const value=$('message').value.trim();if(value)mutate('send',{text:value})})
 $('lead-form').addEventListener('input',()=>dirty=true)
 $('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,follow_up_at:utc($('followup').value)})})
@@ -58,7 +83,7 @@ $('previous').addEventListener('click',()=>{offset=Math.max(0,offset-50);loadLis
 $('next').addEventListener('click',()=>{offset+=50;loadList().catch(e=>note(e.message,true))})
 let searchTimer;$('search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{offset=0;loadList().catch(e=>note(e.message,true))},350)})
 $('older').addEventListener('click',async()=>{const id=selected;try{const first=detail.messages[0];if(!first)return;const data=await api('messages',{id,before:first.created_at});if(id!==selected)return;detail.messages=[...data.messages,...detail.messages];renderMessages(data.messages,true)}catch(e){note(e.message,true)}})
-async function start(){boot=await api('bootstrap');$('user').textContent=boot.user.email;$('channel-status').textContent=boot.channels.length?boot.channels.map(c=>c.name+': '+(c.enabled?'เชื่อมแล้ว':'ยังไม่เชื่อม')).join(' · '):'ยังไม่ได้เชื่อมช่องทางแชท';$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}$('filters').replaceChildren();for(const [key,label]of Object.entries(labels)){const b=text('button',label,key===filter?'active':'');if(key==='sla'){const badge=text('span','','sla-count');badge.id='sla-count';badge.hidden=true;b.append(badge)}b.addEventListener('click',()=>{filter=key;offset=0;for(const x of $('filters').children)x.classList.toggle('active',x===b);loadList().catch(e=>note(e.message,true))});$('filters').append(b)}await loadList()}
-setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');const wait=sla(next.conversation.status==='resolved'?null:next.state?.waiting_since);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;permissions()}}catch(e){note(e.message,true)}finally{polling=false}},10000)
+async function start(){boot=await api('bootstrap');await refreshBot();$('user').textContent=boot.user.email;$('channel-status').textContent=boot.channels.length?boot.channels.map(c=>c.name+': '+(c.enabled?'เชื่อมแล้ว':'ยังไม่เชื่อม')).join(' · '):'ยังไม่ได้เชื่อมช่องทางแชท';$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}$('filters').replaceChildren();for(const [key,label]of Object.entries(labels)){const b=text('button',label,key===filter?'active':'');if(key==='sla'){const badge=text('span','','sla-count');badge.id='sla-count';badge.hidden=true;b.append(badge)}b.addEventListener('click',()=>{filter=key;offset=0;for(const x of $('filters').children)x.classList.toggle('active',x===b);loadList().catch(e=>note(e.message,true))});$('filters').append(b)}await loadList()}
+setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');const wait=sla(next.conversation.status==='resolved'?null:next.state?.waiting_since);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;permissions()}}catch(e){note(e.message,true)}finally{polling=false}},10000)
 window.addEventListener('beforeunload',e=>{if(dirty||$('message').value.trim()){e.preventDefault();e.returnValue=''}})
 start().catch(e=>note(e.message,true))

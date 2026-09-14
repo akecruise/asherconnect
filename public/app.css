@@ -439,3 +439,7 @@ header {
 .canned button { background: var(--fresh-sky); border-color: var(--accent-line) }
 .appointment { background: var(--fresh-sun); border: 1px solid var(--rule); border-radius: 14px; padding: 18px; margin-bottom: 16px }
 .notice:not(.error) { background: var(--fresh-mint) }
+
+/* ปุ่มเปิด/ปิดบอท — ตอนเปิดต้องเห็นชัดจากอีกฝั่งห้อง เพราะมันคือสถานะที่เสียเงิน */
+#bot-toggle.bot-on { background: var(--good, #1f7a4d); color: #fff; border-color: transparent }
+#bot-toggle[disabled] { opacity: .55; cursor: not-allowed }

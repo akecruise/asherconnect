@@ -251,6 +251,21 @@ const BOT_KINDS = ['generate', 'classify']
 const SEND_KINDS = ['notify', 'typing']
 
 let workerRunning = false, workerLastSuccess = null
+// ภาพคิวล่าสุด อ่านนาทีละครั้งพอ — /health ต้องเบาและต้องไม่พังเพราะฐานช้า
+let jobQueue = null, jobQueueAt = 0
+
+async function refreshQueue() {
+  if (Date.now() - jobQueueAt < 60000) return
+  jobQueueAt = Date.now()
+  try {
+    jobQueue = await rpc(service, 'job_counts', {}, true)
+    // งานค้างเพราะสวิตช์ปิดอยู่ ต้องดังพอให้คนเห็น ไม่ใช่เงียบหายไปในคิว
+    const off = (jobQueue?.switches ?? []).filter(x => !x.generate && x.pending_generate > 0)
+    for (const x of off) log.warn('generate_disabled_backlog', { inbox: x.name, pending: x.pending_generate })
+  } catch (e) {
+    log.warn('job_counts_failed', { reason: e.message })
+  }
+}
 
 async function worker() {
   if (workerRunning || !activeChannels.length) return
@@ -265,6 +280,7 @@ async function worker() {
       await runJob(job)
       done++
     }
+    await refreshQueue()
     // ในโหมดเงาตัวส่งข้อความไม่เดินโดยตั้งใจ จึงไม่นับว่า "ยังส่งได้อยู่"
     if (!shadow) workerLastSuccess = new Date().toISOString()
   } catch (e) {
@@ -453,7 +469,10 @@ function health() {
   const inboundOk = !activeChannels.length || inboundIdleFor <= WORKER_STALE_MS
   return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, account: accountEmail,
            workerLastSuccess, idleFor, inboundLastSuccess, inboundIdleFor,
-           activeChannels: activeChannels.length, edgeFunctions, projects }
+           activeChannels: activeChannels.length, edgeFunctions, projects,
+           // สวิตช์ของบอทต้องมองเห็นจากข้างนอกเสมอ
+           // ไม่งั้น "บอทไม่ตอบ" กับ "บอทถูกปิดไว้" จะแยกกันไม่ออกตอนมีคนถามว่าทำไมเงียบ
+           bot: jobQueue }
 }
 
 // ───────────────────────────────────────────────────────── ตัวช่วย HTTP
