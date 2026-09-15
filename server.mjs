@@ -12,10 +12,12 @@
  *      ยกเว้นทางเดียวคือคำตอบของ Edge Function ซึ่งเป็นของโปรแกรมนั้น เราส่งต่อโดยไม่ตีความ
  *   3. /health ต้องตอบว่า "ไม่ไหว" ได้จริง ไม่งั้นมันไม่ใช่สถานะสุขภาพ เป็นแค่การบอกว่าพอร์ตยังเปิด
  *
- * ไม่มีชั้นล็อกอินแล้ว — ทั้งบริการทำงานในนามบัญชีเดียว ดูเหตุผลและขอบเขตที่หัวข้อ "ตั้งค่า"
+ * ทุกคำสั่งจากหน้าเว็บวิ่งด้วยตัวตนของคนที่ล็อกอินอยู่ ส่วน worker กับ webhook ยังใช้สิทธิ์ service เหมือนเดิม
+ * ฐานข้อมูลจึงเห็น auth.uid() เป็นคนจริง ไม่ใช่บัญชีกลาง — RLS และแท็บ "งานของฉัน" ถึงทำงานได้
  */
 
 import http from 'node:http'
+import { createSessions } from './auth.mjs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,22 +51,14 @@ const UPSTREAM_TIMEOUT = 20000
 // โหมดเงา: รับสำเนาข้อความเข้ามาสะสมได้ แต่ห้ามส่งอะไรออกไปหาลูกค้าเด็ดขาด
 // ใช้ตอนที่ยังมีบอทตัวเดิมตอบลูกค้าอยู่ — ถ้าเครื่องนี้ส่งด้วย ลูกค้าจะได้คำตอบสองครั้ง
 // กันด้วยโครงสร้าง ไม่ใช่ด้วยข้อตกลงว่าจะไม่มีใครกดปุ่มส่ง
-const shadow = process.env.CONNECT_SHADOW_MODE === 'true'
+// ★ ค่านี้ไม่ใช่ของตายอีกต่อไป — เจ้าของจริงคือ inbox.bot_config ในฐาน (ดู sql/016)
+// env เหลือหน้าที่เดียว: เป็นค่าตั้งต้นตอนที่ฐานยังไม่เคยถูกตั้งมาก่อน
+// ทำแบบนี้เพราะ "ตอนนี้ส่งจริงหรือยัง" ต้องมีคำตอบเดียวทั้งระบบ และคนหน้างานต้องเปลี่ยนเองได้
+// โดยไม่ต้องสร้างคอนเทนเนอร์ใหม่ ซึ่งเดิมทำให้ทุกคนหลุดจากหน้าจอพร้อมกัน
+const shadowDefault = process.env.CONNECT_SHADOW_MODE === 'true'
+let shadow = shadowDefault
+let sendModeAt = 0
 
-// ไม่มีชั้นล็อกอิน — ทั้งบริการทำงานในนามบัญชีเดียวที่ตั้งไว้ตรงนี้
-//
-// ใครเปิดหน้าเว็บนี้ได้ ก็ใช้สิทธิ์ของบัญชีนี้ได้ทันที ไม่มีด่านไหนคั่นอีก
-// ด่านที่เหลือจึงไม่ใช่เรื่องของแอปแล้ว แต่เป็นเรื่องว่า *ใครต่อถึงพอร์ตนี้ได้*
-// ตอนนี้ผูกไว้ที่ 127.0.0.1 ใน docker-compose.yml — ถ้าจะเปิดออกเน็ต ต้องมีด่านชั้นนอกมาแทน
-//
-// สิทธิ์ฝั่งฐานข้อมูลยังบังคับตามเดิมทุกข้อ เพราะยังยิงด้วย token จริงของบัญชีนี้
-// ไม่ได้ปลอม JWT และไม่ได้ข้าม RLS — ที่หายไปมีอย่างเดียวคือคำถามว่า "คุณเป็นใคร"
-// role ของบัญชีนี้จึงเป็นตัวกำหนดว่าหน้าจอทำอะไรได้บ้าง
-const accountEmail = process.env.CONNECT_ACCOUNT_EMAIL || ''
-const accountPassword = process.env.CONNECT_ACCOUNT_PASSWORD || ''
-if (!accountEmail || !accountPassword) {
-  throw new Error('ต้องตั้ง CONNECT_ACCOUNT_EMAIL และ CONNECT_ACCOUNT_PASSWORD — บริการนี้ทำงานในนามบัญชีเดียว')
-}
 // ทะเบียน Edge Function ที่หน้าจอเรียกได้ — ชื่อคั่นด้วยจุลภาคใน CONNECT_EDGE_FUNCTIONS
 //
 // ตั้งใจให้ "เพิ่มโปรแกรมหนึ่งตัว" = เพิ่มชื่อลงตัวแปรนี้ ไม่ใช่แก้โค้ดที่นี่
@@ -181,55 +175,12 @@ const rpc = (token, action, data = {}, worker = false) =>
     headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
   })
 
-// ───────────────────────────────────────────────────────── เซสชันของบัญชีที่บริการนี้ใช้
+// ───────────────────────────────────────────── เซสชันของคนที่ล็อกอิน
 //
-// ไม่มีเซสชันรายคนแล้ว จึงไม่มีคุกกี้ ไม่มีไฟล์เซสชัน และไม่มีอะไรต้องกวาดทิ้ง
-// เหลือ token ใบเดียวที่ทั้งบริการใช้ร่วมกัน เก็บไว้ในหน่วยความจำ ตายไปพร้อมโพรเซส
-//
-// ที่ต้องระวังคือ gotrue ออก session ใหม่ทุกครั้งที่ล็อกอิน แล้วใบเก่าจะใช้ไม่ได้ทันที
-// ("Session from session_id claim in JWT does not exist") — หน้าเว็บยิงหลายคำขอพร้อมกันตอนเปิด
-// ถ้าปล่อยให้ต่างคนต่างล็อกอิน จะกดทับกันเองจนเข้าไม่ได้เลย ทั้งที่แต่ละคำขอสำเร็จ
-// จึงบังคับให้มีการล็อกอินได้ทีละหนึ่งครั้ง คำขอที่มาระหว่างนั้นรอผลของตัวแรก
-
-let account = null, pending = null
-
-function signIn() {
-  if (pending) return pending
-  pending = (async () => {
-    const s = await authCall('/auth/v1/token?grant_type=password',
-      { method: 'POST', body: { email: accountEmail, password: accountPassword } })
-    // ด่านที่สอง: มีตัวตนแล้วยังต้องมีโปรไฟล์ในระบบนี้ด้วย บัญชีที่ไม่มีสิทธิ์จะตกตรงนี้
-    await rpc(s.access_token, 'bootstrap')
-    account = { access_token: s.access_token, token_expires: Date.now() + s.expires_in * 1000 }
-    log.info('account_signed_in', { email: accountEmail })
-    return account
-  })().finally(() => { pending = null })
-  return pending
-}
-
-// หมุนก่อนหมดอายุสองนาที เผื่อคำขอที่กำลังเดินทางอยู่
-const token = async () =>
-  (account && account.token_expires > Date.now() + 120000 ? account : await signIn()).access_token
-// ทิ้งใบที่ถืออยู่แล้วขอใหม่ ใช้ตอนที่ปลายทางบอกว่าใบนี้ใช้ไม่ได้ทั้งที่ยังไม่หมดอายุ
-const renew = () => { account = null; return token() }
-
-/**
- * ยิงงานด้วย token ของบัญชี แล้วถ้าโดนปฏิเสธเพราะ token ตาย ให้ล็อกอินใหม่แล้วลองอีกครั้งเดียว
- *
- * ใบเดียวที่ใช้ร่วมกันตายได้โดยที่ยังไม่หมดอายุ — เช่นมีคนล็อกอินบัญชีเดียวกันจากที่อื่น
- * หรือ gotrue ถูกรีสตาร์ต ถ้าไม่ลองใหม่ หน้าจอจะค้างยาวจนกว่าจะถึงเวลาหมุนตามกำหนด
- * ลองซ้ำครั้งเดียวพอ ถ้ายังไม่ผ่านแปลว่าเป็นปัญหาอื่น ไม่ใช่เรื่องใบหมดอายุ
- */
-async function withAccount(run) {
-  try {
-    return await run(await token())
-  } catch (e) {
-    if (e.status !== 401) throw e
-    log.info('account_token_renewed', { reason: e.message })
-    account = null
-    return run(await token())
-  }
-}
+// เก็บเป็นไฟล์นอกโพรเซส เพื่อให้รีสตาร์ต/deploy แล้วคนที่กำลังทำงานอยู่ไม่หลุดพร้อมกันทั้งออฟฟิศ
+// บน VPS โฟลเดอร์นี้ผูกเป็น volume ไว้ใน docker-compose.yml ไม่งั้นสร้าง container ใหม่แล้วหายอยู่ดี
+const sessionDir = process.env.SESSION_DIR || join(root, '.sessions')
+const sessions = createSessions({ authCall, rpc, origin, log, sessionDir })
 
 // ───────────────────────────────────────────────────────── คิวขาออก
 //
@@ -268,10 +219,30 @@ async function refreshQueue() {
   }
 }
 
+// สถานะ "ส่งจริง / เก็บข้อมูล" ต้องอ่านจากฐานเสมอ ไม่ใช่จำไว้ตั้งแต่ตอนบูต
+// เพราะ admin กดสลับจากหน้าจอได้ และอาจมีคอนเทนเนอร์มากกว่าหนึ่งตัว
+//
+// ★ ถ้าถามฐานไม่ได้ ให้คงค่าเดิมไว้ ห้ามตกไปเป็นค่าใดค่าหนึ่งโดยอัตโนมัติ
+//   ตกไปเป็น "ส่งจริง" = ฐานสะดุดแล้วข้อความหลุดหาลูกค้า
+//   ตกไปเป็น "เก็บข้อมูล" = ระบบเงียบโดยไม่มีใครรู้ว่าทำไม
+async function refreshSendMode() {
+  if (Date.now() - sendModeAt < 3000) return
+  sendModeAt = Date.now()
+  try {
+    const mode = await rpc(service, 'send_mode', { default_live: !shadowDefault }, true)
+    const next = !mode.live
+    if (next !== shadow) log.warn('send_mode_changed', { โหมด: next ? 'เก็บข้อมูล' : 'ส่งจริง' })
+    shadow = next
+  } catch (e) {
+    log.warn('send_mode_unreadable', { reason: e.message, คงโหมดเดิมไว้: shadow ? 'เก็บข้อมูล' : 'ส่งจริง' })
+  }
+}
+
 async function worker() {
   if (workerRunning || !activeChannels.length) return
   workerRunning = true
   try {
+    await refreshSendMode()
     // วนจนคิวว่าง แต่ไม่เกินรอบละ 20 ชิ้น
     // ไม่จำกัดเลย = คิวยาว ๆ จะกินทั้งรอบแล้วงานอื่นไม่ได้เดิน
     let done = 0
@@ -528,7 +499,7 @@ function health() {
   const idleFor = idle(workerLastSuccess), inboundIdleFor = idle(inboundLastSuccess)
   const outboundOk = shadow || !activeChannels.length || idleFor <= WORKER_STALE_MS
   const inboundOk = !activeChannels.length || inboundIdleFor <= WORKER_STALE_MS
-  return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, account: accountEmail,
+  return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, shadowDefault, authentication: 'individual',
            workerLastSuccess, idleFor, inboundLastSuccess, inboundIdleFor,
            activeChannels: activeChannels.length, edgeFunctions, projects,
            // หน่วยเป็น MB เพราะไบต์ดิบไม่มีใครอ่านออกตอนตีสาม
@@ -557,9 +528,10 @@ async function readBody(req, limit = 262144) {
   return Buffer.concat(chunks)
 }
 
-// ไม่มีคุกกี้แล้ว CSRF แบบเดิมจึงหมดไป แต่ด่านนี้ยังจำเป็นอยู่ด้วยเหตุผลอื่น
-// เว็บอื่นที่ผู้ใช้เปิดค้างไว้ยังสั่งงานบริการนี้ผ่านเบราว์เซอร์ของผู้ใช้ได้ ถ้าไม่ตรวจต้นทาง
-// (Content-Type: application/json บังคับให้เบราว์เซอร์ต้อง preflight ก่อน ซึ่งเราไม่ตอบ — ด่านนี้คือชั้นที่สอง)
+// คุกกี้กลับมาแล้ว ด่านนี้จึงเป็นด่านกัน CSRF ตัวจริงอีกครั้ง ไม่ใช่แค่กันเว็บอื่นสั่งงานแทน
+// เบราว์เซอร์แนบคุกกี้ให้เองทุกคำขอ ถ้าไม่ตรวจต้นทาง เว็บอื่นที่ผู้ใช้เปิดค้างไว้จะสั่งงานในนามเขาได้
+// (Content-Type: application/json บังคับให้ต้อง preflight ก่อน ซึ่งเราไม่ตอบ — ด่านนี้คือชั้นที่สอง)
+// บังคับกับทุกทางที่เปลี่ยนข้อมูล รวมทั้ง /api/login และ /api/logout
 function checkOrigin(req) {
   if (req.headers.origin !== origin) throw fail(403, 'invalid_origin')
   if (!req.headers['content-type']?.startsWith('application/json')) throw fail(415, 'json_required')
@@ -585,7 +557,23 @@ async function handleWebhook(req, res, url) {
   const raw = await readBody(req, 1048576)
   const signature = req.headers[config.channel === 'line' ? 'x-line-signature' : 'x-hub-signature-256']
   if (!verifySignature(raw, signature, config.secret, config.channel)) {
-    throw webhookFail(401, 'invalid_signature', key, { ส่งลายเซ็นมาด้วย: Boolean(signature) })
+    // ★ ลายเซ็นไม่ผ่าน = ยังไม่รู้ว่าใครส่งมา จึงต้องเก็บเบาะแสให้พอไล่ต้นทางได้
+    //   "ค่าลับผิด" กับ "มีคนอื่นยิงมั่ว" เป็นคนละเรื่องและแก้คนละทาง แต่ log เดิมแยกไม่ออก
+    //   ห้ามบันทึกตัวข้อความลูกค้า — เก็บแค่เปลือกนอกที่บอกได้ว่ามาจากไหน
+    let เค้าโครง = null
+    try {
+      const b = JSON.parse(raw.toString('utf8'))
+      เค้าโครง = { object: b?.object ?? null,
+                   entries: Array.isArray(b?.entry) ? b.entry.length : null,
+                   entry_id: b?.entry?.[0]?.id ?? null,
+                   destination: b?.destination ?? null }
+    } catch { เค้าโครง = 'ไม่ใช่ JSON' }
+    throw webhookFail(401, 'invalid_signature', key, {
+      ส่งลายเซ็นมาด้วย: Boolean(signature),
+      ขนาด: raw.length,
+      ua: req.headers['user-agent'] ?? null,
+      เค้าโครง,
+    })
   }
 
   // ตั้งแต่บรรทัดนี้ไปต้องเบาที่สุดในระบบ เพราะ LINE/Meta ถือสายรออยู่
@@ -608,6 +596,7 @@ async function handleWebhook(req, res, url) {
 }
 
 async function handleCommand(req, res) {
+  const accessToken = await sessions.access(req)
   const input = JSON.parse((await readBody(req)).toString('utf8'))
   if (typeof input.action !== 'string' || !input.data || typeof input.data !== 'object' || Array.isArray(input.data)) {
     throw fail(400, 'invalid_request')
@@ -618,26 +607,24 @@ async function handleCommand(req, res) {
   if (input.action.startsWith('fn:')) {
     const name = input.action.slice(3)
     if (!edgeFunctions.includes(name)) throw fail(404, 'function_not_registered')
-    let reply = await edgeCall(name, input.data, await token())
-    // 401 ตรงนี้แยกไม่ออกว่าโปรแกรมปฏิเสธเอง หรือใบที่เราถืออยู่ตายไปแล้ว
-    // จึงลองใหม่ด้วยใบใหม่ครั้งเดียว ถ้ายัง 401 อีก แปลว่าเป็นคำตอบของโปรแกรมจริง ส่งกลับไปทั้งอย่างนั้น
-    if (reply.status === 401) reply = await edgeCall(name, input.data, await renew())
+    const reply = await edgeCall(name, input.data, accessToken)
     res.writeHead(reply.status, { 'Content-Type': reply.type })
     return res.end(reply.text)
   }
 
-  const data = await withAccount(async access => {
-    if (input.action === 'send') {
-      // ด่านแรกสุด ก่อนแตะอะไรทั้งนั้น — ในโหมดเงายังมีบอทตัวเดิมคุยกับลูกค้าอยู่
-      if (shadow) throw fail(503, 'shadow_mode')
-      const detail = await rpc(access, 'messages', { id: input.data.id })
-      // ปลายทางมาจากบทสนทนาในฐานเท่านั้น ไม่เคยมาจากเบราว์เซอร์
-      const list = await rpc(access, 'bootstrap')
-      if (!list.user) throw fail(403, 'not_allowed')
-      if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
-    }
-    return rpc(access, input.action, input.data)
-  })
+  if (input.action === 'send') {
+    // ด่านแรกสุด ก่อนแตะอะไรทั้งนั้น — ในโหมดเงายังมีบอทตัวเดิมคุยกับลูกค้าอยู่
+    // ถามฐานก่อนเสมอ (มีตัวกันถี่ 3 วินาทีอยู่แล้ว) เพราะ admin อาจเพิ่งกดปิดไปเมื่อครู่
+    await refreshSendMode()
+    if (shadow) throw fail(503, 'shadow_mode')
+    const detail = await rpc(accessToken, 'messages', { id: input.data.id })
+    // ปลายทางมาจากบทสนทนาในฐานเท่านั้น ไม่เคยมาจากเบราว์เซอร์
+    const list = await rpc(accessToken, 'bootstrap')
+    if (!list.user) throw fail(403, 'not_allowed')
+    if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
+  }
+
+  const data = await rpc(accessToken, input.action, input.data)
 
   if (input.action === 'bootstrap') {
     data.channels = channels.map(c => ({ name: c.name || c.key, channel: c.channel, enabled: activeChannels.includes(c) }))
@@ -649,7 +636,7 @@ async function handleCommand(req, res) {
 
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
-const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/fonts/plex.css': 'fonts/plex.css' }
+const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css' }
 
 async function handleStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw fail(405, 'method_not_allowed')
@@ -679,8 +666,11 @@ async function route(req, res, url) {
   if (url.pathname.startsWith('/webhooks/')) return handleWebhook(req, res, url)
 
   if (url.pathname.startsWith('/api/')) {
-    if (url.pathname !== '/api/command' || req.method !== 'POST') throw fail(404, 'not_found')
+    if (req.method !== 'POST') throw fail(405, 'method_not_allowed')
     checkOrigin(req)
+    if (url.pathname === '/api/login') return json(res, 200, await sessions.login(req, res, JSON.parse((await readBody(req, 4096)).toString('utf8'))))
+    if (url.pathname === '/api/logout') return json(res, 200, await sessions.logout(req, res))
+    if (url.pathname !== '/api/command') throw fail(404, 'not_found')
     return handleCommand(req, res)
   }
 
@@ -721,12 +711,20 @@ const sweepTimer = setInterval(() => {
     .catch(e => log.warn('webhook_log_sweep_failed', { reason: e.message }))
 }, 21600000); sweepTimer.unref()
 
-server.listen(port, '0.0.0.0', () => console.log(`ASHER Connect listening on ${port}; ${activeChannels.length} active channel(s)${shadow ? ' · โหมดเงา: รับเข้าอย่างเดียว ไม่ส่งออก' : ''} · ไม่มีชั้นล็อกอิน ทำงานในนาม ${accountEmail}`))
+// เซสชันที่หมดอายุไม่มีเจ้าของกลับมาลบให้ ทิ้งไว้คือ refresh token ที่ยังใช้ได้นอนอยู่ในดิสก์
+const sessionTimer = setInterval(() => {
+  sessions.sweep()
+    .then(r => { if (r.deleted) log.info('session_swept', { deleted: r.deleted }) })
+    .catch(e => log.warn('session_sweep_failed', { reason: e.message }))
+}, 600000); sessionTimer.unref()
+
+server.listen(port, '0.0.0.0', () => console.log(`ASHER Connect listening on ${port}; ${activeChannels.length} active channel(s)${shadow ? ' · โหมดเงา: รับเข้าอย่างเดียว ไม่ส่งออก' : ''} · ล็อกอินรายบุคคล`))
 
 process.on('SIGTERM', () => {
   clearInterval(workerTimer)
   clearInterval(inboundTimer)
   clearInterval(sweepTimer)
+  clearInterval(sessionTimer)
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 20000).unref()
 })

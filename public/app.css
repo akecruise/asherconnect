@@ -397,49 +397,130 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
 .notice:not(.error) { background: var(--rule-soft); color: var(--ink) }
 .sla-count { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; border-radius: 999px; margin-left: 5px; padding: 1px 5px; font-size: 10px; font-weight: 600 }
 
-/* Fresh workspace: pastel surfaces, dark actions, red urgency. */
-:root {
-  --accent: #286B66;
-  --accent-hover: #205B57;
-  --accent-strong: var(--accent-hover);
-  --paper: #F3F8FA;
-  --surface: #FFFFFF;
-  --ink: #3D535E;
-  --muted: #5C707A;
-  --faint: #687B84;
-  --rule: #DFE9ED;
-  --rule-soft: #EDF4F6;
-  --accent-soft: #EAF4FC;
-  --accent-line: #CDDFEB;
-  --good: #4A606B;
-  --good-soft: #EDF3F5;
-  --bubble-out: #E3F4ED;
-  --fresh-sky: #ECF5FD;
-  --fresh-mint: #EFF9F4;
-  --fresh-sun: #FFF7E8;
-  --fresh-teal: #367465;
-  --fresh-shadow: #28485B0A;
-}
-header {
-  background: linear-gradient(110deg, var(--surface) 35%, var(--fresh-sky) 75%, var(--fresh-mint));
-  box-shadow: 0 2px 12px var(--fresh-shadow);
-}
-.queue { background: linear-gradient(180deg, var(--fresh-sky), var(--surface) 250px) }
-.lead-card { background: linear-gradient(180deg, var(--fresh-mint), var(--surface) 320px) }
-.conversation { background: linear-gradient(145deg, var(--paper), var(--fresh-mint)) }
-.conversation-header { background: linear-gradient(110deg, var(--surface), var(--fresh-sky)) }
-.conversation-item { background: var(--surface); box-shadow: 0 2px 8px var(--fresh-shadow) }
-.conversation-item:hover { background: var(--fresh-sky) }
-.conversation-item.selected { background: var(--accent-soft) }
-.bubble { box-shadow: 0 3px 12px var(--fresh-shadow) }
-.bubble.out { background: var(--bubble-out); border-color: var(--bubble-out) }
-.empty-icon { color: var(--fresh-teal); background: var(--bubble-out); width: 72px; height: 72px; border-radius: 24px; display: grid; place-items: center; margin: 0 auto 22px }
-.empty h2 { color: var(--ink) }
-.empty { color: var(--muted) }
-.canned button { background: var(--fresh-sky); border-color: var(--accent-line) }
-.appointment { background: var(--fresh-sun); border: 1px solid var(--rule); border-radius: 14px; padding: 18px; margin-bottom: 16px }
-.notice:not(.error) { background: var(--fresh-mint) }
+/* ═══════════════════════════════════════════════════════════════════════════
+   ธีมตัวจริง — ★ ต้องเป็นบล็อกสุดท้ายของไฟล์นี้เสมอ
 
-/* ปุ่มเปิด/ปิดบอท — ตอนเปิดต้องเห็นชัดจากอีกฝั่งห้อง เพราะมันคือสถานะที่เสียเงิน */
-#bot-toggle.bot-on { background: var(--good, #1f7a4d); color: #fff; border-color: transparent }
+   ★ ทำไมดีไซน์ที่แก้ไปก่อนหน้านี้ไม่เคยขึ้นบนหน้าเว็บ:
+     ไฟล์นี้ถูกต่อท้ายด้วยบล็อก :root ใหม่เรื่อย ๆ ทุกครั้งที่เปลี่ยนธีม
+     บล็อก "Neutral actions" (ที่ตั้ง --accent เป็นดำ และ --urgent เป็น #8E1116 ไว้ถูกแล้ว)
+     ถูกบล็อก "Fresh workspace" pastel/teal ต่อท้ายทับทีหลัง — CSS ตัวหลังชนะเสมอ
+     ดีไซน์ที่แก้ไว้จึงนอนตายอยู่ในไฟล์โดยไม่มีใครเห็น และดูเหมือน "แก้แล้วไม่ขึ้น"
+
+   ★ ห้ามเติมบล็อก :root ใหม่ต่อท้ายไฟล์นี้อีก ถ้าจะเปลี่ยนสี ให้แก้ค่าในบล็อกนี้
+
+   สีทุกตัวคัดจาก apluscondo.com ของจริง (นับความถี่จาก HTML หน้าแรก)
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --paper: #F2F2F5;
+  --surface: #FFFFFF;
+  --ink: #1F2024;
+  --muted: #64656C;
+  --faint: #83848B;
+  --rule: #DFE0E4;
+  --rule-soft: #E9E9EC;
+
+  --accent: #1F2024;
+  --accent-hover: #3A3B40;
+  --accent-strong: var(--accent-hover);
+  --accent-soft: #F2F2F5;
+  --accent-line: #C9CACF;
+  --focus: #9A9BA2;
+  --on-accent: #FFFFFF;
+
+  /* แดงแบรนด์ — ใช้ได้แค่สองกรณีเท่านั้น
+     แดงอ่อน = ยังไม่ตอบ · แดงเข้ม = เกิน SLA */
+  --urgent: #8E1116;
+  --urgent-tint: #FBEEEF;
+  --urgent-line: #F0C9CB;
+  --bad: var(--urgent);
+  --bad-soft: var(--urgent-tint);
+
+  /* ทุกอย่างที่ไม่ใช่งานด่วนเป็นเทาหมด — ไม่มีเขียว ไม่มี teal ไม่มีเหลือง
+     --good / --warn ยังต้องมีอยู่เพราะบล็อกก่อนหน้าอ้างถึง แต่ชี้มาที่เทาแล้ว */
+  --good: #64656C;
+  --good-soft: #E9E9EC;
+  --warn: #64656C;
+  --warn-soft: #E9E9EC;
+
+  --bubble-out: #EDEDF0;
+  --shadow: #1F20240F;
+  --fresh-shadow: #1F202408;
+}
+
+/* ─────────── ล้าง gradient ทั้งหมดที่บล็อกเก่าใส่ไว้ ─────────── */
+header,
+.queue,
+.lead-card,
+.conversation,
+.conversation-header,
+.conversation-item { background-image: none }
+
+header { background: var(--surface); box-shadow: 0 1px 0 var(--rule) }
+.queue, .lead-card, .conversation, .conversation-header { background: var(--surface) }
+
+/* การ์ดเคสพื้นขาวทุกใบ สีอยู่บนแท็กเล็กเท่านั้น */
+.conversation-item { background: var(--surface); box-shadow: none; border-bottom: 1px solid var(--rule-soft) }
+.conversation-item:hover { background: var(--paper) }
+.conversation-item.selected { background: var(--accent-soft); border-left-color: var(--accent) }
+.conversation-item.overdue, .conversation-item.overdue.selected { border-left-color: var(--urgent) }
+
+/* ─────────── แท็กสถานะ ───────────
+   เทาเป็นค่าตั้งต้น (รวม "รอลูกค้าตอบ" ที่เคยเป็นเหลือง)
+   แดงอ่อน = ยังไม่ตอบ · แดงเข้ม = เกิน SLA */
+.pill { background: var(--good-soft); color: var(--muted) }
+.pill.yellow { background: var(--good-soft); color: var(--muted) }
+.pill.red { background: var(--urgent-tint); color: var(--urgent) }
+.pill.critical { background: var(--urgent); color: #fff }
+.sla-count { background: var(--urgent); color: #fff }
+.unread-dot { background: var(--faint) }
+.overdue .unread-dot { background: var(--urgent) }
+.delivery-error { color: var(--urgent) }
+
+/* ไอคอนตอนไม่มีข้อมูล — ของเดิมเป็น teal */
+.empty-icon { color: var(--muted); background: var(--rule-soft) }
+
+/* ─────────── ชิปกรอง ───────────
+   ตัวใหญ่ขึ้นให้อ่านง่าย · ชิปที่เลือกใช้ขอบดำ ไม่ใช่ teal */
+nav button { font-size: 14px; line-height: 1.45; padding: 7px 14px; border-radius: 999px; color: var(--muted) }
+nav button.active {
+  background: var(--accent-soft);
+  border: 1.5px solid var(--accent);
+  border-left: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ─────────── พื้นผิวที่เหลือ เอาพาสเทลออก ─────────── */
+.bubble { box-shadow: none }
+.bubble.out { background: var(--bubble-out); border-color: var(--bubble-out) }
+.canned button { background: var(--paper); border-color: var(--rule) }
+.appointment { background: var(--paper); border: 1px solid var(--rule) }
+.notice:not(.error) { background: var(--rule-soft); color: var(--ink) }
+
+/* ─────────── สถานะช่องทางบนหัว ───────────
+   ย่อเป็นชิปสั้น รายละเอียดเต็มอยู่ใน title (hover)
+   ★ nowrap + overflow hidden + min-width:0 บนพ่อ เพื่อไม่ให้ดันชื่อผู้ใช้กับปุ่มออกนอกขอบ */
+.header-right { min-width: 0 }
+#channel-status { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow: hidden; min-width: 0 }
+.channel-chip {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 3px 10px; border: 1px solid var(--rule); border-radius: 999px;
+  font-size: 12px; line-height: 1.6; color: var(--muted); white-space: nowrap; cursor: default;
+}
+.channel-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: 0 0 auto }
+.channel-chip.on { color: var(--ink) }
+.channel-chip.on .dot { background: var(--ink) }
+.channel-chip.off { border-style: dashed; color: var(--faint) }
+
+@media (max-width: 1250px) { .channel-chip .label { display: none } .channel-chip { padding: 3px 7px } }
+@media (max-width: 1050px) { #channel-status { display: none } }
+
+/* ─────────── สวิตช์ระบบสองตัวบนหัว ───────────
+   ปุ่มบอทเดิมเป็นเขียว ย้ายมาใช้ดำตามโทนแบรนด์
+   ★ ปุ่ม "ส่งจริง" ยังเป็นแดงเข้ม ทั้งที่กติกาสงวนแดงไว้ให้สถานะเคส —
+     ตั้งใจยกเว้นข้อเดียวนี้ เพราะมันคือสวิตช์ที่ปล่อยข้อความออกไปหาลูกค้าจริง
+     ถ้าทำให้เป็นเทาจะกลืนกับปุ่มอื่นบนหัว ซึ่งเป็นความเสี่ยงที่แลกไม่คุ้ม */
+#bot-toggle.bot-on { background: var(--accent); color: var(--on-accent); border-color: transparent }
 #bot-toggle[disabled] { opacity: .55; cursor: not-allowed }
+#send-toggle.send-live { background: var(--urgent); color: #fff; border-color: transparent }
+#send-toggle[disabled] { opacity: .55; cursor: not-allowed }
