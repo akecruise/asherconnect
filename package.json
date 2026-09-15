@@ -8,8 +8,11 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node tests/http.integration.mjs",
-    "check": "node --check server.mjs && node --check providers.mjs && node --check public/app.js",
+    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node tests/http.integration.mjs",
+    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js",
+    "test:live": "node test-webhook.mjs",
+    "sync:names": "node sync-contact-names.mjs",
+    "test:stats": "node tests/stats/run.mjs",
     "test:http": "node tests/http.integration.mjs",
     "test:decide": "node --test tests/decide.test.mjs",
     "test:bots": "node --test tests/bots.test.mjs",
