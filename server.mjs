@@ -22,6 +22,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifySignature, matchesDestination, normalizeWebhook, deliver } from './providers.mjs'
+import { fetchProfile } from './lib/profile.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
@@ -181,6 +182,126 @@ const rpc = (token, action, data = {}, worker = false) =>
 // บน VPS โฟลเดอร์นี้ผูกเป็น volume ไว้ใน docker-compose.yml ไม่งั้นสร้าง container ใหม่แล้วหายอยู่ดี
 const sessionDir = process.env.SESSION_DIR || join(root, '.sessions')
 const sessions = createSessions({ authCall, rpc, origin, log, sessionDir })
+
+// เรียกฟังก์ชันในฐานตรง ๆ ไม่ผ่านประตู connect_api/connect_worker
+// ใช้กับของที่เป็นเรื่องของชั้นนี้เอง ไม่ใช่คำสั่งของผู้ใช้ เช่นสถานะช่องทาง
+const rpcDirect = (token, fn, body = {}) =>
+  callSupabase(DATA, `/rest/v1/rpc/${fn}`, {
+    token, method: 'POST', body,
+    headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
+  })
+
+// ───────────────────────────────────────────── ไฟสถานะของช่องทาง
+//
+// จุดบน chip เคยเป็นสีคงที่ บอกได้แค่ "ตั้งค่าครบไหม" ซึ่งคนละคำถามกับ
+// "ช่องทางนี้ยังรับข้อความอยู่ไหม" — เช้า 15 ก.ย. 2026 ลูกค้าทักเพจแล้วไม่มีเคสเข้า
+// ติดกันหลายชั่วโมงโดยหน้าจอไม่มีอะไรบอกเลยสักตัว
+//
+// ★ token ไม่เคยออกไปถึงเบราว์เซอร์ การตรวจทั้งหมดเกิดที่นี่ ส่งออกไปแค่ผลสรุป
+// ★ แคชไว้ 10 นาที เพราะหน้าเว็บเรียก bootstrap ทุกครั้งที่เปิด/รีเฟรช
+//   ถ้ายิงจริงทุกครั้งจะกลายเป็นการถล่ม Graph API ด้วยคำถามที่คำตอบไม่เปลี่ยน
+
+const HEALTH_TTL = 600000        // 10 นาที
+const HEALTH_TIMEOUT = 8000
+const FAILS_FOR_RED = 3          // ล้มติดกันเกินนี้ = แดง (ใบเดียวอาจเป็นของหลงมา สามใบคือมีปัญหาจริง)
+const IDLE_AFTER = 86400000      // ไม่มีอะไรเข้าเลยเกิน 24 ชม. = เทา
+
+let healthCache = null, healthAt = 0, healthPending = null
+
+/**
+ * token ของช่องทางนี้ยังใช้ได้ไหม
+ *
+ * ถามปลายทางด้วยคำถามที่เบาที่สุดที่ยังพิสูจน์ได้ว่า token ยังมีชีวิต
+ * แยก "token ตาย" ออกจาก "ต่อเน็ตไม่ได้" เพราะสองอย่างนี้แก้คนละทาง
+ * และการต่อไม่ได้ชั่วคราวไม่ควรทำให้ทั้งแถบขึ้นแดง
+ */
+async function checkToken(config) {
+  // ★ Messenger ต้องถามด้วย debug_token ไม่ใช่ /me
+  //   token ของเรามีแค่ pages_messaging ส่วน /me?fields=id,name ต้องการ pages_read_engagement
+  //   ถามผิดข้อแล้วจะได้ (#100) ทั้งที่ token ยังใช้งานได้ปกติ = ขึ้นแดงหลอก
+  //   debug_token ตอบตรงคำถามว่า "ใบนี้ยังมีชีวิตไหม" และไม่ต้องใช้สิทธิ์เพิ่ม
+  const url = config.channel === 'line'
+    ? 'https://api.line.me/v2/bot/info'
+    : `https://graph.facebook.com/${config.api_version || 'v23.0'}/debug_token`
+      + `?input_token=${encodeURIComponent(config.access_token)}`
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.access_token}` },
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (config.channel !== 'line' && response.ok && !data.error) {
+      if (data.data?.is_valid) return { ok: true }
+      return { ok: false, reason: `token ใช้ไม่ได้: ${data.data?.error?.message ?? 'Facebook แจ้งว่าใบนี้ใช้ไม่ได้แล้ว'}`.slice(0, 140) }
+    }
+    if (response.ok && !data.error) return { ok: true }
+    const reason = data.error?.message ?? data.message ?? `HTTP ${response.status}`
+    log.warn('channel_token_invalid', { channel: config.key, status: response.status })
+    return { ok: false, reason: `token ใช้ไม่ได้: ${String(reason).slice(0, 120)}` }
+  } catch (e) {
+    // ตรวจไม่ได้ ไม่ใช่ตรวจแล้วไม่ผ่าน — ห้ามตัดสินว่าแดงจากเหตุนี้
+    log.warn('channel_token_check_failed', { channel: config.key, reason: e.message })
+    return { ok: null, reason: 'ตรวจ token ไม่ได้ในรอบนี้' }
+  }
+}
+
+async function buildHealth() {
+  const [db, tokens] = await Promise.all([
+    rpcDirect(service, 'channel_health').catch(e => {
+      log.warn('channel_health_failed', { reason: e.message })
+      return {}
+    }),
+    Promise.all(activeChannels.map(async c => [c.key, await checkToken(c)])),
+  ])
+  const token = Object.fromEntries(tokens)
+  const now = Date.now()
+
+  // ★ แสดงเฉพาะช่องทางที่เปิดใช้ — ช่องที่เลิกใช้แล้วไม่ควรกินที่บนแถบหัว
+  //   ของที่ปิดอยู่ยังมีข้อมูลเดิมครบในฐาน แค่ไม่ต้องขึ้นหน้าจอ
+  return channels.filter(c => c.enabled === true).map(c => {
+    const base = { name: c.name || c.key, channel: c.channel, enabled: activeChannels.includes(c) }
+    if (!base.enabled) return { ...base, state: 'off', last_message_at: null, reason: 'ยังตั้งค่าไม่ครบใน channels.json' }
+
+    const h = db?.[c.key] ?? {}
+    // ★ ใช้ last_event_at ไม่ใช่ last_ok_at — ดู sql/023 ว่าทำไม
+    //   สรุปสั้น: การกด Verify และ echo ของ Meta เป็น done แต่ไม่มีข้อความเข้าระบบเลย
+    const lastEvent = h.last_event_at ? Date.parse(h.last_event_at) : null
+    const t = token[c.key] ?? { ok: null }
+
+    if (t.ok === false) return { ...base, state: 'down', last_message_at: h.last_event_at ?? null, reason: t.reason }
+    if ((h.fails_since_ok ?? 0) >= FAILS_FOR_RED) {
+      return { ...base, state: 'down', last_message_at: h.last_event_at ?? null,
+               reason: `คำขอล่าสุดถูกปฏิเสธ ${h.fails_since_ok} ครั้งติด (${h.last_error || 'ไม่ทราบสาเหตุ'})` }
+    }
+    if (lastEvent && now - lastEvent <= IDLE_AFTER) {
+      return { ...base, state: 'ok', last_message_at: h.last_event_at, reason: t.ok === null ? t.reason : null }
+    }
+    // แตะเซิร์ฟเวอร์ได้แต่ไม่มีข้อความ = ต่อถึงกัน แต่ลูกค้าทักไม่ถึง — ต้องบอกให้ต่างกัน
+    const ทักไม่ถึง = h.last_ok_at && !lastEvent
+    return { ...base, state: 'idle', last_message_at: null,
+             reason: ทักไม่ถึง ? 'มีสัญญาณเข้ามาแต่ไม่มีข้อความจริง — ตรวจว่า webhook ชี้มาที่นี่และเปิด field ข้อความไว้'
+                   : lastEvent ? 'ไม่มีข้อความเข้ามาใน 24 ชั่วโมง'
+                   : 'ยังไม่เคยมีข้อความเข้ามาทางนี้เลย' }
+  })
+}
+
+// คำขอที่มาพร้อมกันตอนแคชหมดอายุต้องรอผลของตัวแรก ไม่ใช่ต่างคนต่างยิง Graph API
+function channelStates() {
+  if (healthCache && Date.now() - healthAt < HEALTH_TTL) return Promise.resolve(healthCache)
+  if (!healthPending) {
+    healthPending = buildHealth()
+      .then(result => { healthCache = result; healthAt = Date.now(); return result })
+      .catch(e => {
+        log.warn('channel_states_failed', { reason: e.message })
+        // ล้มเหลวทั้งก้อนต้องไม่ทำให้เปิดหน้าเว็บไม่ได้ — คืนของเดิมแบบไม่มีสถานะ
+        return channels.map(c => ({ name: c.name || c.key, channel: c.channel,
+                                    enabled: activeChannels.includes(c),
+                                    state: 'unknown', last_message_at: null, reason: 'ตรวจสถานะไม่ได้' }))
+      })
+      .finally(() => { healthPending = null })
+  }
+  return healthPending
+}
 
 // ───────────────────────────────────────────────────────── คิวขาออก
 //
@@ -436,6 +557,83 @@ const inboxUrlFor = job => {
 
 let inboundRunning = false, inboundLastSuccess = null
 
+// เติมชื่อ/รูปลูกค้าจากแพลตฟอร์ม — ทำหลังบันทึกข้อความเสร็จแล้วเท่านั้น
+//
+// ★ ถามฐานก่อนว่า "ต้องดึงไหม" (profile_state) แล้วค่อยยิง API
+//   เกณฑ์อยู่ในฐานที่เดียว: ยังไม่มีชื่อ · ไม่เคยดึง · หรือดึงไว้เกิน 7 วัน
+//   เคสที่ได้ 404 ถูกประทับ profile_fetched_at ไว้แล้ว จึงไม่ยิงซ้ำทุกข้อความ
+//
+// ★ ข้อความหลายก้อนจากคนเดียวกันในก้อนเดียว = ดึงครั้งเดียว (Set ข้างล่าง)
+//   ส่วนก้อนที่มาติด ๆ กันคนละ webhook ถูกกันอีกชั้นด้วย inflight ใน profile.mjs
+async function syncProfiles(config, events) {
+  const seen = new Set()
+  for (const e of events) {
+    const id = e.external_id
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    try {
+      const state = await rpc(service, 'profile_state',
+        { channel: config.channel, account_key: config.inbox_id, external_id: id }, true)
+      if (!state?.due) continue
+
+      // LINE ในกลุ่ม/ห้องต้องใช้คนละ endpoint — providers.mjs ติด source_type มาให้แล้ว
+      const source = e.group_id
+        ? { type: e.source_type === 'room' ? 'room' : 'group', id: e.group_id }
+        : { type: 'user' }
+
+      const p = await fetchProfile({ channel: config.channel, externalId: id, config, source, deps: { log } })
+      await rpc(service, 'profile_update', {
+        channel: config.channel, account_key: config.inbox_id, external_id: id,
+        display_name: p.display_name, picture_url: p.picture_url, status: p.status,
+      }, true)
+    } catch (err) {
+      // คนเดียวพังไม่ควรทำให้คนที่เหลือในก้อนเดียวกันไม่ได้ชื่อ
+      log.warn('profile_sync_failed', { channel: config.key, reason: err.message })
+    }
+  }
+}
+
+// ── รอบรีเฟรชโปรไฟล์ประจำวัน ──
+// ★ ตัวจับเวลาอยู่ในฐาน (inbox.settings.profile_refresh_at) ไม่ใช่ตัวแปรในเครื่อง
+//   เพราะ setInterval เริ่มนับใหม่ทุกครั้งที่ deploy — วันที่ deploy หลายรอบจะไม่ได้รีเฟรชเลย
+//   และถ้ามีหลายคอนเทนเนอร์ ฐานเป็นคนกันไม่ให้สองตัวทำพร้อมกัน
+let refreshCheckedAt = 0
+const REFRESH_BATCH = 100
+async function refreshProfiles() {
+  // ถามฐานไม่ถี่เกิน 10 นาทีต่อครั้ง — worker เดินทุก 3 วินาที ถ้าถามทุกรอบจะเปลือง
+  if (Date.now() - refreshCheckedAt < 600000) return
+  refreshCheckedAt = Date.now()
+  try {
+    const claim = await rpc(service, 'profile_refresh_due', { every_hours: 24 }, true)
+    if (!claim?.due) return
+
+    const rows = await rpc(service, 'profile_backlog', { limit: REFRESH_BATCH, include_stale: true }, true)
+    if (!Array.isArray(rows) || !rows.length) return
+    log.info('profile_refresh_started', { count: rows.length })
+
+    let ok = 0, notFound = 0, failed = 0
+    for (const row of rows) {
+      const config = activeChannels.find(c => c.inbox_id === row.account_key)
+      if (!config) continue
+      const p = await fetchProfile({
+        channel: row.channel, externalId: row.external_id, config,
+        source: row.group_id ? { type: 'group', id: row.group_id } : { type: 'user' },
+        deps: { log },
+      })
+      if (p.status === 'ok') ok++; else if (p.status === 'not_found') notFound++; else failed++
+      await rpc(service, 'profile_update', {
+        channel: row.channel, account_key: row.account_key, external_id: row.external_id,
+        display_name: p.display_name, picture_url: p.picture_url, status: p.status,
+      }, true).catch(() => { failed++ })
+      // หน่วงเท่ากับสคริปต์ backfill เพื่อไม่ให้ชนโควตาของ LINE/Meta
+      await new Promise(r => setTimeout(r, 200))
+    }
+    log.info('profile_refresh_done', { ok, not_found: notFound, failed })
+  } catch (e) {
+    log.warn('profile_refresh_failed', { reason: e.message })
+  }
+}
+
 async function processInbound(job) {
   const config = activeChannels.find(c => c.key === job.channel_key)
   const finish = body => rpc(service, 'finish_inbound', { log_id: job.id, lease_id: job.lease_id, ...body }, true)
@@ -449,6 +647,10 @@ async function processInbound(job) {
     for (const event of events) await rpc(service, 'receive', event, true)
     await finish({ status: 'done', events_count: events.length })
     log.info('webhook_processed', { channel: job.channel_key, log_id: job.id, events: events.length })
+    // ★ ยิงทิ้งไว้ ไม่ await — ข้อความลงฐานเสร็จไปแล้ว โปรไฟล์เป็นของแถมที่ขาดได้
+    //   ถ้า await ตรงนี้ คิวขาเข้าจะช้าลงตามเวลาที่ LINE/Meta ตอบ และถ้า API ล่ม คิวจะตัน
+    syncProfiles(config, events).catch(e =>
+      log.warn('profile_sync_failed', { channel: job.channel_key, reason: e.message }))
   } catch (e) {
     log.warn('webhook_processing_failed', { channel: job.channel_key, log_id: job.id, reason: e.message })
     await finish({ status: 'failed', error: e.message })
@@ -463,6 +665,8 @@ async function inboundWorker() {
   try {
     const job = await rpc(service, 'claim_inbound', { channel_keys: activeChannels.map(c => c.key) }, true)
     if (job) await processInbound(job)
+    // ไม่ await — รอบรีเฟรชต้องไม่ทำให้คิวข้อความขาเข้าช้าลง
+    if (!job) refreshProfiles().catch(e => log.warn('profile_refresh_failed', { reason: e.message }))
     inboundLastSuccess = new Date().toISOString()
   } catch (e) {
     log.error('inbound_worker_failed', { reason: e.message, status: e.status ?? null })
@@ -542,7 +746,22 @@ function checkOrigin(req) {
 async function handleWebhook(req, res, url) {
   const key = url.pathname.split('/')[2]
   const config = activeChannels.find(c => c.key === key)
-  if (!config) throw webhookFail(503, 'channel_not_configured', key, { ตั้งค่าไว้: channels.map(c => c.key), เปิดใช้อยู่: activeChannels.map(c => c.key) })
+
+  // ★ ช่องทางที่ "เลิกใช้แล้วโดยตั้งใจ" ต้องตอบ 200 ไม่ใช่ 503
+  //   LINE/Meta ยิงซ้ำเมื่อไม่ได้ 200 และถ้าล้มเหลวติดกันนาน ๆ จะปิด endpoint ทิ้งเอง
+  //   ซึ่งวันที่อยากเปิดช่องนี้กลับ จะต้องไปตั้งใหม่ทั้งหมดโดยไม่มีใครรู้ว่าทำไม
+  //   ตอบ 200 แล้วทิ้ง = บอกปลายทางว่า "รับแล้ว ไม่ต้องส่งซ้ำ" แต่เราไม่เอาเข้าระบบ
+  //
+  //   แยกจาก "ตั้งค่าไม่ครบ" ชัดเจน — อันนั้นคือความผิดพลาดที่ต้องดังพอให้คนเห็น
+  //   จึงยังตอบ 503 ต่อไป ไม่ควรกลบด้วย 200 เหมือนกัน
+  if (!config) {
+    const retired = channels.find(c => c.key === key && c.enabled === false)
+    if (retired) {
+      log.info('webhook_ignored', { channel: key, เหตุ: 'ช่องทางนี้ปิดใช้งานไว้' })
+      return json(res, 200, { accepted: false, ignored: 'channel_disabled' })
+    }
+    throw webhookFail(503, 'channel_not_configured', key, { ตั้งค่าไว้: channels.map(c => c.key), เปิดใช้อยู่: activeChannels.map(c => c.key) })
+  }
 
   // Messenger ยืนยันปลายทางด้วย GET ครั้งเดียวตอนตั้งค่า ต้องตอบ challenge กลับเป็น text ล้วน
   if (req.method === 'GET' && config.channel === 'messenger') {
@@ -568,6 +787,16 @@ async function handleWebhook(req, res, url) {
                    entry_id: b?.entry?.[0]?.id ?? null,
                    destination: b?.destination ?? null }
     } catch { เค้าโครง = 'ไม่ใช่ JSON' }
+
+    // ★ ต้องลงฐานด้วย ไม่ใช่ลง stdout อย่างเดียว — ไฟแดงบน chip ตัดสินจากตารางนี้
+    //   log ของ container หายทุกครั้งที่สร้างใหม่ ถ้าเก็บแค่ที่นั่น สถานะจะรีเซ็ตตัวเองเงียบ ๆ
+    //   เขียนไม่สำเร็จก็ยังต้องปฏิเสธคำขอต่อ การบันทึกล้มเหลวไม่ใช่เหตุให้ยอมรับของที่พิสูจน์ไม่ได้
+    await rpcDirect(service, 'webhook_reject', {
+      p_data: { channel_key: key, channel: config.channel, inbox_id: config.inbox_id ?? null,
+                reason: 'invalid_signature', bytes: raw.length,
+                ua: req.headers['user-agent'] ?? null, shape: เค้าโครง },
+    }).catch(e => log.warn('webhook_reject_log_failed', { channel: key, reason: e.message }))
+
     throw webhookFail(401, 'invalid_signature', key, {
       ส่งลายเซ็นมาด้วย: Boolean(signature),
       ขนาด: raw.length,
@@ -604,6 +833,13 @@ async function handleCommand(req, res) {
 
   // ทางไป Edge Function: action ขึ้นต้นด้วย fn: แล้วตามด้วยชื่อในทะเบียน
   // แยกทางกันตั้งแต่ตรงนี้ เพราะคำตอบไม่ผ่านตัวแปลของ connect_api และไม่ควรผ่าน
+  // ★ จำนวนเคสของทุกตัวกรอง — นับที่ฐานทีเดียว ไม่ใช่ให้เบราว์เซอร์ไล่ขอทีละหน้าแล้วนับเอง
+  //   ยิงด้วย token ของคนที่ล็อกอิน ไม่ใช่ service — auth.uid() จึงเป็นคนจริงและ can_read() ยังบังคับ
+  //   ไม่ได้ผ่านประตู connect_api เพราะเป็นการอ่านของชั้นนี้เอง ไม่ใช่คำสั่งที่ต้องลง audit
+  if (input.action === 'queue_counts') {
+    return json(res, 200, await rpcDirect(accessToken, 'queue_counts', { p_search: String(input.data.search ?? '') }))
+  }
+
   if (input.action.startsWith('fn:')) {
     const name = input.action.slice(3)
     if (!edgeFunctions.includes(name)) throw fail(404, 'function_not_registered')
@@ -627,7 +863,7 @@ async function handleCommand(req, res) {
   const data = await rpc(accessToken, input.action, input.data)
 
   if (input.action === 'bootstrap') {
-    data.channels = channels.map(c => ({ name: c.name || c.key, channel: c.channel, enabled: activeChannels.includes(c) }))
+    data.channels = await channelStates()
   }
   // ตัวเลขมาจากฐาน ถ้อยคำมาจากที่นี่ — คนละหน้าที่กัน และแยกกันไว้ตั้งแต่แรก
   if (input.action === 'report_preview' && data?.report) data.text = buildDailyDigest(data.report)
