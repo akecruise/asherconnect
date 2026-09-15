@@ -15,67 +15,107 @@
  *   3. ชื่อคลาสและโครงสร้างเหมือนเดิมทุกตัว app.js จึงไม่ต้องแก้อะไรเลย
  */
 
+/**
+ * โทนสีของ ASHER Connect — ยึดสีจาก apluscondo.com จริง
+ *   #1F2024 ink · #64656C muted · #8E1116 แดงแบรนด์ (สงวนไว้ให้ "ด่วน" เท่านั้น: เกิน SLA, error)
+ *
+ * ★ ไฟล์นี้เคยมีบล็อก :root ที่ไม่มี @media ครอบซ้อนกันสี่ชั้น (จากการเปลี่ยนธีมหลายรอบ)
+ *   ตัวหลังสุดในไฟล์ชนะเสมอเมื่อ specificity เท่ากัน ผลคือบล็อกโหมดมืดที่อยู่ต้นไฟล์ถูกทับจนตาย
+ *   ต่อให้เครื่องตั้งเป็นโหมดมืด หน้าเว็บก็ยังเห็นสีสว่างอยู่ดี — รวมเหลือบล็อกเดียวแล้วในรอบนี้
+ *   ห้ามเพิ่ม :root ใหม่อีก ถ้าจะเพิ่มตัวแปร ให้เพิ่มในบล็อกนี้ทั้งสองที่ (สว่าง + มืด)
+ *
+ * กติกาของไฟล์นี้
+ *   1. สีทุกสีต้องมาจากตัวแปรใน :root ห้ามเขียนค่าสีตรง ๆ ในกฎย่อย
+ *      ข้อยกเว้นสองอย่าง: สีช่องทาง (LINE #06C755 / Messenger #0866FF) และแดงแบรนด์ #8E1116
+ *      ของป้าย "เกิน SLA" ที่ใช้ตรง ๆ ทั้งสองโหมดตามสเปก
+ *   2. ตัวแปรทุกตัวต้องประกาศครบใน :root (สว่าง) ก่อน แล้วโหมดมืดค่อยเขียนทับใน @media ที่ตามหลัง
+ */
+
 :root {
-  /* ── ชุดเดียวกับ ASHER Marketing ───────────────────────────────────── */
-  --paper: #f2f5f6;
-  --surface: #ffffff;
-  --ink: #111a1f;
-  --muted: #5b6b74;
-  --faint: #84949c;
-  --rule: #d7e0e4;
-  --rule-soft: #e6ecee;
-  --accent: #1b4f63;
-  --good: #0f6e6a;
-  --warn: #8a6414;
-  --bad: #b4471f;
-
-  /* ── ที่ Connect ต้องใช้เพิ่ม ─────────────────────────────────────
-     ERP เป็นหน้าจอรายงาน แต่ Connect เป็นหน้าจอสนทนา
-     จึงต้องมีสีของ "สิ่งที่ถูกเลือกอยู่" และ "ข้อความฝั่งเรา" เพิ่ม
-     ทุกตัวคุมจาก :root ที่เดียว โหมดมืดจึงตามมาได้ครบ */
-  --accent-strong: #143c4c;   /* ปุ่มหลักตอนเอาเมาส์ชี้ */
-  --accent-soft: #e4edf1;     /* พื้นของสิ่งที่เลือกอยู่ */
-  --accent-line: #b9cfd9;     /* ขอบของสิ่งที่เลือกอยู่ */
-  --on-accent: #ffffff;       /* ตัวอักษรบนพื้นสีหลัก */
-  --warn-soft: #fbf1da;
-  --bad-soft: #f8e6df;
-  --good-soft: #e2eeed;
-  --shadow: #0f1f2614;
-  --scrim: #0d1418b3;
-
   color-scheme: light;
-  font-family: "IBM Plex Sans Thai", ui-sans-serif, system-ui, "Segoe UI", Tahoma, sans-serif;
+  font-family: "IBM Plex Sans Thai", "Noto Sans Thai", ui-sans-serif, system-ui, "Segoe UI", Tahoma, sans-serif;
   font-size: 14px;
   color: var(--ink);
   background: var(--paper);
+  --paper: #F2F2F5;
+  --surface: #FFFFFF;
+  --ink: #1F2024;
+  --muted: #64656C;
+  --faint: #83848B;
+  --rule: #DFE0E4;
+  --rule-soft: #E9E9EC;
+  --accent: #1F2024;
+  --good: #64656C;
+  --warn: #64656C;
+  --bad: var(--urgent);
+  --accent-strong: var(--accent-hover);
+  --accent-soft: #F2F2F5;
+  --accent-line: #C9CACF;
+  --on-accent: #FFFFFF;
+  --warn-soft: #E9E9EC;
+  --bad-soft: var(--urgent-tint);
+  --good-soft: #E9E9EC;
+  --shadow: #1F20240F;
+  --scrim: #211719B3;
+  --accent-hover: #3A3B40;
+  --focus: #9A9BA2;
+  --urgent: #8E1116;
+  --urgent-tint: #FBEEEF;
+  --bubble-out: #EDEDF0;
+  --urgent-line: #F0C9CB;
+  --fresh-shadow: #1F202408;
+  --live: #1F6B4A;
+  --alert: #D9534F;
+  --pill-amber-bg: #FFFBEB;
+  --pill-amber-fg: #B45309;
+  --pill-blue-bg: #EFF6FF;
+  --pill-blue-fg: #1D4ED8;
+  --pill-green-bg: #F0FDF4;
+  --pill-green-fg: #166534;
+  --pill-gray-bg: #F3F4F6;
+  --pill-gray-fg: #4B5563;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #0d1418;
-    --surface: #141e23;
-    --ink: #e2ebef;
-    --muted: #93a5ad;
-    --faint: #6d818a;
-    --rule: #24333a;
-    --rule-soft: #1c2a30;
-    --accent: #77b6cd;
-    --good: #4fc0b1;
-    --warn: #d6a942;
-    --bad: #e4835a;
-
-    --accent-strong: #9acbdd;
-    --accent-soft: #1d2f38;
-    --accent-line: #345061;
-    /* พื้นสีหลักในโหมดมืดเป็นสีอ่อน ตัวอักษรจึงต้องกลับเป็นสีเข้ม */
-    --on-accent: #0d1418;
-    --warn-soft: #2c2718;
-    --bad-soft: #31211b;
-    --good-soft: #16292b;
-    --shadow: #00000059;
-    --scrim: #000000b3;
-
     color-scheme: dark;
+  --paper: #121214;
+  --surface: #1B1C1F;
+  --ink: #F0F0F2;
+  --muted: #A6A7AD;
+  --faint: #77787E;
+  --rule: #2B2C30;
+  --rule-soft: #232427;
+  --accent: #F0F0F2;
+  --good: #8B8C92;
+  --warn: #A6A7AD;
+  --bad: var(--urgent);
+  --accent-strong: var(--accent-hover);
+  --accent-soft: #2A2B2E;
+  --accent-line: #3C3D42;
+  --on-accent: #1F2024;
+  --warn-soft: #232427;
+  --bad-soft: var(--urgent-tint);
+  --good-soft: #232427;
+  --shadow: #00000059;
+  --scrim: #000000b3;
+  --accent-hover: #D5D6DA;
+  --focus: #8B8C92;
+  --urgent: #E5484D;
+  --urgent-tint: #3A1518;
+  --bubble-out: #26272B;
+  --urgent-line: #5A2328;
+  --fresh-shadow: #00000040;
+  --live: #3FA873;
+  --alert: #E5484D;
+  --pill-amber-bg: #3A2E10;
+  --pill-amber-fg: #F5B860;
+  --pill-blue-bg: #12233F;
+  --pill-blue-fg: #7FA8F5;
+  --pill-green-bg: #123420;
+  --pill-green-fg: #6FCF8E;
+  --pill-gray-bg: #2A2B2E;
+  --pill-gray-fg: #A6A7AD;
   }
 }
 
@@ -312,30 +352,7 @@ dialog::backdrop { background: var(--scrim) }
 }
 
 /* A Plus Condo theme. Load after app.css and the local IBM Plex Sans Thai fonts. */
-:root {
-  color-scheme: light;
-  --paper: #F6F5F4;
-  --surface: #FFFFFF;
-  --ink: #1F2024;
-  --muted: #64656C;
-  --faint: #73747B;
-  --rule: #E6E6E6;
-  --rule-soft: #F0E8E8;
-  --accent: #8E1116;
-  --accent-strong: #B4121B;
-  --accent-soft: #FBEEEF;
-  --accent-line: #E9C4C6;
-  --on-accent: #FFFFFF;
-  --good: #2E7D32;
-  --good-soft: #E6F8ED;
-  --warn: #8A6414;
-  --warn-soft: #FBF1DA;
-  --bad: #B4121B;
-  --bad-soft: #FBEEEF;
-  --shadow: #34101412;
-  --scrim: #211719B3;
-  font-family: "IBM Plex Sans Thai", "Noto Sans Thai", system-ui, sans-serif;
-}
+
 .primary { border-radius: 999px; font-weight: 600 }
 .brand { gap: 14px; min-width: 0 }
 .brand-lockup { display: flex; align-items: center; gap: 9px; flex-shrink: 0 }
@@ -357,24 +374,7 @@ dialog::backdrop { background: var(--scrim) }
 }
 
 /* Neutral actions; red is reserved for overdue work and errors. */
-:root {
-  --accent: #1F1F1F;
-  --accent-hover: #3A3A3A;
-  --accent-strong: var(--accent-hover);
-  --accent-soft: #F6F5F4;
-  --accent-line: #C9C9C9;
-  --focus: #C9C9C9;
-  --urgent: #8E1116;
-  --urgent-tint: #FBEEEF;
-  --bad: var(--urgent);
-  --bad-soft: var(--urgent-tint);
-  --rule-soft: #EDECEA;
-  --good: #4A4A4A;
-  --good-soft: #EDECEA;
-  --warn: #8A5A00;
-  --warn-soft: #FFF4E0;
-  --bubble-out: #EFECEA;
-}
+
 .primary, .btn-primary { background: var(--accent); color: var(--on-accent) }
 .primary:hover, .btn-primary:hover { background: var(--accent-hover) }
 #save { background: var(--accent); border-color: var(--accent); color: var(--on-accent); border-radius: 999px; font-weight: 600 }
@@ -410,61 +410,7 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
 
    สีทุกตัวคัดจาก apluscondo.com ของจริง (นับความถี่จาก HTML หน้าแรก)
    ═══════════════════════════════════════════════════════════════════════════ */
-:root {
-  --paper: #F2F2F5;
-  --surface: #FFFFFF;
-  --ink: #1F2024;
-  --muted: #64656C;
-  --faint: #83848B;
-  --rule: #DFE0E4;
-  --rule-soft: #E9E9EC;
 
-  --accent: #1F2024;
-  --accent-hover: #3A3B40;
-  --accent-strong: var(--accent-hover);
-  --accent-soft: #F2F2F5;
-  --accent-line: #C9CACF;
-  --focus: #9A9BA2;
-  --on-accent: #FFFFFF;
-
-  /* แดงแบรนด์ — ใช้ได้แค่สองกรณีเท่านั้น
-     แดงอ่อน = ยังไม่ตอบ · แดงเข้ม = เกิน SLA */
-  --urgent: #8E1116;
-  --urgent-tint: #FBEEEF;
-  --urgent-line: #F0C9CB;
-  --bad: var(--urgent);
-  --bad-soft: var(--urgent-tint);
-
-  /* ทุกอย่างที่ไม่ใช่งานด่วนเป็นเทาหมด — ไม่มีเขียว ไม่มี teal ไม่มีเหลือง
-     --good / --warn ยังต้องมีอยู่เพราะบล็อกก่อนหน้าอ้างถึง แต่ชี้มาที่เทาแล้ว */
-  --good: #64656C;
-  --good-soft: #E9E9EC;
-  --warn: #64656C;
-  --warn-soft: #E9E9EC;
-
-  --bubble-out: #EDEDF0;
-  --shadow: #1F20240F;
-  --fresh-shadow: #1F202408;
-
-  /* ไฟสถานะของ chip ช่องทาง — พาเลตแบรนด์เป็นเทา/ดำ/แดงล้วน ไม่มีเขียว
-     จึงต้องเติมตัวเดียวตรงนี้ ไม่ใช่เขียนสีดิบลงในกฎย่อย และไม่สร้าง :root ใหม่ */
-  --live: #1F6B4A;      /* เขียวเข้มหม่น ตัดกับพื้นขาว 6.4:1 อยู่ร่วมกับ #8E1116 ได้ไม่ตีกัน */
-
-  /* แดงของชิป "รอรับ" ตอนถูกเลือก — อ่อนกว่าแดงแบรนด์ที่สงวนไว้ให้ SLA */
-  --alert: #D9534F;
-
-  /* ── สีแท็กสถานะบนการ์ดเคสสองบรรทัด ──
-     ★ สามคู่นี้เป็นข้อยกเว้นที่ตั้งใจของพาเลตเทา/ดำ/แดงด้านบน — ดีไซน์การ์ดใหม่
-       ขอให้แยกสถานะด้วยสี (รอลูกค้าตอบ=amber · ตอบแล้ว=blue · ปิดแล้ว=green)
-       แดงแบรนด์ยังสงวนไว้ให้ "ยังไม่ตอบ"/"เกิน SLA" เหมือนเดิม ไม่ถูกแตะ
-     ★ เติมเป็นตัวแปรตรงนี้ตามกติกาของบล็อกนี้ ไม่เขียนสีดิบลงในกฎย่อย
-     ค่าตัวอักษรเลือกให้ผ่าน 4.5:1 บนพื้นของตัวเอง (เขียวใช้ระดับ 800 ไม่ใช่ 700
-     เพราะ 700 บนพื้น green-50 ได้แค่ ~4.0:1 ซึ่งตกเกณฑ์ที่ขนาด 11px) */
-  --pill-amber-bg: #FFFBEB;  --pill-amber-fg: #B45309;
-  --pill-blue-bg:  #EFF6FF;  --pill-blue-fg:  #1D4ED8;
-  --pill-green-bg: #F0FDF4;  --pill-green-fg: #166534;
-  --pill-gray-bg:  #F3F4F6;  --pill-gray-fg:  #4B5563;
-}
 
 /* ─────────── ล้าง gradient ทั้งหมดที่บล็อกเก่าใส่ไว้ ─────────── */
 header,
@@ -766,120 +712,221 @@ nav button.active {
   .person-row .pill-n { display: none }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   เฟส 4.1 — หน้าแชทมือถือ เน้นพื้นที่ตอบ
+/* ============================================================================
+   ChatRow ใหม่ — ให้ความรู้สึกแบบ LINE
+   avatar 44 วงกลม + badge ช่องทางมุมล่างขวา / ชื่อ+ป้าย SLA ···· เวลา / ข้อความล่าสุด ···· แท็กโครงการ+ยังไม่อ่าน
+   สีช่องทาง (LINE/Messenger) และแดงแบรนด์ #8E1116 เป็นสองข้อยกเว้นเดียวที่ฮาร์ดโค้ดได้ (ดูกติกาหัวไฟล์)
+   ============================================================================ */
 
-   ★ ทุกกฎของงานนี้อยู่ในบล็อก @media เดียวนี้ทั้งหมด (ยกเว้นการซ่อนปุ่ม ← ซึ่ง
-     ซ่อนของที่เพิ่งเพิ่มเข้ามา ไม่ได้แตะของเดิม)
-     จอ >= 768px จึง "พิสูจน์ได้จากโครงไฟล์" ว่าไม่ถูกแตะ — ไม่ต้องพึ่งการเทียบ
-     screenshot เป็นตาข่ายกันพลาด ซึ่งจับได้แค่สิ่งที่บังเอิญถ่ายติด
+.chat-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 100%; height: 64px; padding: 0 16px;
+  border: none; border-bottom: 1px solid var(--rule-soft);
+  background: var(--surface); border-radius: 0; text-align: left;
+  cursor: pointer;
+}
+.chat-row:hover { background: var(--paper) }
+.chat-row.selected { background: var(--accent-soft) }
+.chat-row.overdue { border-left: 3px solid var(--urgent); padding-left: 13px }
 
-   ★ ใช้ 767.98px ไม่ใช่ 767px — เบราว์เซอร์รายงานความกว้างเป็นทศนิยมได้เมื่อ zoom
-     ไม่ใช่ 100% ถ้าใช้ 767 จอที่กว้าง 767.5 จะหลุดทั้งสองบล็อก
-   ═══════════════════════════════════════════════════════════════════════════ */
+.chat-row-avatar { position: relative; flex: none; align-self: center }
+.avatar {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 50%; overflow: hidden;
+  background: var(--accent-soft); color: var(--muted);
+  font-size: 15px; font-weight: 600; letter-spacing: .02em;
+}
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
 
-/* ปุ่มย้อนกลับเป็นของใหม่ ซ่อนไว้เป็นค่าเริ่มต้นเพื่อไม่ให้โผล่บนจอคอม */
-.chat-back { display: none }
+/* สีช่องทางเป็นของแบรนด์ภายนอก (LINE/Meta กำหนด) ไม่ใช่โทนของ ASHER — ไม่ผ่านตัวแปรธีม */
+.channel-badge {
+  position: absolute; right: -1px; bottom: -1px;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--surface); box-sizing: content-box;
+}
+.channel-badge.line { background: #06C755 }
+.channel-badge.fb   { background: #0866FF }
 
-@media (max-width: 767.98px) {
-  /* ความสูงที่ "มองเห็นจริง" — คีย์บอร์ดมือถือทับจออยู่ข้างบน โดยที่ 100dvh
-     ของหลายเบราว์เซอร์ไม่ลดตาม ถ้ายึด dvh อย่างเดียว ช่องพิมพ์จะถูกดันลงไปใต้คีย์บอร์ด
-     ค่านี้ถูกตั้งจาก visualViewport ใน app.js */
-  :root { --vh-visible: 100dvh }
+.chat-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px }
 
-  .chat-back {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 40px; height: 40px; margin-left: -10px; flex: 0 0 auto;
-    border: 0; background: none; color: var(--ink); font-size: 20px; line-height: 1;
-  }
+.chat-row-top { display: flex; align-items: center; gap: 6px }
+.chat-row-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 15px; font-weight: 500; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-row-name .unread-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--urgent); margin-right: 6px; vertical-align: middle }
+.chat-row-time { flex: none; font-size: 12px; color: var(--faint) }
 
-  /* ── เปิดเคสแล้ว = เห็นเฉพาะแชท ──
-     ของเดิมบนมือถือวางคิว/แชท/ข้อมูลลูกค้าเรียงลงมา ต้องเลื่อนผ่านรายการเคส
-     ทุกครั้งกว่าจะถึงช่องพิมพ์ ซึ่งเป็นสิ่งที่ทำบ่อยที่สุด */
-  body.chat-open #chat {
-    position: fixed; inset: 0; z-index: 40;
-    height: var(--vh-visible); min-height: 0;
-    display: flex; flex-direction: column;
-    background: var(--surface);
-  }
+.chat-row-bottom { display: flex; align-items: center; gap: 8px }
+.chat-row-preview {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  font-size: 13px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-row-meta { flex: none; display: flex; align-items: center; gap: 6px }
 
-  /* หัวแชท: แถวเดียว สูง 40px */
-  body.chat-open .conversation-header {
-    display: flex; align-items: center; gap: 8px;
-    height: 40px; min-height: 40px; padding: 0 12px;
-    border-bottom: 1px solid var(--rule); flex: 0 0 auto;
-  }
-  body.chat-open .conversation-header > div:first-of-type {
-    display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto;
-  }
-  body.chat-open #chat-name {
-    margin: 0; font-size: 15px; font-weight: 600; line-height: 1.2;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
-  }
-  body.chat-open #chat-channel { font-size: 11px; color: var(--muted); white-space: nowrap; flex: 0 0 auto }
-  /* ไม่พอที่ในแถวเดียว — ข้อมูลนี้ยังดูได้จากหน้าเคสบนจอใหญ่ */
-  body.chat-open #last-reply { display: none }
-  body.chat-open #sla { flex: 0 0 auto; font-size: 11px; padding: 2px 8px; white-space: nowrap }
-  body.chat-open .actions { flex: 0 0 auto; gap: 4px }
-  body.chat-open .actions button { font-size: 11px; padding: 6px 9px }
+/* ป้าย SLA — ตอบแล้ว/ยังไม่ถึงเกณฑ์ = ไม่ render (ดู public/sla.mjs)
+   รอ 5-9 นาที = แดงอ่อน · 10+ นาที = แดงเข้ม #8E1116 ตัวขาว ตามสเปกตรงตัว ไม่ผ่าน --urgent
+   (--urgent สว่างขึ้นในโหมดมืดเพื่ออ่านง่ายที่อื่น แต่ป้ายนี้ต้องเป็น #8E1116 เป๊ะทั้งสองโหมดตามที่ระบุ) */
+.sla-tag {
+  flex: none; height: 18px; padding: 0 6px; border-radius: 9px;
+  font-size: 11px; line-height: 18px; font-weight: 500; white-space: nowrap;
+}
+.sla-tag.warn { background: var(--urgent-tint); color: #8E1116 }
+.sla-tag.over { background: #8E1116; color: #FFFFFF }
 
-  /* ── พื้นที่ข้อความกินที่เหลือทั้งหมด ── */
-  body.chat-open .messages {
-    flex: 1 1 auto; min-height: 0; overflow-y: auto;
-    -webkit-overflow-scrolling: touch; padding: 12px;
-  }
-  body.chat-open #older { flex: 0 0 auto; margin: 0 12px 4px }
-
-  /* แยกให้ออกว่าใครพูด: ลูกค้า (ซ้าย ขาว) · เซลส์ (ขวา เทา) · บอท (ซ้าย ขอบประ) */
-  body.chat-open .bubble { max-width: 86% }
-  body.chat-open .bubble.bot { border-style: dashed; background: var(--paper) }
-
-  /* ── ช่องพิมพ์ ── */
-  body.chat-open .composer {
-    flex: 0 0 auto;
-    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
-  }
-  body.chat-open .composer textarea {
-    margin: 0; min-height: 40px; max-height: 118px;  /* ~5 บรรทัด */
-    resize: none; font-size: 16px;  /* ★ ต่ำกว่า 16px แล้ว iOS จะซูมหน้าจอเองตอนโฟกัส */
-  }
-  body.chat-open .composer-footer { margin-top: 8px; gap: 8px }
-  /* เป้ากดขนาดนิ้ว — ต่ำกว่านี้คนกดพลาดบ่อยบนมือถือ */
-  body.chat-open .composer-footer .primary { min-height: 44px; min-width: 44px; padding: 0 18px }
-  body.chat-open #send-hint {
-    font-size: 11px; min-width: 0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-
-  /* ── คีย์บอร์ดเปิด: คืนพื้นที่ให้ข้อความ ──
-     ซ่อนของที่ยังกดได้จากที่อื่น เก็บช่องพิมพ์กับปุ่มส่งไว้เสมอ */
-  body.chat-open.kb-open .canned { display: none }
-  body.chat-open.kb-open #send-hint { display: none }
-  body.chat-open.kb-open .messages { padding-top: 8px; padding-bottom: 8px }
+.project-tag {
+  flex: none; height: 18px; padding: 0 6px; border-radius: 4px;
+  font-size: 11px; line-height: 18px; font-weight: 500;
+  background: var(--rule-soft); color: var(--muted);
+}
+.unread-badge {
+  flex: none; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; line-height: 1;
+  background: var(--ink); color: var(--surface);
 }
 
-/* รูปเล็กหน้าการ์ด + รหัสลูกค้าในหน้ารายละเอียด (งานดึงโปรไฟล์)
-   ★ รูปของ Messenger มีวันหมดอายุ ตัวอักษรย่ออยู่ข้างหลังเสมอ ไม่ใช่กรอบว่าง */
-.avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
-  background: var(--rule-soft); color: var(--muted); font-size: 10px; font-weight: 600;
-  display: inline-flex; align-items: center; justify-content: center; overflow: hidden }
-.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
-.contact-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px }
-.contact-id small { color: var(--faint); font-size: 11px }
-.contact-id-value { font-size: 11px; color: var(--muted); max-width: 190px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* ChatListHeader — แถบหัวกะทัดรัดของกล่องข้อความ (52px) */
+.chat-list-header {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 52px; padding: 0 4px;
+}
+.chat-list-title { margin: 0; font-size: 22px; font-weight: 500; color: var(--ink) }
+.chat-list-actions { display: flex; align-items: center; gap: 2px }
+.chat-list-icon-btn {
+  width: 44px; height: 44px; flex: none; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; border-radius: 10px; color: var(--muted);
+}
+.chat-list-icon-btn:hover { background: var(--rule-soft); color: var(--ink) }
+.chat-list-icon { width: 24px; height: 24px }
 
-/* เมนูเทมเพลตที่เปิดด้วย "/" — ลอยเหนือช่องพิมพ์ ไม่ดันเลย์เอาต์ */
-.composer { position: relative }
-.template-menu { position: absolute; left: 12px; right: 12px; bottom: 100%; z-index: 20;
-  max-height: 240px; overflow-y: auto; margin-bottom: 6px;
-  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
-  box-shadow: 0 6px 20px var(--shadow) }
-.template-item { display: block; width: 100%; text-align: left; border: 0; border-radius: 0;
-  padding: 8px 12px; background: none; border-bottom: 1px solid var(--rule-soft) }
-.template-item:last-child { border-bottom: 0 }
-.template-item.active, .template-item:hover { background: var(--paper) }
-.template-item strong { display: block; font-size: 13px; color: var(--ink) }
-.template-item small { display: block; font-size: 11px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.template-empty { padding: 10px 12px; font-size: 12px; color: var(--muted) }
+/* ขนาดช่องค้นหา/ชิป ตามสเปกใหม่ (ทับของเดิมที่เล็กกว่า) —
+   ไฟล์นี้ให้กฎท้ายไฟล์ชนะโดยตั้งใจอยู่แล้ว จึงเขียนทับตรงนี้ได้ปลอดภัย */
+.queue-head #search {
+  height: 36px; padding: 0 12px 0 34px; margin: 0 16px;
+  border-radius: 18px; font-size: 15px; width: calc(100% - 32px);
+}
+.search-icon { left: 28px }
+#filters .chip {
+  height: 28px; padding: 0 10px; border-radius: 14px; font-size: 13px; gap: 8px;
+}
+.filter-row { margin: 10px 16px 0 }
+
+/* ============================================================================
+   AppNav — เมนูหลัก 4 รายการ (แชท/ลูกค้า/สถิติ/ตั้งค่า) พับเป็นไอคอนเมื่อพื้นที่แคบ
+   น้อยกว่า 768 = แถบล่าง · 768-1023 = รางไอคอนซ้าย 64 · ตั้งแต่ 1024 = แถบข้างซ้าย 240 มีตัวหนังสือ
+   ============================================================================ */
+.app-nav {
+  display: flex; box-sizing: border-box; background: var(--surface);
+  gap: 4px; z-index: 40;
+}
+.nav-item {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-width: 44px; min-height: 44px; padding: 6px; border: none; background: transparent;
+  border-radius: 10px; color: var(--muted); text-decoration: none; cursor: pointer;
+}
+.nav-item:hover { background: var(--rule-soft); color: var(--ink) }
+.nav-item.active { color: var(--ink) }
+.nav-item[disabled] { opacity: .4; cursor: not-allowed }
+.nav-icon { width: 24px; height: 24px; flex: none }
+.nav-label { font-size: 11px; line-height: 1 }
+.nav-badge {
+  position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: #8E1116; color: #fff;
+  font-size: 11px; line-height: 16px; text-align: center; font-weight: 600;
+}
+
+@media (max-width: 767px) {
+  .app-nav {
+    position: fixed; left: 0; right: 0; bottom: 0; flex-direction: row; justify-content: space-around;
+    height: calc(56px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--rule);
+  }
+  .nav-item { flex-direction: column; flex: 1 1 auto; border-radius: 0; min-width: 0 }
+}
+@media (max-width: 339px) {
+  .app-nav { height: calc(48px + env(safe-area-inset-bottom)) }
+  .nav-label { display: none }
+  .nav-item.active::after {
+    content: ""; position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+    width: 4px; height: 4px; border-radius: 50%; background: var(--ink);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .app-nav {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 64px;
+    flex-direction: column; align-items: center; padding: 12px 0;
+    border-right: 1px solid var(--rule);
+  }
+  .nav-item { flex-direction: column; width: 44px; height: 44px }
+  .nav-item.active { background: var(--rule-soft) }
+  .nav-item#nav-settings { margin-top: auto }
+  .nav-label { display: none }
+}
+
+@media (min-width: 1024px) {
+  .app-nav {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 240px;
+    flex-direction: column; align-items: stretch; padding: 16px 12px;
+    border-right: 1px solid var(--rule);
+  }
+  .nav-item { justify-content: flex-start; width: 100%; height: 44px; padding: 0 12px }
+  .nav-item.active { background: var(--rule-soft) }
+  .nav-item#nav-settings { margin-top: auto }
+}
+
+@media (max-width: 767px) { body { padding-bottom: calc(56px + env(safe-area-inset-bottom)) } }
+@media (min-width: 768px) and (max-width: 1023px) { #workspace { padding-left: 64px } }
+@media (min-width: 1024px) { #workspace { padding-left: 240px } }
+
+/* header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/สถิติ/อีเมล/ออกจากระบบ) — ย้ายเข้าแผงตั้งค่า
+   ไม่ได้ย้าย element จริง (กัน id ซ้ำ/handler หลุด) แค่สลับการมองเห็นด้วยคลาสนี้ที่ nav-settings คุม
+   ปุ่มรีเฟรชถูกย้ายออกจาก header ไปอยู่ chat-list-header แล้วด้วย JS ตอนโหลดหน้า (ดู app.js) */
+body.settings-open #workspace > header {
+  display: flex !important; position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+  flex-wrap: wrap; height: auto; padding: 12px 16px; gap: 10px;
+  box-shadow: 0 8px 24px var(--fresh-shadow, var(--shadow));
+}
+@media (min-width: 768px) {
+  body.settings-open #workspace > header { left: 64px }
+}
+@media (min-width: 1024px) {
+  body.settings-open #workspace > header { left: 240px }
+}
+@media (max-width: 767px) {
+  #workspace > header { display: none }
+}
+@media (min-width: 768px) {
+  #workspace > header { display: none }
+  body.settings-open #workspace > header { display: flex !important }
+}
+
+/* header ไม่กินพื้นที่ในโครงหน้าแล้ว (ซ่อนอยู่เป็นค่าเริ่มต้น ย้ายเข้าแผงตั้งค่าแทน)
+   main จึงต้องสูงเต็มจอตรง ๆ ไม่ใช่หัก 83px ของ header เดิมอีกต่อไป */
+main { min-height: 100dvh; min-height: var(--vh-visible, 100dvh) }
+
+/* ── มือถือ: แสดงทีละแผง ───────────────────────────────────────────────
+   ปุ่ม #back และ MOBILE.matches / setChatOpen() มีอยู่แล้วใน app.js (บรรทัด ~508-515)
+   ส่วนนี้เป็นแค่ CSS ที่ขาดไป — ทำให้คลาส body.chat-open มีผลจริง
+   ค่าเริ่มต้น (ยังไม่เลือกเคส) = เห็นรายการแชทเต็มจอ, เลือกแล้ว = สลับไปแผงสนทนาเต็มจอ
+   ไม่ได้ทำเรื่อง URL routing (/c/:id) หรือปุ่ม back ของเบราว์เซอร์ในรอบนี้ — งานนั้นอยู่ใน
+   PLAN-mobile.md เฟส 1 ซึ่งยังไม่ได้รับอนุมัติ ตรงนี้ทำแค่พอให้หน้ารายการแชทที่รื้อใหม่ใช้งานได้จริงบนจอแคบ */
+@media (max-width: 767px) {
+  main { display: block }
+  .queue, .conversation, .lead-card { border: none; height: 100dvh; height: var(--vh-visible, 100dvh) }
+  .lead-card { display: none }
+  .conversation { display: none }
+  body.chat-open .queue { display: none }
+  body.chat-open .conversation { display: flex; flex-direction: column }
+}
+.chat-back {
+  display: none; flex: none; width: 44px; height: 44px; margin-right: 4px;
+  border: none; background: transparent; border-radius: 10px;
+  font-size: 20px; line-height: 1; color: var(--ink);
+}
+.chat-back:hover { background: var(--rule-soft) }
+@media (max-width: 767px) { .chat-back { display: inline-flex; align-items: center; justify-content: center } }

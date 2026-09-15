@@ -1,3 +1,5 @@
+import { slaTag } from './sla.mjs'
+
 const $ = id => document.getElementById(id)
 const labels={mine:'งานของฉัน',unassigned:'ยังไม่มีคนรับ',waiting:'รอลูกค้าตอบ',sla:'ตอบเกิน SLA',today:'นัดหมายวันนี้',followup:'ถึงเวลาติดตาม',closed:'ปิดแล้ว',all:'ทั้งหมด'}
 const channelState={ok:'รับข้อความอยู่',idle:'เงียบเกิน 24 ชั่วโมง',down:'มีปัญหา',off:'ยังไม่ได้เชื่อม',unknown:'ตรวจสถานะไม่ได้'}
@@ -216,47 +218,79 @@ function renderLastReply(){
  const mine=r.by===boot?.user?.id
  box.textContent='ตอบล่าสุดโดย '+(mine?'คุณ':(r.name||'ทีมงาน'))+' · '+date(r.at)
 }
-async function loadList(){const seq=++listSequence;const data=await api('list',{filter,search:$('search').value.trim(),offset});if(seq!==listSequence)return;items=data.slice(0,50);$('next').disabled=data.length<=50;$('previous').disabled=offset===0;renderList();await refreshCounts()}
+// ★ ชิปโครงการ (Naii/Vibe) ไม่มี filter ฝั่งฐานรองรับ — ฐานมีแค่สถานะ/เจ้าของ ไม่มีตัวกรองตามโครงการ
+//   ขอเพิ่ม RPC ใหม่จะเกินสโคป "แก้ UI เท่านั้น" ของงานนี้ จึงขอ filter='all' จากฐานมาก่อน
+//   แล้วกรองเหลือเฉพาะโครงการที่เลือกฝั่งนี้ — พีนัลตี: หน้าเดียว (50 แถว) อาจมีของโครงการอื่นปนมา
+//   ถ้าอยากให้ pagination แม่นสมบูรณ์ทุกกรณี ต้องเพิ่มพารามิเตอร์ project ใน connect_api (ไม่ทำในรอบนี้)
+async function loadList(){const seq=++listSequence
+ const isProject=filter.startsWith('proj-')
+ const data=await api('list',{filter:isProject?'all':filter,search:$('search').value.trim(),offset})
+ if(seq!==listSequence)return
+ const projectId=isProject?projectIdFor(PROJECT_CHIPS.find(([k])=>k===filter)?.[2]):null
+ const page=isProject?data.filter(x=>x.project_id===projectId):data
+ items=page.slice(0,50)
+ $('next').disabled=data.length<=50;$('previous').disabled=offset===0
+ renderList();await refreshCounts()}
+// ชื่อย่อโครงการบนแท็ก — ย้อนจาก project_id ของแถวไปหารหัสโครงการ แล้วเทียบกับชิปที่มีอยู่แล้ว
+// ไม่ออกแบบใหม่: ใช้ป้ายเดียวกับที่อยู่บนชิปตัวกรอง (Naii/Vibe) ให้อ่านตรงกันทั้งหน้า
+function projectTagLabel(projectId){
+ if(!projectId)return ''
+ const code=boot?.projects?.find(p=>p.id===projectId)?.code
+ return PROJECT_CHIPS.find(([,,c])=>c===code)?.[1] ?? ''
+}
+
+// ── การ์ดแชท (ChatRow) ──────────────────────────────────────────────────
+// โครง: avatar+badge ช่องทาง │ (ชื่อ+ป้าย SLA ···· เวลา) แถวบน / (ข้อความล่าสุด ···· แท็กโครงการ+ยังไม่อ่าน) แถวล่าง
 function renderList(){
   $('conversations').replaceChildren();
   for(const item of items){
-    const closed=item.status==='resolved',s=sla(item),overdue=s.style==='critical';
-    const b=text('button','','conversation-item'+(item.id===selected?' selected':'')+(overdue?' overdue':''));
-    // ── บรรทัด 1: ชื่อ · สถานะ · แจ้งเตือน ····· เวลา · ช่องทาง ──
-    const shown=customerName(item.display_name,item.external_id,item.channel);const row=text('div','','person-row'),name=text('strong',shown);row.append(avatar(item.picture_url,shown));
-    if(overdue||item.unread_count>0){const dot=text('span','','unread-dot');dot.setAttribute('aria-hidden','true');name.prepend(dot);const hint=text('span',overdue?' · เกิน SLA': ' · ยังไม่ได้อ่าน','sr-only');name.append(hint)}
-    row.append(name);
-    // ★ สถานะมาจาก case_status ในฐานที่เดียว — ของเดิมคิดจาก waiting_since เองที่เบราว์เซอร์
-    //   ซึ่งขัดกับคอมเมนต์เหนือ sla() ที่ว่า "หน้าจอไม่คิดเองอีกแล้ว" เลยตัดออก
-    const label=closed?'ปิดแล้ว':s.label;
-    if(label){
-      const pill=text('span','','pill status '+statusTone(closed?'closed':item.case_status));
-      // ★ แยก " N นาที" ออกเป็น span ของตัวเอง เพื่อให้ CSS ซ่อนจำนวนนาทีได้ตอนจอแคบ
-      //   โดยไม่ต้องแก้ sla() ซึ่งหัวแชท (renderDetail) ใช้ร่วมอยู่และต้องเห็นนาทีเสมอ
-      const m=/^(.*?)(\s\d+\s*นาที)$/.exec(label);
-      if(m){pill.textContent=m[1];pill.append(text('span',m[2],'pill-n'))}
-      else pill.textContent=label;
-      row.append(pill)
+    const closed=item.status==='resolved';
+    // ★ ป้าย SLA มาจาก slaTag() ตัวเดียว (public/sla.mjs) ไม่ใช่ sla() เดิมที่แยกกันสองระดับ
+    //   ตอบแล้ว/ปิดแล้วไม่มีป้าย · รอ 5-9 นาทีแดงอ่อน · 10+ นาทีแดงเข้ม (#8E1116)
+    const tag=closed?{label:'',tone:'none'}:slaTag(item.waiting_minutes,item.case_status)
+    const overdue=tag.tone==='over'
+    const b=text('button','','chat-row'+(item.id===selected?' selected':'')+(overdue?' overdue':''));
+
+    const shown=customerName(item.display_name,item.external_id,item.channel);
+    const avatarBox=avatar(item.picture_url,shown);
+    // ★ badge ช่องทางอยู่มุมล่างขวาของ avatar ตามสเปก ไม่ใช่ pill แยกในแถวข้อความแบบเดิม
+    avatarBox.append(text('span','','channel-badge '+(item.channel==='line'?'line':'fb')));
+    b.append(text('div','','chat-row-avatar')); b.lastChild.append(avatarBox);
+
+    const body=text('div','','chat-row-body');
+
+    // แถวบน: ชื่อ + ป้าย SLA/แจ้งเตือน ····· เวลา
+    const top=text('div','','chat-row-top');
+    const name=text('strong',shown,'chat-row-name');
+    if(item.unread_count>0){const dot=text('span','','unread-dot');dot.setAttribute('aria-hidden','true');name.prepend(dot)}
+    top.append(name);
+    if(tag.label){
+      const el=text('span',tag.label,'sla-tag '+tag.tone);
+      el.title=tag.label;top.append(el)
     }
-    // ★ แจ้งเตือนรวมเป็นใบเดียวเสมอ ถึงจะมีสองเรื่องก็ต่อท้ายเป็น "+1"
-    //   สองใบทำให้การ์ดล้นขอบที่ความกว้างพาเนล 245px (app.css:288 จอ <=1050px)
-    //   และใบที่สองมีค่าน้อยกว่าชื่อลูกค้าที่ถูกเบียดหายไปแลกมา
     const alerts=dueAlerts(item,closed);
     if(alerts.length){
       const short=ALERT_SHORT[alerts[0]]||alerts[0];
-      row.append(text('span',alerts.length>1?short+' +'+(alerts.length-1):short,'pill status crit alert'));
-      // ★ ข้อความเต็มต้องไม่ผูกกับ pill ใบนั้น เพราะ pill ถูกซ่อนตอนจอแคบ
-      //   ถ้าเอา sr-only ไปแปะไว้ข้างใน คนใช้โปรแกรมอ่านหน้าจอจะไม่ได้ยินเลยบนโน้ตบุ๊ก
-      row.append(text('span',' ('+alerts.join(' · ')+')','sr-only'));
+      top.append(text('span',alerts.length>1?short+' +'+(alerts.length-1):short,'sla-tag over'));
+      top.append(text('span',' ('+alerts.join(' · ')+')','sr-only'));
       b.title=alerts.join(' · ')
     }
-    // ★ ช่อง .conv-time ใส่เสมอแม้ไม่มีเวลา เพราะมันคือตัว ml-auto ที่ดันช่องทางไปชิดขวา
-    //   ถ้าไม่ใส่ตอนไม่มีเวลา badge จะเลื่อนมาติดชื่อ การ์ดในรายการเดียวกันจะเรียงไม่ตรงกัน
-    const stamp=listTime(item.last_message_at),when=text('span',stamp,'conv-time');
+    const stamp=listTime(item.last_message_at),when=text('span',stamp,'chat-row-time');
     if(stamp)when.title=date(item.last_message_at);
-    row.append(when,text('span',item.channel==='line'?'LINE':'FB','pill channel '+(item.channel==='line'?'line':'fb')));
-    // ── บรรทัด 2: ข้อความล่าสุด บรรทัดเดียว ตัดด้วย … ──
-    b.append(row,text('p',item.last_message_preview||'ยังไม่มีข้อความ'));
+    top.append(when);
+    body.append(top);
+
+    // แถวล่าง: ข้อความล่าสุด ····· แท็กโครงการ + ยังไม่อ่าน
+    const bottom=text('div','','chat-row-bottom');
+    bottom.append(text('p',item.last_message_preview||'ยังไม่มีข้อความ','chat-row-preview'));
+    const meta=text('div','','chat-row-meta');
+    const proj=projectTagLabel(item.project_id);
+    if(proj)meta.append(text('span',proj,'project-tag'));
+    if(item.unread_count>0)meta.append(text('span',String(Math.min(item.unread_count,99)),'unread-badge'));
+    bottom.append(meta);
+    body.append(bottom);
+
+    b.append(body);
     b.addEventListener('click',()=>selectCase(item.id).catch(e=>note(e.message,true)));$('conversations').append(b)
   }
   if(!items.length)$('conversations').append(text('p','ไม่พบเคสในรายการนี้','muted'))
@@ -342,46 +376,44 @@ function shortChannel(c){ return c.name||c.key||'' }
 //
 // ★ ชื่อย่อใช้บนชิป ชื่อเต็มอยู่ใน title/aria-label เสมอ
 //   แถบนี้กว้างจำกัด ถ้าใช้ชื่อเต็มจะขึ้นบรรทัดใหม่หรือถูกตัด แล้วอ่านไม่รู้เรื่องทั้งคู่
-const shortLabels={unassigned:'รอรับ',sla:'SLA',followup:'ติดตาม',mine:'ของฉัน',waiting:'รอลูกค้า',today:'นัดวันนี้',closed:'ปิดแล้ว',all:'ทั้งหมด'}
-const primaryFilters=['all','unassigned','sla','followup','mine']
-const moreFilters=['waiting','today','closed']
-// ชื่อใน URL สั้นกว่าคีย์ภายใน — อ่านออกแล้วเข้าใจได้เลยว่าหน้าไหน
-// รับคีย์ภายในด้วย ไม่งั้น waiting/today/closed จะหายทุกครั้งที่รีเฟรช
-const urlNames={all:'all',unassigned:'pending',sla:'sla',followup:'follow',mine:'mine'}
+const shortLabels={all:'ทั้งหมด',unassigned:'ยังไม่ตอบ'}
+// ★ ชิปตัวกรองของหน้านี้เหลือ 4 อันแบบเรียบ (ทั้งหมด/ยังไม่ตอบ + โครงการ) ตามสเปกใหม่
+//   ของเดิมมีถึง 8 ตัวกรอง (mine/unassigned/waiting/sla/today/followup/closed/all) และมีเมนู "เพิ่มเติม"
+//   ไม่ได้ลบตัวกรองพวกนั้นออกจากฐาน แค่หน้าจอนี้เลือกแสดงแค่ที่สเปกขอ
+//
+// ★ "ยังไม่ตอบ" แม็ปกับ filter เดิมชื่อ 'unassigned' (ยังไม่มีคนรับ) ไม่ใช่ case_status
+//   เหตุผล: มันคือคีย์เดียวที่ inbox.queue_counts() มีตัวเลขให้แล้ว และในระบบคิวรวม
+//   (shared queue ไม่มีเจ้าของเคส) เคสที่ยังไม่มีคนรับกับเคสที่ยังไม่ถูกตอบเป็นเซตที่ทับกันเกือบสนิท
+//   ถ้าจะให้ตรงกับ case_status='new'|'late' เป๊ะ ต้องเพิ่มตัวนับใหม่ฝั่งฐาน — ยังไม่ทำในรอบนี้
+const STATUS_CHIPS=['all','unassigned']
+// รหัสโครงการจริงจาก core.project.code — เทียบจาก boot.projects ตอน render ไม่ฮาร์ดโค้ด id
+const PROJECT_CHIPS=[['proj-naii','Naii','asher-naii'],['proj-vibe','Vibe','asher-vibe']]
+
+const urlNames={all:'all',unassigned:'pending','proj-naii':'naii','proj-vibe':'vibe'}
 const fromUrl=Object.fromEntries(Object.entries(urlNames).map(([k,v])=>[v,k]))
 const readFilter=()=>{const v=new URL(location.href).searchParams.get('filter')||''
- return fromUrl[v]||(labels[v]?v:'all')}
+ return fromUrl[v]||'all'}
 function writeFilter(){const u=new URL(location.href)
- u.searchParams.set('filter',urlNames[filter]||filter)
+ u.searchParams.set('filter',urlNames[filter]||'all')
  history.replaceState(null,'',u)}
-let counts={},closeMenu=null
-
-const svg=(tag,attrs)=>{const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e}
-function moreIcon(){
- const s=svg('svg',{viewBox:'0 0 16 16','aria-hidden':'true',focusable:'false',class:'chip-icon'})
- for(const [y,cx] of [[4,10],[8,6],[12,11]]){
-  s.append(svg('line',{x1:2,y1:y,x2:14,y2:y,stroke:'currentColor','stroke-width':1.4,'stroke-linecap':'round'}))
-  s.append(svg('circle',{cx,cy:y,r:1.9,fill:'currentColor'}))
- }
- return s
-}
+let counts={}
 
 // กดชิปที่เลือกอยู่ซ้ำ = ถอดตัวกรอง กลับไปทั้งหมด
-// เป็นทางออกที่หาเจอเอง ไม่ต้องรู้ว่าต้องไปกดชิปไหนเพื่อเลิกกรอง
 function pickFilter(key){const next=filter===key?'all':key
  if(filter===next&&key!=='all')return
  filter=next;offset=0;writeFilter();renderFilters();loadList().catch(e=>note(e.message,true))}
 
-// ★ สีแดงใช้เฉพาะตอนมีของค้างจริง (count>0) — เป็น 0 เมื่อไหร่ต้องกลับเป็นชิปเทาธรรมดา
-//   ไม่งั้นแถบนี้จะแดงตลอดเวลาจนคนเลิกมอง ซึ่งแย่กว่าไม่มีสีเตือนเลย
-function chipFor(key){
- const n=counts[key]??0,on=filter===key
- const b=text('button','','chip'+(on?' selected':'')+(n>0&&key==='unassigned'?' hot-alert':'')+(n>0&&key==='sla'?' hot-sla':''))
- b.type='button';b.title=labels[key]
+function projectIdFor(code){return boot?.projects?.find(p=>p.code===code)?.id ?? null}
+
+// ★ สีแดงใช้เฉพาะตอนมีของค้างจริง (count>0) บนชิป "ยังไม่ตอบ" เท่านั้น — ชิปอื่นไม่มีวันเป็นสีแดง
+function chipFor(key,label,n){
+ const on=filter===key
+ const b=text('button','','chip'+(on?' selected':'')+(n>0&&key==='unassigned'?' hot-alert':''))
+ b.type='button';b.title=label
  b.setAttribute('aria-pressed',String(on))
- b.setAttribute('aria-label',labels[key]+(n>0?' '+n+' เคส':''))
+ b.setAttribute('aria-label',label+(n>0?' '+n+' เคส':''))
  if(key==='unassigned'&&n>0){const d=text('span','','chip-dot');d.setAttribute('aria-hidden','true');b.append(d)}
- b.append(text('span',shortLabels[key],'chip-name'))
+ b.append(text('span',label,'chip-name'))
  if(n>0)b.append(text('span',String(n),'chip-n'))
  b.addEventListener('click',()=>pickFilter(key))
  return b
@@ -389,50 +421,9 @@ function chipFor(key){
 
 function renderFilters(){
  const nav=$('filters');if(!nav)return
- if(closeMenu)closeMenu()
  nav.replaceChildren()
- for(const key of primaryFilters)nav.append(chipFor(key))
-
- const wrap=$('filter-more');if(!wrap)return
- wrap.replaceChildren()
- const inMenu=moreFilters.includes(filter)
- const btn=text('button','','chip chip-more-btn'+(inMenu?' selected':''))
- btn.type='button';btn.title='ตัวกรองเพิ่มเติม'
- btn.setAttribute('aria-label','ตัวกรองเพิ่มเติม')
- btn.setAttribute('aria-haspopup','true');btn.setAttribute('aria-expanded','false')
- btn.append(moreIcon())
-
- const menu=text('div','','chip-menu');menu.hidden=true
- for(const key of moreFilters){
-  const n=counts[key]??0
-  const item=text('button','','chip-menu-item'+(filter===key?' selected':''))
-  item.type='button'
-  item.append(text('span',labels[key],'chip-menu-name'))
-  if(n>0)item.append(text('span',String(n),'chip-n'))
-  item.addEventListener('click',()=>{close();pickFilter(key)})
-  menu.append(item)
- }
-
- // ปิดเมนูเมื่อคลิกข้างนอกหรือกด Esc — ถ้าไม่ถอด listener ตอนปิด
- // ทุกครั้งที่ render ใหม่จะทิ้ง listener ค้างไว้ แล้วสะสมไปเรื่อย ๆ
- function onDocClick(e){if(!wrap.contains(e.target))close()}
- function onKey(e){if(e.key==='Escape'){close();btn.focus()}}
- function close(){
-  if(menu.hidden)return
-  menu.hidden=true;btn.setAttribute('aria-expanded','false')
-  document.removeEventListener('click',onDocClick,true)
-  document.removeEventListener('keydown',onKey)
-  closeMenu=null
- }
- function open(){
-  menu.hidden=false;btn.setAttribute('aria-expanded','true')
-  document.addEventListener('click',onDocClick,true)
-  document.addEventListener('keydown',onKey)
-  closeMenu=close
- }
- btn.addEventListener('click',e=>{e.stopPropagation();menu.hidden?open():close()})
-
- wrap.append(btn,menu)
+ for(const key of STATUS_CHIPS)nav.append(chipFor(key,shortLabels[key],counts[key]??0))
+ for(const [key,label]of PROJECT_CHIPS)nav.append(chipFor(key,label,0))
 }
 
 // นับทุกตัวกรองในคำขอเดียว แล้ววาดชิปใหม่
@@ -547,7 +538,29 @@ $('message').addEventListener('keydown',e=>{
  if(!$('send').disabled)$('reply').requestSubmit()
 })
 
-async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
+// ★ ย้าย element จริง ไม่ใช่สร้างปุ่มใหม่ซ้อน — id="refresh" ยังเป็นตัวเดิม event listener
+//   เดิมยังผูกอยู่ถูกตัว แค่ตำแหน่งใน DOM เปลี่ยนเป็นแถวหัว "แชท" ตามสเปกใหม่
+function relocateRefreshButton(){
+ const btn=$('refresh'),slot=document.querySelector('.chat-list-actions')
+ if(btn&&slot)slot.append(btn)
+}
+// เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
+// "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง
+function wireAppNav(role){
+ const managerUp=['manager','admin'].includes(role)
+ $('nav-stats').hidden=!managerUp
+ // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
+ // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
+ $('nav-settings').addEventListener('click',()=>{
+  const open=document.body.classList.toggle('settings-open')
+  $('nav-settings').setAttribute('aria-expanded',String(open))
+ })
+ // กดแท็บ "แชท" ซ้ำตอนเปิดแผงสนทนาอยู่บนมือถือ = กลับไปหน้ารายการ (ทางเดียวกับปุ่ม #back)
+ document.querySelector('.nav-item[data-nav="chat"]')?.addEventListener('click',()=>{
+  if(document.body.classList.contains('chat-open'))setChatOpen(false)
+ })
+}
+async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
 setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
  // ★ เตือนเมื่อ "คนอื่น" ตอบแทรกระหว่างที่เรากำลังพิมพ์ — คิวรวมแปลว่าสองคนหยิบเคสเดียวกันได้
  //   เตือนเฉพาะตอนที่ในช่องพิมพ์มีข้อความค้างอยู่ ไม่งั้นจะเด้งรบกวนทุกครั้งที่เพื่อนตอบ

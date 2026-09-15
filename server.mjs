@@ -185,6 +185,9 @@ const sessions = createSessions({ authCall, rpc, origin, log, sessionDir })
 
 // เรียกฟังก์ชันในฐานตรง ๆ ไม่ผ่านประตู connect_api/connect_worker
 // ใช้กับของที่เป็นเรื่องของชั้นนี้เอง ไม่ใช่คำสั่งของผู้ใช้ เช่นสถานะช่องทาง
+// ทะเบียน RPC ที่หน้าสถิติเรียกได้ — ชื่อต้องตรงกับ inbox.stats_* ใน sql/018
+const STATS_ACTIONS = new Set(['stats_overview', 'stats_agents', 'stats_timeline', 'stats_open_windows'])
+
 const rpcDirect = (token, fn, body = {}) =>
   callSupabase(DATA, `/rest/v1/rpc/${fn}`, {
     token, method: 'POST', body,
@@ -840,6 +843,15 @@ async function handleCommand(req, res) {
     return json(res, 200, await rpcDirect(accessToken, 'queue_counts', { p_search: String(input.data.search ?? '') }))
   }
 
+  // ★ หน้าสถิติ — ทางเดียวกันกับ queue_counts คือยิงด้วย token ของคนที่ล็อกอิน
+  //   ★★ ด่านสิทธิ์อยู่ที่ inbox.stats_scope() ในฐาน (manager ขึ้นไป) ไม่ใช่ที่บรรทัดนี้
+  //   ที่นี่ทำแค่กันไม่ให้เรียกฟังก์ชันนอกทะเบียน — ใครยิง /api/command ตรง ๆ
+  //   ด้วย action stats_agents ก็จะไปตายที่ฐานด้วย 42501 ตามที่ควรเป็น
+  //   การซ่อนปุ่มบนหน้าเว็บเป็นเรื่องความสะอาดตาเท่านั้น ไม่นับเป็นการป้องกัน
+  if (STATS_ACTIONS.has(input.action)) {
+    return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
+  }
+
   if (input.action.startsWith('fn:')) {
     const name = input.action.slice(3)
     if (!edgeFunctions.includes(name)) throw fail(404, 'function_not_registered')
@@ -872,7 +884,9 @@ async function handleCommand(req, res) {
 
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
-const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css' }
+const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
+  '/sla.mjs': 'sla.mjs',
+  '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css' }
 
 async function handleStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw fail(405, 'method_not_allowed')
@@ -883,7 +897,7 @@ async function handleStatic(req, res, url) {
 
   const data = await readFile(join(root, 'public', target)).catch(() => { throw fail(404, 'not_found') })
   const type = font ? 'font/woff2'
-    : url.pathname.endsWith('.js') ? 'text/javascript; charset=utf-8'
+    : url.pathname.endsWith('.js') || url.pathname.endsWith('.mjs') ? 'text/javascript; charset=utf-8'
     : url.pathname.endsWith('.css') ? 'text/css; charset=utf-8'
     : 'text/html; charset=utf-8'
 
