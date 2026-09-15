@@ -12,6 +12,80 @@ const api=(action,data={})=>request('/api/command',{action,data})
 const date=value=>value?new Date(value).toLocaleString('th-TH',{timeZone:'Asia/Bangkok',dateStyle:'medium',timeStyle:'short'}):'—'
 function local(value){if(!value)return '';return new Date(new Date(value).getTime()+7*3600000).toISOString().slice(0,16)}
 const utc=value=>value?new Date(value+':00+07:00').toISOString():null
+// ─────────────────────────────────────────── เทมเพลตข้อความ (เฟส 4.2)
+//
+// ★ ตัวแปรที่แทนได้ต้องมีแหล่งจริงเท่านั้น
+//   {ชื่อ}        <- ชื่อลูกค้าที่บันทึกไว้ (ไม่มีชื่อ = ไม่แทน)
+//   {โครงการ}     <- ชื่อโครงการที่เลือกอยู่
+//   {ราคาเริ่มต้น} <- ราคาต่ำสุดของห้องที่ยังว่างใน inventory.unit
+//
+// ★★ ถ้าไม่มีค่า "ห้ามแทนด้วยอะไรทั้งนั้น" ให้คงวงเล็บไว้แล้วเตือนคนส่ง
+//    ตอนนี้ inventory.unit ว่างทั้งสองโครงการ และ bots/project-data/naii.md
+//    ยังมีหมายเหตุของทีมเองว่า "⚠️ ต้องยืนยัน ... On Top 300,000 หรือ 350,000"
+//    การเดาตัวเลขให้ = เซลส์กดส่งราคาผิดให้ลูกค้าโดยไม่รู้ตัว ซึ่งเรียกคืนไม่ได้
+//    ปล่อยให้เห็นวงเล็บค้างอยู่ คนพิมพ์จะสังเกตเองก่อนกดส่ง
+const TEMPLATE_VARS = ['ชื่อ', 'โครงการ', 'ราคาเริ่มต้น']
+
+function templateValues(){
+ const project = boot?.projects?.find(x => x.id === $('project').value)
+ const price = project?.starting_price
+ return {
+  'ชื่อ': (detail?.contact?.display_name ?? '').trim() || null,
+  'โครงการ': project?.name ?? null,
+  'ราคาเริ่มต้น': price != null ? Number(price).toLocaleString('th-TH') + ' บาท' : null,
+ }
+}
+
+/** แทนค่าตัวแปร · คืนทั้งข้อความและรายชื่อตัวแปรที่แทนไม่ได้ */
+function fillTemplate(content){
+ const v = templateValues()
+ const missing = []
+ const text = String(content ?? '').replace(/\{([^}]+)\}/g, (whole, name) => {
+  const key = name.trim()
+  if (!TEMPLATE_VARS.includes(key)) return whole
+  if (v[key] == null) { if (!missing.includes(key)) missing.push(key); return whole }
+  return v[key]
+ })
+ return { text, missing }
+}
+
+function useTemplate(content){
+ const { text, missing } = fillTemplate(content)
+ $('message').value = text
+ $('message').focus()
+ if (missing.length) note('ยังไม่มีข้อมูลสำหรับ ' + missing.map(m => '{' + m + '}') .join(' ') + ' — กรุณาเติมเองก่อนส่ง', true)
+}
+
+// ── เรียงชิปตามบริบท ──
+// ดูคำในข้อความล่าสุดของลูกค้า แล้วดันเทมเพลตที่เกี่ยวขึ้นหน้า
+// ★ เรียงใหม่เท่านั้น ไม่ซ่อนอันไหน — ซ่อนแล้วเซลส์จะหาของที่เคยอยู่ตรงนั้นไม่เจอ
+const TOPIC_WORDS = {
+ ราคา: ['ราคา', 'เท่าไหร่', 'เท่าไร', 'กี่บาท', 'ล้าน', 'ผ่อน', 'ดาวน์', 'โปร'],
+ แปลน: ['แปลน', 'ผัง', 'ห้อง', 'ตร.ม', 'ตรม', 'ขนาด', 'กี่ตาราง'],
+ นัดชม: ['นัด', 'ดูห้อง', 'เข้าชม', 'ไปดู', 'ว่างวัน', 'เยี่ยมชม'],
+ เบอร์: ['เบอร์', 'โทร', 'ติดต่อ', 'ไลน์', 'line id'],
+}
+function lastContactText(){
+ const msgs = detail?.messages ?? []
+ for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].sender_type === 'contact') return String(msgs[i].content ?? '')
+ return ''
+}
+function rankTemplates(list){
+ const hay = lastContactText().toLowerCase()
+ const score = t => {
+  const s = ((t.shortcut ?? '') + ' ' + (t.content ?? '')).toLowerCase()
+  let n = 0
+  for (const [topic, words] of Object.entries(TOPIC_WORDS)) {
+   if (!words.some(w => hay.includes(w.toLowerCase()))) continue
+   if (s.includes(topic.toLowerCase()) || words.some(w => s.includes(w.toLowerCase()))) n += 2
+  }
+  return n
+ }
+ return [...list].map((t, i) => ({ t, i, n: score(t) }))
+   .sort((a, b) => b.n - a.n || a.i - b.i)   // คะแนนเท่ากันให้คงลำดับเดิม
+   .map(x => x.t)
+}
+
 // ชื่อที่จะโชว์ให้เซลส์เห็น — กฎเดียว ใช้ทั้งการ์ดในรายการและหัวแชท
 //   มีชื่อจริง        -> ชื่อ
 //   ไม่มีชื่อ           -> external id (PSID ของ Facebook / userId ของ LINE)
@@ -189,7 +263,7 @@ function renderList(){
 }
 function renderMessages(messages,prepend=false){if(!prepend)$('messages').replaceChildren();const fragment=document.createDocumentFragment();for(const m of messages){const b=text('div',m.content,'bubble'+(m.sender_type==='agent'?' out':m.sender_type==='bot'?' bot':''));const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':'';b.append(text('small',date(m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''));if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}fragment.append(b)}if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment);$('older').hidden=messages.length<100}
 async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight}
-function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=detail.channel==='line'?'LINE Official Account':'Facebook Messenger';const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of boot.canned.filter(x=>x.project_id===$('project').value)){const b=text('button',item.shortcut);b.type='button';b.addEventListener('click',()=>{$('message').value=item.content;$('message').focus()});$('canned').append(b)}permissions()}
+function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=detail.channel==='line'?'LINE Official Account':'Facebook Messenger';const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
 async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||crypto.randomUUID();pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value=''}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(action==='send'?'ข้อความเข้าคิวแล้ว สถานะส่งจะแสดงใต้ข้อความ':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);note(e.message,true);$('dialog-error').textContent=e.message}finally{setBusy(false)}}
 let dialogAction,dialogData
 function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
@@ -388,6 +462,55 @@ function renderChannels(){
   box.append(chip)
  }
 }
+// ── พิมพ์ "/" เปิดรายการค้นหาเทมเพลต ──
+// ★ เปิดเฉพาะตอน "/" เป็นตัวแรกของช่องพิมพ์ ไม่ใช่ทุกที่ที่มี /
+//   ไม่งั้นลูกค้าถามเรื่อง "24/7" หรือ "3/5 ล้าน" แล้วเมนูจะเด้งขึ้นมาขวางการพิมพ์
+let templateIndex = -1
+function templateMatches(q){
+ const list = boot?.canned?.filter(x => x.project_id === $('project').value) ?? []
+ const t = q.trim().toLowerCase()
+ const ranked = rankTemplates(list)
+ if (!t) return ranked.slice(0, 8)
+ return ranked.filter(x => ((x.shortcut ?? '') + ' ' + (x.content ?? '')).toLowerCase().includes(t)).slice(0, 8)
+}
+function closeTemplateMenu(){ const b = $('template-menu'); if (b) { b.hidden = true; b.replaceChildren() } templateIndex = -1 }
+function openTemplateMenu(){
+ const box = $('template-menu'); if (!box) return
+ const v = $('message').value
+ if (!v.startsWith('/')) return closeTemplateMenu()
+ const items = templateMatches(v.slice(1))
+ box.replaceChildren()
+ if (!items.length) {
+  box.append(text('div', boot?.canned?.length ? 'ไม่พบเทมเพลตที่ตรง' : 'ยังไม่มีเทมเพลตในระบบ', 'template-empty'))
+  box.hidden = false
+  return
+ }
+ items.forEach((it, i) => {
+  const b = text('button', '', 'template-item' + (i === templateIndex ? ' active' : ''))
+  b.type = 'button'
+  b.append(text('strong', it.shortcut ?? '(ไม่มีชื่อย่อ)'), text('small', (it.content ?? '').slice(0, 70)))
+  b.addEventListener('click', () => { useTemplate(it.content); closeTemplateMenu() })
+  box.append(b)
+ })
+ box.hidden = false
+}
+$('message').addEventListener('input', openTemplateMenu)
+$('message').addEventListener('blur', () => setTimeout(closeTemplateMenu, 150))
+$('message').addEventListener('keydown', e => {
+ const box = $('template-menu')
+ if (!box || box.hidden) return
+ const items = [...box.querySelectorAll('.template-item')]
+ if (!items.length) return
+ if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  e.preventDefault()
+  templateIndex = (templateIndex + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+  openTemplateMenu()
+ } else if (e.key === 'Enter' && templateIndex >= 0) {
+  e.preventDefault(); e.stopPropagation()   // ★ กันไม่ให้ Enter=ส่ง ทำงานทับ
+  items[templateIndex].click()
+ } else if (e.key === 'Escape') { e.preventDefault(); closeTemplateMenu() }
+}, true)   // ★ capture — ต้องได้สิทธิ์ก่อน handler ของ Enter=ส่ง
+
 // ─────────────────────────────────────────── หน้าจอมือถือ (เฟส 4.1)
 // ★ เกณฑ์ 767.98 ต้องตรงกับใน app.css เป๊ะ ๆ ไม่งั้นจะมีช่วงความกว้างที่
 //   JS คิดว่าเป็นมือถือแต่ CSS คิดว่าเป็นจอคอม แล้วหน้าจอจะพังแบบหาสาเหตุยาก
@@ -424,7 +547,7 @@ $('message').addEventListener('keydown',e=>{
  if(!$('send').disabled)$('reply').requestSubmit()
 })
 
-async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
+async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
 setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
  // ★ เตือนเมื่อ "คนอื่น" ตอบแทรกระหว่างที่เรากำลังพิมพ์ — คิวรวมแปลว่าสองคนหยิบเคสเดียวกันได้
  //   เตือนเฉพาะตอนที่ในช่องพิมพ์มีข้อความค้างอยู่ ไม่งั้นจะเด้งรบกวนทุกครั้งที่เพื่อนตอบ
