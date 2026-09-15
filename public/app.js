@@ -243,6 +243,10 @@ function projectTagLabel(projectId){
 // โครง: avatar+badge ช่องทาง │ (ชื่อ+ป้าย SLA ···· เวลา) แถวบน / (ข้อความล่าสุด ···· แท็กโครงการ+ยังไม่อ่าน) แถวล่าง
 function renderList(){
   $('conversations').replaceChildren();
+  // ★ สเปกเฟส 1: บนจอแคบแต่ละแถวมีแท็กได้ "แท็กเดียว" — แท็ก SLA ย้ายลงไปแทนที่
+  //   แท็กโครงการในแถวล่าง ส่วนแท็กเตือนนัดหมายยังอ่านได้จาก title ของแถว (b.title)
+  //   ต้องประกาศนอก loop เพราะใช้ตั้งแต่แถวบนของการ์ด ประกาศกลางทางจะติด TDZ
+  const oneTag=MOBILE.matches;
   for(const item of items){
     const closed=item.status==='resolved';
     // ★ ป้าย SLA มาจาก slaTag() ตัวเดียว (public/sla.mjs) ไม่ใช่ sla() เดิมที่แยกกันสองระดับ
@@ -264,14 +268,14 @@ function renderList(){
     const name=text('strong',shown,'chat-row-name');
     if(item.unread_count>0){const dot=text('span','','unread-dot');dot.setAttribute('aria-hidden','true');name.prepend(dot)}
     top.append(name);
-    if(tag.label){
+    if(tag.label&&!oneTag){
       const el=text('span',tag.label,'sla-tag '+tag.tone);
       el.title=tag.label;top.append(el)
     }
     const alerts=dueAlerts(item,closed);
     if(alerts.length){
       const short=ALERT_SHORT[alerts[0]]||alerts[0];
-      top.append(text('span',alerts.length>1?short+' +'+(alerts.length-1):short,'sla-tag over'));
+      if(!oneTag)top.append(text('span',alerts.length>1?short+' +'+(alerts.length-1):short,'sla-tag over'));
       top.append(text('span',' ('+alerts.join(' · ')+')','sr-only'));
       b.title=alerts.join(' · ')
     }
@@ -285,7 +289,8 @@ function renderList(){
     bottom.append(text('p',item.last_message_preview||'ยังไม่มีข้อความ','chat-row-preview'));
     const meta=text('div','','chat-row-meta');
     const proj=projectTagLabel(item.project_id);
-    if(proj)meta.append(text('span',proj,'project-tag'));
+    if(oneTag&&tag.label)meta.append(text('span',tag.label,'sla-tag '+tag.tone));
+    else if(proj)meta.append(text('span',proj,'project-tag'));
     if(item.unread_count>0)meta.append(text('span',String(Math.min(item.unread_count,99)),'unread-badge'));
     bottom.append(meta);
     body.append(bottom);
@@ -297,7 +302,31 @@ function renderList(){
 }
 function renderMessages(messages,prepend=false){if(!prepend)$('messages').replaceChildren();const fragment=document.createDocumentFragment();for(const m of messages){const b=text('div',m.content,'bubble'+(m.sender_type==='agent'?' out':m.sender_type==='bot'?' bot':''));const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':'';b.append(text('small',date(m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''));if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}fragment.append(b)}if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment);$('older').hidden=messages.length<100}
 async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight}
-function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=detail.channel==='line'?'LINE Official Account':'Facebook Messenger';const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
+// รูปกับโครงการบนหัวแชท — รูปเอาจากแถวในรายการก่อน (ที่นั่นมี picture_url แน่นอน)
+// แล้วค่อยถอยไปหาของใน detail เผื่อเปิดเคสที่ยังไม่อยู่ในรายการหน้านี้
+function renderChatHeadExtras(who){
+ const box=$('chat-avatar')
+ if(box){
+  const url=items.find(i=>i.id===selected)?.picture_url||detail.contact?.picture_url||''
+  box.replaceChildren()
+  box.textContent=initials(who)
+  if(url){
+   const img=document.createElement('img')
+   img.alt='';img.loading='lazy'
+   img.addEventListener('error',()=>img.remove())
+   img.src=url
+   box.append(img)
+  }
+ }
+ const tag=$('chat-project')
+ if(!tag)return
+ const c=detail.conversation||{}
+ const id=c.project_id||detail.lead?.project_id||items.find(i=>i.id===selected)?.project_id||''
+ const name=boot?.projects?.find(p=>p.id===id)?.name||projectTagLabel(id)
+ tag.textContent=name
+ tag.hidden=!name
+}
+function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=detail.channel==='line'?'LINE':'Messenger';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
 async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||crypto.randomUUID();pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value=''}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(action==='send'?'ข้อความเข้าคิวแล้ว สถานะส่งจะแสดงใต้ข้อความ':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);note(e.message,true);$('dialog-error').textContent=e.message}finally{setBusy(false)}}
 let dialogAction,dialogData
 function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
@@ -432,6 +461,15 @@ async function refreshCounts(){
  try{counts=await api('queue_counts',{search:$('search').value.trim()})}
  catch{counts={}}
  renderFilters()
+ renderUnreadBadge()
+}
+
+// ตัวเลขบนไอคอนแชท — ใช้ตัวเดียวกับชิป "ยังไม่ตอบ" จะได้ไม่มีวันขัดกันเอง
+function renderUnreadBadge(){
+ const badge=$('nav-unread');if(!badge)return
+ const n=Number(counts.unassigned)||0
+ badge.textContent=n>99?'99+':String(n)
+ badge.hidden=n===0
 }
 
 function renderChannels(){
@@ -509,10 +547,36 @@ const MOBILE = window.matchMedia('(max-width: 767.98px)')
 
 // เปิดเคสบนมือถือ = แชทเต็มจอ ไม่ต้องเลื่อนผ่านรายการเคสทุกครั้ง
 // บนจอคอมคลาสนี้ไม่มีผล เพราะกฎทั้งหมดอยู่ใน @media ของมือถือ
-function setChatOpen(on){ document.body.classList.toggle('chat-open', on && MOBILE.matches) }
+// ★ เปิดแชทเต็มจอ/แผงข้อมูลลูกค้าบนมือถือ = เพิ่มรายการใน history หนึ่งชั้น
+//   ปุ่มย้อนกลับของ Android (และ swipe back ของ iOS) จึงเป็นการ "ปิดชั้นที่เปิดอยู่"
+//   ไม่ใช่ออกจากแอป — ซึ่งเป็นสิ่งที่คนคาดหวังจากแอปแชททุกตัว
+//   viaHistory=true แปลว่าคำสั่งนี้มาจาก popstate แล้ว ห้ามยุ่งกับ history ซ้ำ
+function setChatOpen(on, viaHistory){
+ const was=document.body.classList.contains('chat-open')
+ const next=Boolean(on)&&MOBILE.matches
+ document.body.classList.toggle('chat-open', next)
+ if(viaHistory||next===was)return
+ if(next)history.pushState({connect:'chat'},'')
+ else history.back()
+}
+function setLeadOpen(on, viaHistory){
+ const was=document.body.classList.contains('lead-open')
+ const next=Boolean(on)
+ document.body.classList.toggle('lead-open', next)
+ $('toggle-lead')?.setAttribute('aria-expanded',String(next))
+ // บนจอคอมแผงนี้เป็นพาเนลข้างที่ไม่ได้กินทั้งหน้าจอ จึงไม่ควรไปกินปุ่มย้อนกลับของเบราว์เซอร์
+ if(viaHistory||!MOBILE.matches||next===was)return
+ if(next)history.pushState({connect:'lead'},'')
+ else history.back()
+}
+window.addEventListener('popstate',()=>{
+ // ปิดชั้นบนสุดก่อนเสมอ: แผงข้อมูลลูกค้าทับอยู่บนแชทเต็มจอ
+ if(document.body.classList.contains('lead-open'))return setLeadOpen(false,true)
+ if(document.body.classList.contains('chat-open'))setChatOpen(false,true)
+})
 $('back').addEventListener('click',()=>{ setChatOpen(false); $('conversations').scrollIntoView({block:'start'}) })
 // หมุนจอกลางคัน: ถ้ากว้างเกินเกณฑ์แล้วต้องคืนสภาพเอง ไม่งั้นค้างเป็นแชทเต็มจอบนจอคอม
-MOBILE.addEventListener('change',e=>{ if(!e.matches) document.body.classList.remove('chat-open','kb-open') })
+MOBILE.addEventListener('change',e=>{ if(!e.matches) document.body.classList.remove('chat-open','kb-open'); if(items.length)renderList() })
 
 // ความสูงที่มองเห็นจริง — คีย์บอร์ดทับจออยู่ข้างบนโดยที่ 100dvh ไม่ลดตามในหลายเบราว์เซอร์
 // ถ้าไม่ตั้งค่านี้ ช่องพิมพ์จะถูกดันลงไปอยู่ใต้คีย์บอร์ด พิมพ์แล้วไม่เห็นสิ่งที่พิมพ์
@@ -555,6 +619,9 @@ function wireAppNav(role){
   const open=document.body.classList.toggle('settings-open')
   $('nav-settings').setAttribute('aria-expanded',String(open))
  })
+ // ไอคอนรูปคนบนหัวแชท = เปิด/ปิดแผงข้อมูลลูกค้า (ค่าเริ่มต้นปิด ตามสเปกเฟส 1)
+ $('toggle-lead').addEventListener('click',()=>setLeadOpen(!document.body.classList.contains('lead-open')))
+ $('lead-close').addEventListener('click',()=>setLeadOpen(false))
  // กดแท็บ "แชท" ซ้ำตอนเปิดแผงสนทนาอยู่บนมือถือ = กลับไปหน้ารายการ (ทางเดียวกับปุ่ม #back)
  document.querySelector('.nav-item[data-nav="chat"]')?.addEventListener('click',()=>{
   if(document.body.classList.contains('chat-open'))setChatOpen(false)

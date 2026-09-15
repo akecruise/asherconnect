@@ -930,3 +930,250 @@ main { min-height: 100dvh; min-height: var(--vh-visible, 100dvh) }
 }
 .chat-back:hover { background: var(--rule-soft) }
 @media (max-width: 767px) { .chat-back { display: inline-flex; align-items: center; justify-content: center } }
+
+/* ============================================================================
+   เฟส 1 — แถบบนแบบไอคอน + หน้ารายการ/หน้าแชทแบบ LINE
+   เขียนต่อท้ายไฟล์เพราะไฟล์นี้ให้ "กฎท้ายไฟล์ชนะ" โดยตั้งใจ (ดูคำเตือนหัวไฟล์)
+   ★ ห้ามเพิ่มบล็อก :root ใหม่ที่นี่ — ใช้ตัวแปรจากบล็อกเดียวด้านบนเท่านั้น
+   ★ บล็อกนี้ถอน sidebar ซ้าย/แถบล่างของ AppNav เดิมทิ้ง จึงต้องล้างทุก property
+     ที่ @media ชุดเดิม (บรรทัด ~842-884) ตั้งไว้ ไม่ใช่แค่ทับบางตัว
+   --------------------------------------------------------------------------
+   ความสูงแถบบน: 44px จอใหญ่ / 38px จอแคบ — ทุกที่ที่ต้องหักความสูงให้ใช้ตัวแปรนี้
+   ============================================================================ */
+#workspace { --topbar: 44px }
+@media (max-width: 767px) { #workspace { --topbar: 38px } }
+
+/* ── แถบบน ───────────────────────────────────────────────────────────── */
+.app-nav {
+  position: sticky; top: 0; right: auto; bottom: auto; left: auto;
+  width: auto; height: var(--topbar); box-sizing: border-box;
+  flex-direction: row; align-items: center; justify-content: flex-start;
+  gap: 2px; padding: 0 10px;
+  border: 0; border-bottom: 1px solid var(--rule);
+  background: var(--surface); z-index: 40;
+}
+.nav-brand { display: flex; align-items: center; gap: 8px; margin-right: 10px; min-width: 0 }
+.nav-brand-mark { width: 24px; height: 24px; object-fit: contain; flex: none }
+.nav-brand-name {
+  font-size: 15px; font-weight: 600; letter-spacing: -.2px; color: var(--ink);
+  white-space: nowrap;
+}
+.app-nav .nav-item {
+  flex: none; flex-direction: row; justify-content: center;
+  width: 32px; height: 32px; min-width: 32px; min-height: 32px;
+  padding: 0; border-radius: 8px;
+}
+.app-nav .nav-icon { width: 18px; height: 18px }
+.app-nav .nav-label { display: none }
+.app-nav .nav-item.active { background: var(--rule-soft); color: var(--ink) }
+.app-nav .nav-item.active::after { content: none }
+.app-nav .nav-item#nav-settings { margin-top: 0; margin-left: auto }
+.nav-badge { top: -2px; right: -2px }
+
+/* ถอนที่ว่างที่เคยกันไว้ให้ sidebar/แถบล่าง */
+body { padding-bottom: 0 }
+#workspace { padding-left: 0 }
+
+/* แผงตั้งค่า (header เดิม) เปิดใต้แถบบน ไม่ใช่ชิดซ้ายตามราง sidebar ที่ไม่มีแล้ว */
+body.settings-open #workspace > header { top: var(--topbar); left: 0; right: 0 }
+
+/* ── โครงสองคอลัมน์: รายการแชท 250px | หน้าตอบแชท ────────────────────── */
+main {
+  display: grid; grid-template-columns: 250px minmax(0, 1fr);
+  height: calc(100dvh - var(--topbar));
+  height: calc(var(--vh-visible, 100dvh) - var(--topbar));
+  min-height: 0; overflow: hidden;
+}
+.queue { overflow-y: auto; overflow-x: hidden; min-height: 0; border-right: 1px solid var(--rule) }
+.conversation { display: flex; flex-direction: column; min-height: 0; min-width: 0 }
+#chat { height: 100%; min-height: 0 }
+#conversations { max-height: none; overflow: visible }
+
+/* ── แผงข้อมูลลูกค้า: จาก "คอลัมน์ที่สาม" เป็น drawer ที่ค่าเริ่มต้นปิด ─────
+   ยังเป็น element เดิมใน DOM (ไม่ย้าย) — แค่ดึงออกจาก flow ด้วย position: fixed
+   จึงไม่กระทบ grid สองคอลัมน์ด้านบน และ event listener ทั้งหมดยังอยู่ครบ */
+.lead-card {
+  position: fixed; top: var(--topbar); right: 0; bottom: 0; z-index: 45;
+  width: 320px; max-width: 100vw; box-sizing: border-box;
+  display: block; grid-column: auto; overflow-y: auto;
+  padding: 18px 20px 28px; background: var(--surface);
+  border-left: 1px solid var(--rule); border-top: 0; border-right: 0;
+  transform: translateX(100%); visibility: hidden;
+  transition: transform .2s ease, visibility .2s;
+}
+body.lead-open .lead-card { transform: none; visibility: visible }
+.lead-close {
+  position: absolute; top: 10px; right: 12px;
+  width: 32px; height: 32px; display: grid; place-items: center;
+  border: 0; background: transparent; border-radius: 8px;
+  font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer;
+}
+.lead-close:hover { background: var(--rule-soft); color: var(--ink) }
+.lead-toggle {
+  flex: none; width: 32px; height: 32px; display: inline-flex;
+  align-items: center; justify-content: center;
+  border: 0; background: transparent; border-radius: 8px;
+  color: var(--muted); cursor: pointer;
+}
+.lead-toggle:hover { background: var(--rule-soft); color: var(--ink) }
+.lead-toggle[aria-expanded="true"] { background: var(--rule-soft); color: var(--ink) }
+.lead-toggle .chat-list-icon { width: 20px; height: 20px }
+
+/* ── หัวแชท: avatar · ชื่อบรรทัดเดียว · บรรทัดย่อย "ช่องทาง · โครงการ" ── */
+.conversation-header { padding: 10px 14px; gap: 8px; justify-content: flex-start }
+.chat-head-avatar {
+  position: relative; flex: none; display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%; overflow: hidden;
+  background: var(--accent-soft); color: var(--muted); font-size: 13px; font-weight: 600;
+}
+.chat-head-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
+.chat-head-text { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px }
+.chat-head-text h2 {
+  margin: 0; font-size: 16px; line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-head-sub {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: 12px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-head-project::before { content: "·"; margin-right: 6px; color: var(--faint) }
+.conversation-header .actions { flex: none }
+.conversation-header #sla { flex: none }
+
+/* ── มือถือ (< 768px) — ทีละหน้าแบบ LINE ─────────────────────────────── */
+@media (max-width: 767px) {
+  main { display: block; grid-template-columns: none; overflow: visible }
+  .app-nav { padding: 0 10px; gap: 1px }
+  .nav-brand { margin-right: auto }
+  .nav-brand-mark { width: 22px; height: 22px }
+  .nav-brand-name { display: none }
+  .app-nav .nav-item { width: 30px; height: 30px; min-width: 30px; min-height: 30px }
+  .app-nav .nav-item#nav-settings { margin-left: 0 }
+
+  .queue, .conversation { height: calc(100dvh - var(--topbar)); height: calc(var(--vh-visible, 100dvh) - var(--topbar)) }
+  .queue { border: 0 }
+  .lead-card { top: 0; width: 100%; border-left: 0; padding-top: 48px }
+
+  /* ช่องค้นหา: แถบพื้นเทาอ่อน ไม่มีเส้นขอบ สูง 28px */
+  .queue-head { padding: 8px 12px 6px }
+  .queue-head #search {
+    height: 28px; margin: 0; width: 100%;
+    padding: 0 10px 0 30px; border: 0; border-radius: 14px;
+    background: var(--rule-soft); font-size: 14px;
+  }
+  .search-icon { left: 10px }
+
+  /* ตัวกรอง: แถวเดียว เลื่อนแนวนอน ระยะห่างแคบ */
+  .filter-row { margin: 8px 12px 0 }
+  .queue #filters {
+    display: flex; flex-wrap: nowrap; gap: 4px;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .queue #filters::-webkit-scrollbar { display: none }
+  #filters .chip { flex: none; height: 26px; padding: 0 9px; font-size: 12px; gap: 6px }
+  .chip-more { display: none }
+
+  /* หัวแชท 38px */
+  .conversation-header { padding: 4px 8px; min-height: 38px; gap: 6px }
+  .chat-head-avatar { width: 26px; height: 26px; font-size: 11px }
+  .chat-head-text h2 { font-size: 14px }
+  .chat-head-sub { font-size: 11px }
+  .conversation-header #sla, .conversation-header .actions { display: none }
+  .chat-back { width: 30px; height: 30px; margin-right: 0 }
+
+  /* แถบพิมพ์: ปุ่มแนบ · ช่องพิมพ์ 32px · ปุ่มส่ง 32x32 · หลบ home indicator */
+  .composer {
+    padding: 8px 10px; padding-bottom: max(12px, env(safe-area-inset-bottom));
+    display: flex; align-items: flex-end; gap: 6px; flex-wrap: wrap;
+  }
+  .composer textarea {
+    flex: 1 1 auto; margin: 0; min-height: 32px; height: 32px; max-height: 96px;
+    padding: 6px 12px; border-radius: 16px; font-size: 15px; line-height: 20px; resize: none;
+  }
+  .composer-footer { display: contents }
+  .composer #send {
+    order: 3; flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%;
+    font-size: 0; display: grid; place-items: center;
+  }
+  .composer #send::after { content: "↑"; font-size: 16px; line-height: 1 }
+  .composer #send-hint { order: 4; flex: 1 0 100%; font-size: 11px; margin-top: 4px }
+  .composer-attach {
+    order: 1; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
+    background: transparent; color: var(--muted); font-size: 19px; line-height: 1; cursor: pointer;
+  }
+  .composer-attach[disabled] { opacity: .4; cursor: not-allowed }
+  .messages { padding: 12px 12px 4px }
+  .pipeline { display: none }
+}
+@media (min-width: 768px) { .composer-attach { display: none } }
+
+/* จอแคบมาก: ย่อไอคอนแต่ยังกดไม่พลาด */
+@media (max-width: 339px) {
+  .app-nav { height: 38px; padding: 0 8px }
+  .app-nav .nav-item { width: 28px; height: 28px; min-width: 28px; min-height: 28px }
+}
+
+/* แถวเสริมในแถบพิมพ์บนมือถือ — เมนูเทมเพลตกับชิปข้อความสำเร็จรูปกินเต็มแถวเหนือช่องพิมพ์
+   (ต้องกำหนด order ให้ครบ เพราะ .composer เป็น flex-wrap แล้ว ลำดับ DOM อย่างเดียวไม่พอ) */
+@media (max-width: 767px) {
+  .composer #template-menu { order: 0; flex: 1 0 100%; margin: 0 0 6px }
+  .composer #canned { order: 0; flex: 1 0 100%; margin: 0 0 6px; flex-wrap: nowrap; overflow-x: auto }
+  .composer #canned::-webkit-scrollbar { display: none }
+  .composer textarea { order: 2 }
+}
+
+/* ★ สองจุดที่วัดแล้วพบว่าพลาด (เฟส 1) — แก้ไว้ท้ายสุดเพราะไฟล์นี้ให้กฎท้ายไฟล์ชนะ
+
+   1) `.app-nav` เป็น element <nav> จึงโดน selector ธรรมดา `nav { margin: 17px 0 }`
+      (บรรทัด ~206 ที่เขียนไว้ให้ชิปตัวกรอง) เล่นงานด้วย — วัดได้ว่าแถบบนลอยต่ำจากขอบ 17px
+      และมีช่องว่างอีก 17px คั่นก่อนถึงเนื้อหา ทั้งที่ควรติดขอบบนพอดี
+
+   2) กฎ `.conversation { display: flex }` ของเฟสนี้อยู่ท้ายไฟล์ จึงไป "ชนะ"
+      `@media (max-width:767px){ .conversation{ display:none } }` ของเดิม (บรรทัด ~922)
+      ผลคือบนมือถือหน้าตอบแชทโผล่ต่อท้ายรายการแทนที่จะซ่อน — ต้องประกาศคืนในบล็อกมือถือ */
+.app-nav { margin: 0 }
+
+@media (max-width: 767px) {
+  .conversation { display: none }
+  body.chat-open .conversation { display: flex; flex-direction: column }
+  body.chat-open .queue { display: none }
+}
+
+/* หัวแชทบนมือถือต้องสูง 38px ตามสเปก — วัดครั้งแรกได้ 46px เพราะปล่อยให้ line-height
+   ของ h2 กับบรรทัดย่อยเป็นค่าตั้งต้น (18px+18px+padding) ต้องล็อกความสูงบรรทัดเอง */
+@media (max-width: 767px) {
+  .conversation-header { padding: 3px 8px; height: 38px; min-height: 38px; box-sizing: border-box }
+  .chat-head-text h2 { font-size: 14px; line-height: 16px }
+  .chat-head-sub { font-size: 11px; line-height: 13px }
+  .chat-head-text { gap: 0 }
+}
+
+/* แถบพิมพ์บนมือถือต้องเป็นแถวเดียว: [แนบ] [ช่องพิมพ์] [ส่ง]
+   วัดครั้งแรกได้สามชั้นซ้อนกันสูง 199px เพราะกฎพื้นฐาน `input, select, textarea { width: 100% }`
+   (บรรทัด ~145) ทำให้ flex-basis ของช่องพิมพ์เป็นเต็มแถว แล้วปุ่มสองข้างถูกดันตกบรรทัด
+   ต้องล้าง width และใช้ flex-basis 0 เพื่อให้ยืดตามพื้นที่ที่เหลือจริง ๆ */
+@media (max-width: 767px) {
+  .composer textarea { flex: 1 1 0; width: auto; min-width: 0 }
+}
+
+/* `#sla` กับ `#last-reply` อยู่ในกล่องข้อความหัวแชทเดียวกับชื่อ (โครงสร้างเดิม ไม่ได้ย้าย)
+   พอกล่องนั้นกลายเป็น flex คอลัมน์ ป้าย SLA เลยถูกยืดเต็มความกว้าง วัดได้ 1005x8px
+   ซึ่งดูเหมือนเส้นขีดแปลก ๆ ใต้ชื่อ — สั่งไม่ให้ยืดก็พอ ไม่ต้องย้าย element */
+.chat-head-text { align-items: flex-start }
+.chat-head-text #sla { margin-top: 3px }
+.chat-head-text > * { max-width: 100% }
+
+/* ★ ไอคอนของหน้าปัจจุบันต้องเป็น "พื้นเทาอ่อน" เฉย ๆ ตามสเปก แต่วัดได้ว่ามีกรอบเข้ม
+   1.5px ล้อมอยู่ด้วย — มาจาก `nav button.active` (บรรทัด ~450) ที่เขียนไว้ให้ชิปตัวกรอง
+   ในแผงคิว ไม่ได้ตั้งใจให้โดนแถบเมนู แต่ `.app-nav` ก็เป็น <nav> และลูกก็เป็น <button>
+   `.nav-item { border: none }` แพ้เพราะ `nav button.active` มีคลาสเท่ากันแต่เจาะจงกว่าในชั้น type
+   จึงต้องล้าง border ที่ระดับ `.app-nav .nav-item` เอง */
+.app-nav .nav-item { border: 0; background-color: transparent }
+.app-nav .nav-item:hover { background-color: var(--rule-soft) }
+.app-nav .nav-item.active { background-color: var(--rule-soft); font-weight: inherit }
+
+/* ไอคอนรูปคนบนหัวแชทวัดได้ 6x20px (แบนจนดูเหมือนขีดจาง ๆ) ไม่ใช่ 20x20 อย่างที่ตั้งไว้ —
+   <svg> เป็น flex item ของปุ่ม เลยถูกบีบตามค่าเริ่มต้น flex-shrink:1 ต้องสั่ง flex:none
+   ให้มันถือขนาดตัวเองไว้ (ไอคอนอื่นในแอปที่ใช้ .nav-icon มี flex:none กันไว้อยู่แล้ว) */
+.lead-toggle svg { width: 20px; height: 20px; flex: none }
