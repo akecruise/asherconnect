@@ -445,6 +445,25 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
   --bubble-out: #EDEDF0;
   --shadow: #1F20240F;
   --fresh-shadow: #1F202408;
+
+  /* ไฟสถานะของ chip ช่องทาง — พาเลตแบรนด์เป็นเทา/ดำ/แดงล้วน ไม่มีเขียว
+     จึงต้องเติมตัวเดียวตรงนี้ ไม่ใช่เขียนสีดิบลงในกฎย่อย และไม่สร้าง :root ใหม่ */
+  --live: #1F6B4A;      /* เขียวเข้มหม่น ตัดกับพื้นขาว 6.4:1 อยู่ร่วมกับ #8E1116 ได้ไม่ตีกัน */
+
+  /* แดงของชิป "รอรับ" ตอนถูกเลือก — อ่อนกว่าแดงแบรนด์ที่สงวนไว้ให้ SLA */
+  --alert: #D9534F;
+
+  /* ── สีแท็กสถานะบนการ์ดเคสสองบรรทัด ──
+     ★ สามคู่นี้เป็นข้อยกเว้นที่ตั้งใจของพาเลตเทา/ดำ/แดงด้านบน — ดีไซน์การ์ดใหม่
+       ขอให้แยกสถานะด้วยสี (รอลูกค้าตอบ=amber · ตอบแล้ว=blue · ปิดแล้ว=green)
+       แดงแบรนด์ยังสงวนไว้ให้ "ยังไม่ตอบ"/"เกิน SLA" เหมือนเดิม ไม่ถูกแตะ
+     ★ เติมเป็นตัวแปรตรงนี้ตามกติกาของบล็อกนี้ ไม่เขียนสีดิบลงในกฎย่อย
+     ค่าตัวอักษรเลือกให้ผ่าน 4.5:1 บนพื้นของตัวเอง (เขียวใช้ระดับ 800 ไม่ใช่ 700
+     เพราะ 700 บนพื้น green-50 ได้แค่ ~4.0:1 ซึ่งตกเกณฑ์ที่ขนาด 11px) */
+  --pill-amber-bg: #FFFBEB;  --pill-amber-fg: #B45309;
+  --pill-blue-bg:  #EFF6FF;  --pill-blue-fg:  #1D4ED8;
+  --pill-green-bg: #F0FDF4;  --pill-green-fg: #166534;
+  --pill-gray-bg:  #F3F4F6;  --pill-gray-fg:  #4B5563;
 }
 
 /* ─────────── ล้าง gradient ทั้งหมดที่บล็อกเก่าใส่ไว้ ─────────── */
@@ -524,3 +543,328 @@ nav button.active {
 #bot-toggle[disabled] { opacity: .55; cursor: not-allowed }
 #send-toggle.send-live { background: var(--urgent); color: #fff; border-color: transparent }
 #send-toggle[disabled] { opacity: .55; cursor: not-allowed }
+
+/* "ตอบล่าสุดโดยใคร" — ข้อมูลประกอบ ไม่ใช่สถานะ จึงเป็นเทาและตัวเล็ก ไม่แย่งสายตาจากแท็กสถานะ */
+.last-reply { display: block; margin-top: 4px; color: var(--muted); font-size: 12px }
+
+/* ── ไฟสถานะบน chip ช่องทาง ────────────────────────────────────────────
+   เขียว = รับข้อความอยู่ · เทา = เงียบเกิน 24 ชม. · แดง = มีปัญหา
+   ★ สีไม่ใช่ตัวบอกความหมายตัวเดียว ทุก chip มี title/aria-label กำกับเสมอ
+     คนตาบอดสีและคนใช้โปรแกรมอ่านหน้าจอต้องได้ข้อมูลเท่ากัน */
+.channel-chip.ok { color: var(--ink) }
+.channel-chip.ok .dot { background: var(--live) }
+
+.channel-chip.idle { color: var(--muted) }
+.channel-chip.idle .dot { background: var(--faint) }
+
+.channel-chip.down { color: var(--urgent); border-color: var(--urgent) }
+.channel-chip.down .dot { background: var(--urgent); box-shadow: 0 0 0 3px var(--urgent-tint) }
+
+.channel-chip.unknown { color: var(--faint); border-style: dotted }
+.channel-chip.unknown .dot { background: var(--rule) }
+
+/* ── ส่วนหัวกล่องข้อความ ───────────────────────────────────────────────
+   สองแถวรวมสูงราว 70px: แถวค้นหา + แถวชิป
+   ของเดิมมีสี่ชั้น (หัวข้อ / ค้นหา / ตัวกรอง 8 ปุ่มสองคอลัมน์ / แถวสรุป)
+   กินความสูงไปเกือบครึ่งจอบนโน้ตบุ๊ก ทั้งที่ข้อมูลจริงอยู่ในรายการข้างล่าง */
+.queue { padding: 0 }
+.queue-head { padding: 10px 12px 8px }
+.queue > #conversations { padding: 0 12px }
+.queue > .paging { padding: 0 12px 12px }
+
+.queue-tools { display: flex; align-items: center; gap: 6px }
+.search-box { position: relative; flex: 1; display: flex; align-items: center; min-width: 0 }
+.search-icon { position: absolute; left: 9px; width: 13px; height: 13px; color: var(--faint); pointer-events: none }
+.queue-head #search {
+  height: 30px; padding: 0 10px 0 27px; margin: 0;
+  border-radius: 8px; font-size: 12px;
+}
+.queue-head .icon-btn {
+  width: 30px; height: 30px; flex: none; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; font-size: 14px; line-height: 1; color: var(--muted);
+}
+
+/* ── แถวชิป ────────────────────────────────────────────────────────────
+   ต้องอยู่บรรทัดเดียวเสมอ แคบลงแล้วให้เลื่อนแนวนอน ไม่ใช่ตกบรรทัด
+   ตกบรรทัดเมื่อไหร่ ส่วนหัวจะสูงขึ้นเองโดยไม่มีใครคุม ซึ่งเป็นปัญหาเดิม */
+#filters {
+  display: flex; flex-wrap: nowrap; gap: 4px; align-items: center;
+  margin: 8px 0 0; padding: 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+#filters::-webkit-scrollbar { display: none }
+
+#filters .chip {
+  flex: none; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 8px; border-radius: 12px;
+  border: 0.5px solid var(--rule); background: var(--surface);
+  color: var(--muted); font-size: 12px; line-height: 1; font-weight: 400;
+}
+#filters .chip:hover { border-color: var(--accent-line); color: var(--ink) }
+#filters .chip-n { font-weight: 500 }
+#filters .chip.selected { background: var(--ink); border-color: var(--ink); color: var(--surface) }
+
+/* ★ แดงเฉพาะตอน count > 0 — เป็นศูนย์เมื่อไหร่ต้องกลับเป็นชิปเทาธรรมดา
+   แถบที่แดงตลอดเวลาจะถูกมองข้าม ซึ่งแย่กว่าไม่มีสีเตือนเลย */
+#filters .chip.hot-alert {
+  background: var(--urgent-tint); border-color: var(--urgent-tint); color: var(--alert);
+}
+#filters .chip.hot-alert.selected { background: var(--alert); border-color: var(--alert); color: #fff }
+#filters .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--alert); flex: none }
+#filters .chip.hot-alert.selected .chip-dot { background: #fff }
+
+#filters .chip.hot-sla { border: 1px solid var(--urgent); color: var(--urgent) }
+#filters .chip.hot-sla.selected { background: var(--urgent); border-color: var(--urgent); color: #fff }
+
+/* ── ปุ่มตัวกรองเพิ่มเติม + เมนู ─────────────────────────────────────── */
+.chip-more { position: relative; margin-left: auto; flex: none }
+#filters .chip-more-btn { padding: 0 6px }
+.chip-icon { width: 14px; height: 14px; display: block }
+
+.chip-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
+  min-width: 168px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: 0 8px 24px var(--fresh-shadow), 0 2px 6px var(--fresh-shadow);
+}
+.chip-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 7px 9px; border: none; border-radius: 7px;
+  background: transparent; color: var(--ink); font-size: 12px; text-align: left;
+}
+.chip-menu-item:hover { background: var(--paper) }
+.chip-menu-item.selected { background: var(--accent-soft); color: var(--accent); font-weight: 600 }
+.chip-menu-item .chip-n { color: var(--muted); font-weight: 500 }
+.chip-menu-item.selected .chip-n { color: var(--accent) }
+
+@media (max-width: 1050px) { .queue #filters { grid-template-columns: none } }
+
+/* ── แถวชิป: ตัวเลื่อนกับปุ่มตั้งค่าเป็นคนละกล่อง ─────────────────────
+   ★ ปุ่มตั้งค่าต้องอยู่ "นอก" ตัวที่เลื่อน ไม่งั้นพอชิปล้นแล้วมันจะเลื่อนหนีไปกับชิป
+     คนหาไม่เจอทั้งที่มันควรอยู่ที่เดิมเสมอ */
+.filter-row { display: flex; align-items: center; gap: 4px; margin: 8px 0 0 }
+#filters { flex: 1; min-width: 0; margin: 0 }
+.chip-more { margin-left: 0; flex: none }
+
+/* ── สีของชิป ──────────────────────────────────────────────────────────
+   ที่เลือกอยู่ = พื้นเข้ม ตัวอักษรขาว เสมอ ไม่ว่าจะเป็นชิปไหน
+   ★ แดงแบรนด์ #8E1116 สงวนไว้ให้ "รอรับ" ตอนมีเคสค้างเท่านั้น
+     ถ้าเอาไปใช้เป็นสีของ "ที่เลือกอยู่" ด้วย สองความหมายจะปนกัน
+     แล้วคนจะแยกไม่ออกว่าแดงแปลว่ามีงานค้าง หรือแปลว่ากดอยู่ */
+#filters .chip.hot-alert {
+  background: var(--urgent-tint); border-color: var(--urgent); color: var(--urgent);
+}
+#filters .chip-dot { background: var(--urgent) }
+
+/* รอรับ + ถูกเลือก: พื้นเข้มตามกติกา แล้วคงสัญญาณแดงไว้ด้วยวงรอบนอก */
+#filters .chip.hot-alert.selected {
+  background: var(--ink); border-color: var(--ink); color: #fff;
+  box-shadow: 0 0 0 2px var(--urgent-tint), 0 0 0 3px var(--urgent);
+}
+#filters .chip.hot-alert.selected .chip-dot { background: #fff }
+
+/* SLA ที่มีเคสค้าง: เน้นด้วยน้ำหนักเส้นและสีตัวอักษร ไม่ใช้แดง */
+#filters .chip.hot-sla { border: 1px solid var(--accent-line); color: var(--ink); font-weight: 500 }
+#filters .chip.hot-sla.selected { background: var(--ink); border-color: var(--ink); color: #fff }
+
+/* ══════════════════════════════════════════════════════════════════════
+   การ์ดเคสในรายการแชท — สองบรรทัด
+     บรรทัด 1:  [ชื่อ] [สถานะ] [แจ้งเตือน] ········ [เวลา] [ช่องทาง]
+     บรรทัด 2:  ข้อความล่าสุด บรรทัดเดียว ตัดด้วย …
+
+   ★ เขียนไว้ท้ายไฟล์เพราะ .conversation-item / .person-row / .pill ถูกทับ
+     มาแล้วหลายรอบ (บรรทัด 172, 347, 463) — แก้ที่ต้นไฟล์จะไม่มีผลกับหน้าจอเลย
+   ★ ทุกใบต้องสูงเท่ากัน จึงห้ามมีอะไรตกบรรทัด: ชื่อเป็นชิ้นเดียวที่ยอมให้ถูกตัด
+     (flex:1 + min-width:0 + truncate) ที่เหลือ flex:none ทั้งหมด
+     min-width:0 ขาดไม่ได้ — ค่าตั้งต้นของ flex item คือ auto ซึ่งไม่ยอมหดต่ำกว่า
+     ความกว้างข้อความ ชื่อยาว ๆ จะดันแท็กกับเวลาทะลุขอบการ์ดออกไปแทนที่จะถูกตัด
+   ══════════════════════════════════════════════════════════════════════ */
+.conversation-item { padding: 10px 14px; margin-bottom: 0 }
+
+.person-row { display: flex; align-items: center; gap: 8px; margin-bottom: 0; justify-content: flex-start }
+.person-row strong { flex: 1 1 auto; min-width: 2.5em; font-size: 14px; font-weight: 500 }
+
+.conversation-item p {
+  margin: 2px 0 0;
+  font-size: 13px; line-height: 1.5; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* เวลาล่าสุด — ตัวดัน badge ช่องทางไปชิดขวา (ml-auto)
+   ★ กล่องนี้ถูกใส่เสมอแม้ค่าว่าง เพื่อให้ทุกใบเรียงชิดขวาตรงกัน */
+.conv-time { flex: none; margin-left: auto; font-size: 11px; line-height: 1.5; color: var(--faint); white-space: nowrap }
+
+/* แท็กบนบรรทัดแรก — กลมเต็มใบ ไม่ยอมถูกบีบ ไม่ยอมตกบรรทัด */
+.person-row .pill.status {
+  flex: none; border-radius: 999px;
+  padding: 2px 8px; font-size: 11px; line-height: 1.5; font-weight: 500;
+  white-space: nowrap;
+}
+.person-row .pill.status.gray  { background: var(--pill-gray-bg);  color: var(--pill-gray-fg) }
+.person-row .pill.status.amber { background: var(--pill-amber-bg); color: var(--pill-amber-fg) }
+.person-row .pill.status.blue  { background: var(--pill-blue-bg);  color: var(--pill-blue-fg) }
+.person-row .pill.status.green { background: var(--pill-green-bg); color: var(--pill-green-fg) }
+.person-row .pill.status.red   { background: var(--urgent-tint);   color: var(--urgent) }
+.person-row .pill.status.crit  { background: var(--urgent);        color: #fff }
+
+/* badge ช่องทาง — มุมมน ไม่กลมเต็ม เพื่อให้แยกจากแท็กสถานะได้ด้วยรูปทรง ไม่ใช่ด้วยสีอย่างเดียว */
+.person-row .pill.channel {
+  flex: none; border-radius: 6px;
+  padding: 2px 7px; font-size: 11px; line-height: 1.5; font-weight: 500;
+  white-space: nowrap;
+}
+.person-row .pill.channel.line { background: #EAF7EE; color: #1F6B4A }
+.person-row .pill.channel.fb   { background: #EAF1FB; color: #1B4F9C }
+
+/* ── โหมดมืด ───────────────────────────────────────────────────────────
+   ★ ตอนนี้โหมดมืดของทั้งแอป "ตายอยู่" — @media บรรทัด 53 ตั้ง :root ไว้ แต่ถูก
+     :root บรรทัด 315/360/413 ที่มาทีหลังทับหมด (specificity เท่ากัน ตัวหลังชนะ)
+     บล็อกนี้จึงเจาะจงที่คลาสของการ์ดโดยตรง ไม่แตะ :root ตามกฎห้ามข้างบน
+     เมื่อไหร่ที่ไปปลดโหมดมืดของทั้งแอป การ์ดนี้จะพร้อมใช้ทันทีโดยไม่ต้องแก้ซ้ำ */
+@media (prefers-color-scheme: dark) {
+  .person-row .pill.status.gray  { background: #24333A; color: #A9B8C0 }
+  .person-row .pill.status.amber { background: #2E2513; color: #E9B872 }
+  .person-row .pill.status.blue  { background: #16283D; color: #8CB8EC }
+  .person-row .pill.status.green { background: #142A20; color: #7DC79B }
+  .person-row .pill.channel.line { background: #142A20; color: #7DC79B }
+  .person-row .pill.channel.fb   { background: #16283D; color: #8CB8EC }
+}
+
+/* ── พื้นที่ไม่พอก็ย่อ — ไล่ทีละขั้นตามความกว้างของ "พาเนล" ไม่ใช่ของจอ ───────
+   ★ ต้องเป็น @container ไม่ใช่ @media — พาเนลคิวกว้าง 330/300/245px แล้วแต่
+     breakpoint (บรรทัด 156/284/288) การผูกกับความกว้างจอทำให้กรณี 300px กับ 330px
+     หลุดการย่อ แล้วการ์ดล้นขอบ 33-47px บนจอใหญ่ ซึ่งวัดเจอมาแล้วตอนใช้ @media
+   ย่อไล่ตามลำดับความสำคัญ วัดจากการ์ดกรณีแย่สุด
+   (ชื่อยาว + "เกิน SLA 1440 นาที" + แท็กแจ้งเตือน + เวลา + ช่องทาง):
+     <=330px  หุบช่องไฟกับระยะขอบในแท็ก — ไม่เสียข้อมูลอะไรเลย
+     <=320px  ซ่อนแท็กแจ้งเตือน
+     <=250px  ซ่อนจำนวนนาที — คำว่า "เกิน SLA" บอกได้แล้วว่าต้องรีบ ตัวเลขไปดูในแชท
+
+   ★ ทำไมแท็กแจ้งเตือนถูกตัดก่อนจำนวนนาที ทั้งที่มันเพิ่งถูกย้ายขึ้นมาบรรทัดแรก:
+     ห้าชิ้นบนบรรทัดเดียวที่พาเนล 300px ใส่ไม่ลง ต้องเลือกว่าจะเสียอะไร
+     - จำนวนนาทีคือตัวเลข SLA ซึ่งเป็นแกนหลักของหน้านี้ทั้งหน้า (ชิปกรอง · เส้นขอบแดง
+       · case_status ในฐาน) และ "บนการ์ด" คือที่เดียวที่เห็นได้โดยไม่ต้องเปิดเคส
+     - ★ ส่วนแจ้งเตือนกำหนดการไม่ได้หายไปไหนเลย ยังอยู่ครบสามที่: title ของการ์ด (hover)
+       · .sr-only ที่ไม่เคยถูกซ่อน (โปรแกรมอ่านหน้าจอ) · กล่อง lead ฝั่งขวาที่
+       renderDue() วาดอยู่แล้ว — แท็กบนการ์ดเป็นตัวย้ำ ไม่ใช่ที่เดียวที่มี
+     ถ้าสลับลำดับนี้ ชื่อลูกค้าจะถูกบีบเหลือ 36px ("ค...") ซึ่งวัดมาแล้วว่าอ่านไม่ออก
+
+   ★ ชื่อลูกค้ามี min-width เสมอ (กฎด้านบน) — การ์ดที่ชื่อถูกบีบจนเหลือ 0px
+     คือการ์ดที่ใช้งานไม่ได้ ถึงจะไม่ล้นขอบก็ตาม */
+#conversations { container-type: inline-size; container-name: queue }
+
+@container queue (max-width: 330px) {
+  .person-row { gap: 6px }
+  .person-row .pill.status, .person-row .pill.channel { padding: 2px 6px }
+}
+@container queue (max-width: 320px) {
+  .person-row .pill.alert { display: none }
+}
+@container queue (max-width: 250px) {
+  .person-row .pill-n { display: none }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   เฟส 4.1 — หน้าแชทมือถือ เน้นพื้นที่ตอบ
+
+   ★ ทุกกฎของงานนี้อยู่ในบล็อก @media เดียวนี้ทั้งหมด (ยกเว้นการซ่อนปุ่ม ← ซึ่ง
+     ซ่อนของที่เพิ่งเพิ่มเข้ามา ไม่ได้แตะของเดิม)
+     จอ >= 768px จึง "พิสูจน์ได้จากโครงไฟล์" ว่าไม่ถูกแตะ — ไม่ต้องพึ่งการเทียบ
+     screenshot เป็นตาข่ายกันพลาด ซึ่งจับได้แค่สิ่งที่บังเอิญถ่ายติด
+
+   ★ ใช้ 767.98px ไม่ใช่ 767px — เบราว์เซอร์รายงานความกว้างเป็นทศนิยมได้เมื่อ zoom
+     ไม่ใช่ 100% ถ้าใช้ 767 จอที่กว้าง 767.5 จะหลุดทั้งสองบล็อก
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ปุ่มย้อนกลับเป็นของใหม่ ซ่อนไว้เป็นค่าเริ่มต้นเพื่อไม่ให้โผล่บนจอคอม */
+.chat-back { display: none }
+
+@media (max-width: 767.98px) {
+  /* ความสูงที่ "มองเห็นจริง" — คีย์บอร์ดมือถือทับจออยู่ข้างบน โดยที่ 100dvh
+     ของหลายเบราว์เซอร์ไม่ลดตาม ถ้ายึด dvh อย่างเดียว ช่องพิมพ์จะถูกดันลงไปใต้คีย์บอร์ด
+     ค่านี้ถูกตั้งจาก visualViewport ใน app.js */
+  :root { --vh-visible: 100dvh }
+
+  .chat-back {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; margin-left: -10px; flex: 0 0 auto;
+    border: 0; background: none; color: var(--ink); font-size: 20px; line-height: 1;
+  }
+
+  /* ── เปิดเคสแล้ว = เห็นเฉพาะแชท ──
+     ของเดิมบนมือถือวางคิว/แชท/ข้อมูลลูกค้าเรียงลงมา ต้องเลื่อนผ่านรายการเคส
+     ทุกครั้งกว่าจะถึงช่องพิมพ์ ซึ่งเป็นสิ่งที่ทำบ่อยที่สุด */
+  body.chat-open #chat {
+    position: fixed; inset: 0; z-index: 40;
+    height: var(--vh-visible); min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--surface);
+  }
+
+  /* หัวแชท: แถวเดียว สูง 40px */
+  body.chat-open .conversation-header {
+    display: flex; align-items: center; gap: 8px;
+    height: 40px; min-height: 40px; padding: 0 12px;
+    border-bottom: 1px solid var(--rule); flex: 0 0 auto;
+  }
+  body.chat-open .conversation-header > div:first-of-type {
+    display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto;
+  }
+  body.chat-open #chat-name {
+    margin: 0; font-size: 15px; font-weight: 600; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  body.chat-open #chat-channel { font-size: 11px; color: var(--muted); white-space: nowrap; flex: 0 0 auto }
+  /* ไม่พอที่ในแถวเดียว — ข้อมูลนี้ยังดูได้จากหน้าเคสบนจอใหญ่ */
+  body.chat-open #last-reply { display: none }
+  body.chat-open #sla { flex: 0 0 auto; font-size: 11px; padding: 2px 8px; white-space: nowrap }
+  body.chat-open .actions { flex: 0 0 auto; gap: 4px }
+  body.chat-open .actions button { font-size: 11px; padding: 6px 9px }
+
+  /* ── พื้นที่ข้อความกินที่เหลือทั้งหมด ── */
+  body.chat-open .messages {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    -webkit-overflow-scrolling: touch; padding: 12px;
+  }
+  body.chat-open #older { flex: 0 0 auto; margin: 0 12px 4px }
+
+  /* แยกให้ออกว่าใครพูด: ลูกค้า (ซ้าย ขาว) · เซลส์ (ขวา เทา) · บอท (ซ้าย ขอบประ) */
+  body.chat-open .bubble { max-width: 86% }
+  body.chat-open .bubble.bot { border-style: dashed; background: var(--paper) }
+
+  /* ── ช่องพิมพ์ ── */
+  body.chat-open .composer {
+    flex: 0 0 auto;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  body.chat-open .composer textarea {
+    margin: 0; min-height: 40px; max-height: 118px;  /* ~5 บรรทัด */
+    resize: none; font-size: 16px;  /* ★ ต่ำกว่า 16px แล้ว iOS จะซูมหน้าจอเองตอนโฟกัส */
+  }
+  body.chat-open .composer-footer { margin-top: 8px; gap: 8px }
+  /* เป้ากดขนาดนิ้ว — ต่ำกว่านี้คนกดพลาดบ่อยบนมือถือ */
+  body.chat-open .composer-footer .primary { min-height: 44px; min-width: 44px; padding: 0 18px }
+  body.chat-open #send-hint {
+    font-size: 11px; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ── คีย์บอร์ดเปิด: คืนพื้นที่ให้ข้อความ ──
+     ซ่อนของที่ยังกดได้จากที่อื่น เก็บช่องพิมพ์กับปุ่มส่งไว้เสมอ */
+  body.chat-open.kb-open .canned { display: none }
+  body.chat-open.kb-open #send-hint { display: none }
+  body.chat-open.kb-open .messages { padding-top: 8px; padding-bottom: 8px }
+}
+
+/* รูปเล็กหน้าการ์ด + รหัสลูกค้าในหน้ารายละเอียด (งานดึงโปรไฟล์)
+   ★ รูปของ Messenger มีวันหมดอายุ ตัวอักษรย่ออยู่ข้างหลังเสมอ ไม่ใช่กรอบว่าง */
+.avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--rule-soft); color: var(--muted); font-size: 10px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
+.contact-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px }
+.contact-id small { color: var(--faint); font-size: 11px }
+.contact-id-value { font-size: 11px; color: var(--muted); max-width: 190px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
