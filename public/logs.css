@@ -1,0 +1,174 @@
+/* หน้า log ระบบ — ใช้ตัวแปรสีชุดเดียวกับ app.css ไม่ตั้งสีใหม่เอง
+   เหตุผลเดียวกับหน้าอื่น: วันที่เปลี่ยนธีม ต้องเปลี่ยนที่เดียว */
+
+.logs-main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── ตัวกรอง ─────────────────────────────────────────────────── */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+}
+.filter-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.filter-group.grow { flex: 1 1 220px; }
+.filter-group.grow input { width: 100%; }
+
+.chip {
+  padding: 5px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent-line); color: var(--ink); }
+.chip.is-on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.tick { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.tick input { accent-color: var(--accent); }
+
+#search {
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+#search:focus { outline: 2px solid var(--accent-line); outline-offset: -1px; }
+
+/* ── การ์ดสรุป ───────────────────────────────────────────────── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: 8px;
+}
+.card b { font-size: 20px; font-weight: 600; color: var(--ink); line-height: 1.1; }
+.card small { font-size: 12px; color: var(--faint); }
+.card.is-warn { border-left-color: var(--accent-line); }
+.card.is-bad  { border-left-color: var(--bad); }
+.card.is-bad b { color: var(--bad); }
+
+/* ── เหตุผลที่พบบ่อย ─────────────────────────────────────────── */
+.reasons { display: flex; flex-wrap: wrap; gap: 10px; }
+.reason-group {
+  flex: 1 1 280px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.reason-group h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.reason { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; font-size: 13px; color: var(--ink); }
+.reason-n {
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ── ตาราง ───────────────────────────────────────────────────── */
+.timeline {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.timeline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.timeline-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+
+/* ตารางกว้างกว่าจอบนมือถือ — ให้เลื่อนเฉพาะตาราง ไม่ใช่ทั้งหน้า */
+.table-wrap { overflow-x: auto; }
+.log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.log-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--faint);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.log-table td { padding: 7px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+.log-table tbody tr.has-more { cursor: pointer; }
+.log-table tbody tr.has-more:hover { background: var(--accent-soft); }
+
+.c-time { white-space: nowrap; width: 1%; }
+.c-time b { display: block; font-variant-numeric: tabular-nums; font-weight: 500; }
+.c-time small { color: var(--faint); font-size: 11px; }
+.c-src, .c-ch { white-space: nowrap; width: 1%; }
+.c-ch { color: var(--muted); }
+.c-title { min-width: 190px; }
+.c-detail { color: var(--muted); word-break: break-word; }
+
+/* แถบซ้ายบอกระดับ — เห็นจุดที่สะดุดได้โดยไม่ต้องอ่านข้อความ */
+tr.lv-warn td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+tr.lv-error td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+tr.lv-error .c-detail { color: var(--bad); }
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--accent-soft);
+  color: var(--muted);
+  border: 1px solid var(--rule-soft);
+}
+
+/* ของดิบตอนกดแถว */
+tr.extra td { background: var(--paper); padding: 0; }
+tr.extra pre {
+  margin: 0;
+  padding: 10px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.empty { padding: 20px 14px; text-align: center; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .logs-main { padding: 10px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+  .card b { font-size: 17px; }
+  .c-detail { max-width: 240px; }
+}

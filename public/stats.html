@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>สถิติการตอบ · ASHER Connect</title>
+<!-- ★ CSP ของแอปคือ default-src 'self'; script-src 'self'; style-src 'self'
+     จึงห้ามมี <script> หรือ <style> แบบ inline และโหลด CDN ไม่ได้เลยสักเจ้า
+     กราฟจึงเป็น SVG ที่วาดเองใน stats.js ไม่ได้ใช้ไลบรารี -->
+<link rel="stylesheet" href="/fonts/plex.css">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/stats.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div><b>ASHER <span>Connect</span></b><small>สถิติการตอบ</small></div>
+  </div>
+  <div class="header-right">
+    <span id="who" class="muted"></span>
+    <a class="subtle" href="/">กลับหน้าแชท</a>
+  </div>
+</header>
+
+<main class="stats-main">
+
+  <!-- ตัวกรอง -->
+  <section class="filters" id="filters">
+    <div class="filter-group" id="range-buttons" role="group" aria-label="ช่วงเวลา">
+      <button type="button" class="chip" data-range="today">วันนี้</button>
+      <button type="button" class="chip" data-range="7d">7 วัน</button>
+      <button type="button" class="chip" data-range="month">เดือนนี้</button>
+      <button type="button" class="chip" data-range="custom">กำหนดเอง</button>
+    </div>
+    <div class="filter-group" id="custom-range" hidden>
+      <label>ตั้งแต่ <input type="date" id="date-from"></label>
+      <label>ถึง <input type="date" id="date-to"></label>
+    </div>
+    <div class="filter-group">
+      <label>ช่องทาง
+        <select id="channel">
+          <option value="">ทุกช่องทาง</option>
+          <option value="line">LINE</option>
+          <option value="messenger">Messenger</option>
+        </select>
+      </label>
+      <label>โปรเจกต์
+        <select id="project"><option value="">ทุกโปรเจกต์</option></select>
+      </label>
+    </div>
+    <span id="range-label" class="muted"></span>
+  </section>
+
+  <p id="notice" class="notice" hidden></p>
+
+  <!-- ตัวเลขรวม -->
+  <section class="tiles" id="tiles" aria-label="ภาพรวม"></section>
+
+  <!-- กราฟรายชั่วโมง -->
+  <section class="panel">
+    <h2>เคสเข้าตามชั่วโมง <small class="muted">เวลาไทย · รวมทุกวันในช่วงที่เลือก</small></h2>
+    <div id="hours" class="chart"></div>
+  </section>
+
+  <!-- อันดับคนตอบ -->
+  <section class="panel">
+    <h2>อันดับคนตอบ</h2>
+    <p id="attribution" class="muted attribution" hidden></p>
+    <div class="table-scroll">
+      <table id="agents">
+        <thead>
+          <tr>
+            <th class="col-rank">อันดับ</th>
+            <th>ชื่อ</th>
+            <th class="num">เคส</th>
+            <th class="num">median</th>
+            <th class="num">คะแนน</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="score-rule" class="muted score-rule"></p>
+  </section>
+
+</main>
+
+<script type="module" src="/stats.js"></script>
+</body>
+</html>

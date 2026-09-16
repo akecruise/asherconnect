@@ -1,0 +1,135 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   หน้าสถิติการตอบ
+   ★ โหลดต่อจาก app.css จึงใช้ตัวแปรสีชุดเดียวกันทั้งหมด (--ink --muted --rule
+     --urgent --surface --paper) ไม่มีสีดิบในไฟล์นี้ นอกจากตัวที่ต้องมีจริง ๆ
+     เหตุผลเดียวกับที่ app.css เตือนไว้: สีที่เขียนดิบในกฎย่อยจะหลุดจากธีม
+   ★ ห้ามเติมบล็อก :root ที่นี่ — app.css เป็นเจ้าของพาเลตที่เดียว
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.stats-main {
+  /* ★ app.css ให้ main เป็น grid สามคอลัมน์พร้อม min-height: calc(100dvh - 83px)
+     สองค่านั้นเป็นของหน้าแชทสามคอลัมน์ หน้านี้ไม่เกี่ยวด้วย ต้องล้างทั้งสองค่า
+     ถ้าลืม min-height หน้าจะสูงเต็มจอเสมอ แล้วเหลือช่องว่างขาวใต้เนื้อหาเวลามีเคสน้อย */
+  min-height: 0;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ★ ทุกกล่องลูกของ .stats-main ต้องยอมหดต่ำกว่าเนื้อหาตัวเอง
+   flex item มี min-width:auto เป็นค่าตั้งต้น กล่องที่มีตาราง min-width:460px อยู่ข้างใน
+   จึงดันหน้าเพจให้เลื่อนแนวนอนทั้งหน้าบนมือถือ — ที่ควรเลื่อนคือตัวตารางใน .table-scroll เท่านั้น */
+.stats-main > * { min-width: 0 }
+
+/* ── ตัวกรอง ─────────────────────────────────────────────────────────── */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+}
+.filter-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap }
+.filters label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--muted);
+                 white-space: nowrap }  /* ไม่งั้น "ช่องทาง" จะหักเป็น "ช่อง/ทาง" สองบรรทัด */
+.filters select,
+.filters input[type="date"] {
+  height: 30px; margin: 0; padding: 0 8px;
+  border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--surface); color: var(--ink); font-size: 13px;
+}
+.filters .chip {
+  height: 28px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--rule); background: var(--surface);
+  color: var(--muted); font-size: 13px; line-height: 1;
+}
+.filters .chip:hover { border-color: var(--accent-line); color: var(--ink) }
+.filters .chip.selected { background: var(--ink); border-color: var(--ink); color: var(--surface); font-weight: 500 }
+#range-label { margin-left: auto; font-size: 12px }
+
+/* ── การ์ดตัวเลข ─────────────────────────────────────────────────────── */
+/* auto-fit ทำให้แถวยุบเองตามความกว้าง ไม่ต้องมี breakpoint แยกให้ตามแก้ */
+.tiles {
+  display: grid;
+  /* ★ การ์ดมี 8 ใบพอดี บังคับ 4 คอลัมน์จึงได้ 4+4 เต็มสองแถวพอดี
+     auto-fit ทำให้ได้ 7+1 ที่ความกว้างเต็ม ซึ่งใบที่เหลือดูเหมือนของตกค้าง */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+.tile {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: 10px;
+}
+.tile-label { font-size: 12px; color: var(--muted); line-height: 1.4 }
+.tile-value { font-size: 22px; font-weight: 600; line-height: 1.2; color: var(--ink) }
+/* ★ สีบอกว่า "ต้องดู" ไม่ได้บอกค่ามากน้อย — ใช้เฉพาะสองกรณีตามกติกาแบรนด์
+   และไม่ใช่ตัวบอกความหมายตัวเดียว ป้ายข้อความข้างบนบอกครบอยู่แล้ว */
+.tile.bad { border-left-color: var(--urgent) }
+.tile.bad .tile-value { color: var(--urgent) }
+.tile.good { border-left-color: var(--live) }
+
+/* ── กล่องเนื้อหา ────────────────────────────────────────────────────── */
+.panel {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+}
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px; font-weight: 600; color: var(--ink);
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.panel h2 small { font-size: 12px; font-weight: 400 }
+
+/* ── กราฟรายชั่วโมง ──────────────────────────────────────────────────── */
+.chart { width: 100% }
+.hours-svg { display: block; width: 100%; height: auto }
+.hours-svg .bar { fill: var(--accent-line) }
+/* ชั่วโมงที่คนทักเยอะสุด — คำถามหลักของกราฟนี้คือ "ช่วงไหนควรมีคนเฝ้า" */
+.hours-svg .bar.peak { fill: var(--ink) }
+.hours-svg .grid { stroke: var(--rule-soft); stroke-width: 1 }
+.hours-svg .axis { fill: var(--faint); font-size: 11px }
+
+/* ── ตารางอันดับ ─────────────────────────────────────────────────────── */
+/* ★ ตารางเป็นของชิ้นเดียวที่ยอมให้เลื่อนแนวนอนได้ ตัวหน้าเพจห้ามเลื่อน */
+.table-scroll { overflow-x: auto }
+#agents { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 460px }
+#agents th, #agents td {
+  padding: 8px 10px; text-align: left;
+  border-bottom: 1px solid var(--rule-soft); white-space: nowrap;
+}
+#agents th { font-size: 12px; font-weight: 500; color: var(--muted) }
+#agents td.num, #agents th.num { text-align: right; font-variant-numeric: tabular-nums }
+#agents .col-rank { width: 64px; color: var(--muted) }
+#agents td.score { font-weight: 600 }
+#agents tr:last-child td { border-bottom: 0 }
+
+/* อันดับ 1 — เน้นด้วยพื้นกับน้ำหนักตัวอักษร ไม่ใช้แดง (สงวนไว้ให้ SLA) */
+#agents tr.top { background: var(--accent-soft) }
+#agents tr.top td { font-weight: 600; color: var(--ink) }
+#agents tr.top .col-rank { color: var(--ink) }
+
+/* แถวที่ระบุตัวคนไม่ได้ — จางลงให้เห็นว่าไม่ได้อยู่ในการแข่งขัน แต่ยังอ่านออก */
+#agents tr.no-rank td { color: var(--muted) }
+
+.attribution, .score-rule { margin: 0 0 10px; font-size: 12px; line-height: 1.6 }
+.score-rule { margin: 10px 0 0 }
+
+/* ── จอแคบ ───────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .stats-main { padding: 12px; gap: 12px }
+  .tile-value { font-size: 19px }
+  #range-label { margin-left: 0; width: 100% }
+}

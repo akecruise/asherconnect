@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Log · ASHER Connect</title>
+<!-- ★ CSP ของแอปคือ default-src 'self'; script-src 'self'; style-src 'self'
+     ห้ามมี <script>/<style> แบบ inline และโหลด CDN ไม่ได้ — ทุกอย่างอยู่ใน logs.js / logs.css -->
+<link rel="stylesheet" href="/fonts/plex.css">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/logs.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div><b>ASHER <span>Connect</span></b><small>log ระบบ</small></div>
+  </div>
+  <div class="header-right">
+    <span id="who" class="muted"></span>
+    <a class="subtle" href="/">กลับหน้าแชท</a>
+  </div>
+</header>
+
+<main class="logs-main">
+
+  <!-- ตัวกรอง -->
+  <section class="filters">
+    <div class="filter-group" role="group" aria-label="ช่วงเวลา">
+      <button type="button" class="chip" data-range="1h">1 ชม.</button>
+      <button type="button" class="chip" data-range="6h">6 ชม.</button>
+      <button type="button" class="chip is-on" data-range="24h">24 ชม.</button>
+      <button type="button" class="chip" data-range="7d">7 วัน</button>
+    </div>
+
+    <div class="filter-group" role="group" aria-label="แหล่งข้อมูล">
+      <label class="tick"><input type="checkbox" class="src" value="webhook" checked> ของดิบเข้า</label>
+      <label class="tick"><input type="checkbox" class="src" value="decision" checked> การตัดสินใจ</label>
+      <label class="tick"><input type="checkbox" class="src" value="job" checked> งานขาออก</label>
+      <label class="tick"><input type="checkbox" class="src" value="message" checked> ข้อความ</label>
+    </div>
+
+    <div class="filter-group">
+      <button type="button" class="chip is-on" id="level-all">ทั้งหมด</button>
+      <button type="button" class="chip" id="level-problem">เฉพาะที่สะดุด</button>
+    </div>
+
+    <div class="filter-group grow">
+      <input type="search" id="search" placeholder="ค้นในหัวข้อ รายละเอียด หรือช่องทาง…" autocomplete="off">
+    </div>
+
+    <div class="filter-group">
+      <label class="tick"><input type="checkbox" id="auto"> รีเฟรชเอง 15 วิ</label>
+      <button type="button" class="chip" id="refresh">รีเฟรช</button>
+    </div>
+  </section>
+
+  <!-- สรุปหัวจอ — ดูภาพรวมก่อนไล่อ่านทีละบรรทัด -->
+  <section class="cards" id="cards" aria-label="สรุป"></section>
+
+  <!-- เหตุผลที่พบบ่อย — คำถามแรกที่คนถามเสมอเวลามาดู log -->
+  <section class="reasons" id="reasons" hidden></section>
+
+  <!-- เส้นเวลา -->
+  <section class="timeline">
+    <div class="timeline-head">
+      <h2>เส้นเวลา</h2>
+      <span class="muted" id="count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th class="c-time">เวลา</th>
+            <th class="c-src">แหล่ง</th>
+            <th class="c-ch">ช่องทาง</th>
+            <th class="c-title">เรื่อง</th>
+            <th class="c-detail">รายละเอียด</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="empty muted" id="empty" hidden>ไม่มีรายการในช่วงนี้</p>
+    <p class="empty muted" id="error" hidden></p>
+  </section>
+
+</main>
+
+<script src="/logs.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+/**
+ * หน้าเข้าสู่ระบบ
+ *
+ * ยึดธีมท้ายไฟล์ของ app.css ที่ชื่อ "Fresh workspace: pastel surfaces, dark actions, red urgency"
+ * ซึ่งเป็นบล็อก :root อันสุดท้าย และเป็นตัวที่ชนะจริงในไฟล์นั้น (มี :root ห้าบล็อกซ้อนกัน)
+ * ชุดที่ใช้จริงคือเขียวอมน้ำเงินเข้ม #286B66 · พื้นพาสเทล · เงาเย็น --fresh-shadow
+ *
+ * กติกาเดียวกับ app.css: สีทุกสีมาจากตัวแปร ห้ามเขียนค่าสีตรง ๆ
+ *
+ * ★ อย่าใช้ --accent-soft กับหน้านี้ มันเป็นฟ้า #EAF4FC ขณะที่ --accent เป็นเขียว
+ *   เอามาแปะข้าง ๆ กันแล้วเห็นชัดว่าคนละตระกูล ตัวที่เข้าคู่กับเขียวคือ --bubble-out/--fresh-mint
+ * ★ อย่าใช้ --shadow มันเป็นเงาอมแดง #34101412 ที่ค้างมาจากธีมก่อนหน้า
+ *   ทั้งแอปใช้ --fresh-shadow ซึ่งเป็นเงาอมน้ำเงิน
+ */
+
+/* .login ตั้ง display:grid ซึ่งทับ [hidden] ของเบราว์เซอร์
+   ไม่มีบรรทัดนี้ หน้า login จะไม่ยอมหายไปหลังล็อกอินสำเร็จ */
+[hidden] { display: none !important }
+
+/* ไล่สีแบบเดียวกับ .conversation ในหน้างาน เพื่อให้ตอนล็อกอินผ่านแล้ว
+   พื้นหลังไม่กระโดดจากสีเรียบไปเป็นพาสเทลทันที */
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: linear-gradient(150deg, var(--fresh-sky), var(--paper) 45%, var(--fresh-mint));
+}
+
+.login-card {
+  width: min(420px, 100%);
+  box-sizing: border-box;
+  padding: 40px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  box-shadow: 0 10px 34px var(--fresh-shadow), 0 2px 8px var(--fresh-shadow);
+}
+
+/* โลโก้ใหญ่กว่าบนแถบหัวอยู่หนึ่งขั้น เพราะหน้านี้ไม่มีอย่างอื่นให้ดู
+   และเป็นจุดเดียวที่บอกว่ากำลังจะเข้าระบบของใคร */
+.login-card .brand-lockup { display: flex; align-items: center; gap: 11px }
+.login-card .brand-mark { width: 42px; height: 42px }
+.login-card .brand-word { width: 148px; height: auto }
+
+.login-card .eyebrow { margin: 26px 0 10px }
+
+.login-card h1 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.35;
+  letter-spacing: -.3px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.login-card .muted { margin: 10px 0 0; color: var(--muted) }
+
+.login-card input { box-sizing: border-box; width: 100% }
+
+/* ── ปุ่มเข้าสู่ระบบ ──────────────────────────────────────────────────
+ *
+ * ทรงยาสวมมาจาก .primary ของแอป (เม็ดยา 999px หนา 600 พื้น --accent)
+ * ที่นี่เพิ่มเฉพาะสิ่งที่หน้านี้ต้องการเป็นพิเศษ ไม่ได้ตั้งชุดสีใหม่
+ *
+ * ไล่สีสองสต็อปจาก --accent ไป --fresh-teal ซึ่งห่างกันนิดเดียว (#286B66 → #367465)
+ * จึงอ่านเป็น "ความลึก" ไม่ใช่ "ปุ่มสองสี" และเข้ากับพื้นไล่สีของแอปที่ใช้ทั้งระบบ
+ * ทั้งสองสต็อปตัดกับตัวอักษรขาวเกิน 4.5:1 (6.2:1 และ 5.0:1) จึงอ่านออกทั้งใบ
+ */
+.login-card button {
+  width: 100%;
+  min-height: 46px;   /* นิ้วโป้งบนมือถือต้องกดโดนโดยไม่ต้องเล็ง */
+  margin-top: 22px;
+  background: linear-gradient(135deg, var(--accent), var(--fresh-teal));
+  border-color: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 6px 16px var(--fresh-shadow);
+  transition: background .15s, box-shadow .15s, transform .08s;
+}
+
+/* เอาเมาส์ชี้แล้วเข้มขึ้นและลอยขึ้นเล็กน้อย — ทิศทางเดียวกับ .primary:hover ของแอป */
+.login-card button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: 0 8px 20px var(--fresh-shadow);
+}
+
+/* กดค้างแล้วต้องยุบลง ไม่ใช่ค้างลอยอยู่อย่างนั้น
+   ปุ่มนี้ทำงานช้ากว่าปุ่มอื่นในแอป เพราะต้องรอ Supabase ตอบ คนกดจึงต้องเห็นว่ากดติดแล้ว */
+.login-card button:active:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 2px 6px var(--fresh-shadow);
+  transform: translateY(1px);
+}
+
+/* ★ วงโฟกัสของแอปตั้งไว้ที่ --focus ซึ่งเป็นเทา #C9C9C9 ตัดกับพื้นขาวได้แค่ 1.66:1
+ *   มองแทบไม่เห็น และต่ำกว่าเกณฑ์ 3:1 — หน้านี้เป็นหน้าเดียวที่คนใช้คีย์บอร์ดล้วนได้
+ *   (แท็บจากช่องอีเมล → รหัสผ่าน → ปุ่ม) จึงทับด้วยสีหลักซึ่งตัดกับพื้นขาว 6.2:1 */
+.login-card button:focus-visible,
+.login-card input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ตอนกดแล้วรอผล app.js ปิดปุ่มไว้ — ต้องไม่เปลี่ยนสีตามเมาส์อีก
+   ไม่งั้นปุ่มที่กดไม่ได้จะยังตอบสนองเหมือนกดได้ */
+.login-card button:disabled {
+  background: var(--accent);
+  box-shadow: none;
+  transform: none;
+}
+
+/* ข้อความผิดพลาดอยู่ใต้ปุ่มตามของเดิม — เว้นที่ไว้ไม่ได้ เพราะจะเห็นช่องว่างเปล่า
+   ตอนที่ยังไม่มีอะไรผิด จึงให้มันดันเนื้อหาลงตอนโผล่มาแทน */
+.login-card #login-error { margin: 14px 0 0; color: var(--bad); font-size: 13px }
+.login-card #login-error:empty { margin: 0 }
+
+@media (max-width: 480px) {
+  .login { padding: 16px }
+  .login-card { padding: 28px 22px }
+  .login-card h1 { font-size: 22px }
+}
+
+/* คนที่ตั้งเครื่องให้ลดการเคลื่อนไหว ต้องไม่เจอปุ่มขยับ */
+@media (prefers-reduced-motion: reduce) {
+  .login-card button { transition: none }
+  .login-card button:active:not(:disabled) { transform: none }
+}
