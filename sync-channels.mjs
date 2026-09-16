@@ -28,9 +28,9 @@ const APPLY = process.argv.includes('--apply')
 const SECRETS = (() => {
   const i = process.argv.indexOf('--secrets')
   if (i > -1) return process.argv[i + 1]
-  for (const p of ['D:/secrets/mkt18-secrets.php',
-                   'D:/APlusMKT/secrets/Asher_ERP-secrets.php',
-                   'D:/APlusMKT/secrets/mkt18-secrets.php']) if (existsSync(p)) return p
+  // ★ ใช้ไฟล์ปัจจุบันไฟล์เดียว — mkt18 เลิกใช้แล้ว (2026-09-15)
+  //   เคยอยู่อันดับแรกของลำดับนี้ จึงชนะไฟล์จริงเสมอ ทั้งที่ค่าข้างในเก่ากว่าหนึ่งสัปดาห์
+  for (const p of ['D:/APlusMKT/secrets/Asher_ERP-secrets.php']) if (existsSync(p)) return p
   return null
 })()
 
@@ -93,7 +93,8 @@ if (!line) {
     line.account_id = info.userId
     line.secret = lineSecret
     line.access_token = lineToken
-    line.enabled = true
+    // ★ ช่องที่คนตั้งใจปิดไว้ ห้ามเปิดกลับเอง — การเลิกใช้เป็นการตัดสินของคน
+    if (line.enabled !== false) line.enabled = true
     changed++
     console.log('  → พร้อมเปิดใช้')
   }
@@ -162,10 +163,16 @@ if (!fb) {
     console.log('  → พร้อมเปิดใช้')
   } else {
     // เก็บค่าที่ได้ไว้ก่อน แต่ไม่เปิด เพราะเปิดทั้งที่ไม่ครบจะกลายเป็นรับได้แต่ตอบไม่ได้
+    // ★ ไฟล์ secrets ไม่มี app_secret ของ Meta — ถ้าเขียนทับตามที่อ่านมาได้
+    //   ค่าที่ใช้งานได้จะหาย แล้ว webhook จะถูกปัดทิ้งทุกใบแบบเงียบ — เกิดมาแล้ว 2026-09-15
     if (metaSecret) fb.secret = metaSecret
+    else if (fb.secret) notes.push('ไฟล์ secrets ไม่มี app_secret — คงค่าเดิมใน channels.json ไว้ ไม่ได้ลบ')
     if (token) fb.access_token = token
-    fb.enabled = false
-    console.log('  → ยังไม่เปิด (ดูรายการที่ขาดด้านล่าง)')
+    const คงเปิดไว้ = fb.enabled === true && fb.secret && fb.access_token && fb.account_id
+    if (!คงเปิดไว้) fb.enabled = false
+    console.log(คงเปิดไว้
+      ? '  → ช่องนี้เปิดใช้งานอยู่แล้วด้วยค่าใน channels.json — คงไว้ตามเดิม'
+      : '  → ยังไม่เปิด (ดูรายการที่ขาดด้านล่าง)')
   }
 }
 

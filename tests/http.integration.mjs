@@ -34,7 +34,6 @@ const PAGE_ID = '100000000000001'
 const VERIFY_TOKEN = 'verify-' + randomUUID()
 
 // บัญชีที่เซิร์ฟเวอร์ในเทสต์ทุกตัวทำงานในนามของมัน — ตั้งค่าใน main() ก่อนยกตัวแรก
-let account = null
 const results = []
 const ck = (no, name, ok, detail = '') => { results.push({ no, name, ok: !!ok, detail }); return !!ok }
 const sign = (raw, secret, enc) => createHmac('sha256', secret).update(raw).digest(enc)
@@ -158,9 +157,8 @@ async function startServer(scene, cfg, extraEnv = {}, port = PORT) {
       PORT: String(port),
       CONNECT_PUBLIC_URL: base,
       CONNECT_CHANNELS_FILE: channels,
-      // ไม่มีชั้นล็อกอินแล้ว เซิร์ฟเวอร์ทำงานในนามบัญชีนี้ตั้งแต่บูต
-      CONNECT_ACCOUNT_EMAIL: account.email,
-      CONNECT_ACCOUNT_PASSWORD: account.password,
+      // แต่ละเซิร์ฟเวอร์ในเทสต์เก็บเซสชันของตัวเอง ไม่ปนกันและไม่ทิ้งไว้ในโฟลเดอร์โปรเจกต์
+      SESSION_DIR: join(dir, 'sessions'),
       // ทะเบียน Edge Function ที่หน้าจอเรียกได้ — ใช้ของจริงที่รันอยู่ในสแตก
       CONNECT_EDGE_FUNCTIONS: 'webhook-receiver',
       // จากบนโฮสต์ต้องเข้าทาง envoy ที่ map ออกมา ไม่ใช่ชื่อภายใน docker
@@ -190,12 +188,21 @@ const post = async (path, raw, headers = {}) => {
   const r = await fetch(BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: raw })
   return { status: r.status, body: await r.text(), headers: r.headers }
 }
-const command = (action, data) => post('/api/command', JSON.stringify({ action, data }), { origin: BASE })
+// คุกกี้เป็นหมายเลขอ้างอิงทึบ ๆ ไม่ใช่ JWT — เก็บไว้แล้วแนบไปกับทุกคำสั่ง
+let cookie = ''
+async function login(base, who) {
+  const r = await fetch(base + '/api/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', origin: base },
+    body: JSON.stringify({ email: who.email, password: who.password }) })
+  if (r.status !== 200) throw new Error(`ล็อกอินไม่ผ่าน (${who.email}) HTTP ${r.status} ${await r.text()}`)
+  return (r.headers.get('set-cookie') || '').split(';')[0]
+}
+const command = (action, data) => post('/api/command', JSON.stringify({ action, data }),
+  { origin: BASE, ...(cookie ? { cookie } : {}) })
 
 async function main() {
   const cfg = await env()
   const user = await testUser()
-  account = user
   let scene, server
   const extraServers = []
   try {
@@ -269,21 +276,26 @@ async function main() {
       ck(9, 'ช่องทางที่ไม่ได้ตั้งค่าไว้ไม่รับของ', r.status === 503, `HTTP ${r.status}`)
     }
 
-    // ── 10-18 ประตูของหน้าจอ หลังถอดชั้นล็อกอินออก
-    //    ด่านที่เหลือไม่ใช่ "คุณเป็นใคร" แล้ว แต่เป็น "คำขอนี้มาจากหน้าเว็บของเราจริงไหม"
+    // ── 10-18 ประตูของหน้าจอ
+    //    ด่านแรกคือ "คุณเป็นใคร" ด่านที่สองคือ "คำขอนี้มาจากหน้าเว็บของเราจริงไหม"
     {
       const r = await command('bootstrap', {})
-      ck(10, 'ไม่มีล็อกอิน: เปิดมาก็เรียกคำสั่งได้ทันที', r.status === 200, `HTTP ${r.status} ${r.body.slice(0, 80)}`)
+      ck(10, 'ยังไม่ได้ล็อกอิน สั่งงานไม่ได้', r.status === 401, `HTTP ${r.status} ${r.body.slice(0, 80)}`)
     }
     {
+      // รหัสผิดกับบัญชีที่ไม่มีอยู่ต้องตอบเหมือนกัน ไม่งั้นหน้านี้กลายเป็นเครื่องมือเดาอีเมล
+      const r = await post('/api/login', JSON.stringify({ email: user.email, password: 'wrong-on-purpose' }), { origin: BASE })
+      ck(11, 'รหัสผ่านผิดถูกปฏิเสธ และไม่บอกว่าอีเมลนี้มีจริงไหม',
+        r.status === 401 && JSON.parse(r.body || '{}').error === 'invalid_credentials', `HTTP ${r.status} ${r.body.slice(0, 80)}`)
+    }
+    {
+      // คุกกี้ต้องเป็นหมายเลขสุ่ม ไม่ใช่ JWT — JWT ที่หลุดออกไปแล้วเรียกคืนกลางคันไม่ได้
       const r = await post('/api/login', JSON.stringify(user), { origin: BASE })
-      ck(11, 'ทางเข้า /api/login ถูกถอดออกแล้ว', r.status === 404, `HTTP ${r.status}`)
-    }
-    {
-      // ไม่มีเซสชันรายคนแล้ว จึงต้องไม่มีคุกกี้อะไรติดกลับไปให้เบราว์เซอร์เก็บ
-      const r = await command('bootstrap', {})
-      ck(12, 'ไม่มีคุกกี้เซสชันติดกลับไปอีกต่อไป', !r.headers.get('set-cookie'),
-        'ได้ ' + (r.headers.get('set-cookie') || '(ไม่มี)'))
+      const set = r.headers.get('set-cookie') || ''
+      cookie = set.split(';')[0]
+      ck(12, 'ล็อกอินสำเร็จแล้วได้คุกกี้ทึบแบบ HttpOnly',
+        r.status === 200 && /^asher_session=[a-f0-9]{64}$/.test(cookie) && set.includes('HttpOnly'),
+        `HTTP ${r.status} · ${set || '(ไม่มีคุกกี้)'}`)
     }
     {
       // เว็บอื่นที่ผู้ใช้เปิดค้างไว้ สั่งงานบริการนี้ผ่านเบราว์เซอร์ของผู้ใช้ไม่ได้
@@ -294,8 +306,12 @@ async function main() {
     {
       const r = await command('bootstrap', {})
       const body = JSON.parse(r.body || '{}')
-      ck(14, 'bootstrap คืนตัวตนของบัญชีที่บริการใช้ และรายการช่องทาง',
-        r.status === 200 && body.user?.email === user.email && Array.isArray(body.channels) && body.channels.length === 2,
+      // ★ ช่องทางทุกตัวต้องมี state เสมอ — ไฟบน chip อ่านค่านี้
+      //   ถ้าขาดไป หน้าจอจะตกไปที่สีเดิมโดยไม่มีอะไรฟ้อง
+      const มีstate = Array.isArray(body.channels) && body.channels.every(c =>
+        ['ok','idle','down','off','unknown'].includes(c.state) && 'last_message_at' in c)
+      ck(14, 'bootstrap คืนตัวตนของคนที่ล็อกอิน และช่องทางพร้อมสถานะ',
+        r.status === 200 && body.user?.email === user.email && Array.isArray(body.channels) && body.channels.length === 2 && มีstate,
         `HTTP ${r.status}`)
     }
     {
@@ -437,15 +453,17 @@ async function main() {
     }
 
     // ── 30 หน้าเว็บกับเซิร์ฟเวอร์ต้องเล่าเรื่องเดียวกัน
-    //    ถ้าหน้าจอยังมีฟอร์มล็อกอินค้างอยู่ทั้งที่ฝั่งเซิร์ฟเวอร์ถอดออกแล้ว คนใช้จะเจอฟอร์มที่กดแล้วไม่มีอะไรเกิดขึ้น
+    //    เซิร์ฟเวอร์บังคับล็อกอินแล้ว ถ้าหน้าจอไม่มีฟอร์มให้กรอก คนใช้จะเจอหน้าว่างที่ไม่มีทางไปต่อ
     {
       const page = await (await fetch(BASE + '/')).text()
       const app = await (await fetch(BASE + '/app.js')).text()
-      ck(30, 'หน้าเว็บไม่มีร่องรอยหน้าล็อกอินหลงเหลือ',
-        !page.includes('id="login"') && !page.includes('id="logout"') && !app.includes('/api/login'),
-        'ยังเจอใน ' + [page.includes('id="login"') && 'index.html:login',
-                       page.includes('id="logout"') && 'index.html:logout',
-                       app.includes('/api/login') && 'app.js'].filter(Boolean).join(' · '))
+      const css = await fetch(BASE + '/login.css')
+      ck(30, 'หน้าเว็บมีฟอร์มล็อกอิน ปุ่มออกจากระบบ และสไตล์ของมัน',
+        page.includes('id="login-form"') && page.includes('id="logout"') && app.includes('/api/login') && css.status === 200,
+        'ขาด ' + [!page.includes('id="login-form"') && 'index.html:login-form',
+                     !page.includes('id="logout"') && 'index.html:logout',
+                     !app.includes('/api/login') && 'app.js:/api/login',
+                     css.status !== 200 && `login.css HTTP ${css.status}`].filter(Boolean).join(' · '))
     }
 
     // ── 31-33 ทางไป Edge Function
@@ -472,8 +490,8 @@ async function main() {
     // ── 34 /health บอกได้ว่าตอนนี้รับโปรแกรมอะไรลงมาแล้วบ้าง
     {
       const h = await (await fetch(BASE + '/health')).json()
-      ck(34, '/health บอกทะเบียน Edge Function และบัญชีที่ใช้ทำงาน',
-        Array.isArray(h.edgeFunctions) && h.edgeFunctions.includes('webhook-receiver') && h.account === user.email,
+      ck(34, '/health บอกทะเบียน Edge Function และไม่มีบัญชีกลางให้บอกแล้ว',
+        Array.isArray(h.edgeFunctions) && h.edgeFunctions.includes('webhook-receiver') && h.authentication === 'individual' && !h.account,
         JSON.stringify(h))
     }
 
@@ -704,11 +722,11 @@ async function main() {
       // ต้องยกเซิร์ฟเวอร์ที่ทำงานในนามผู้จัดการ เพราะตัวหลักทำงานในนามเซลส์
       // ซึ่งกดสวิตช์ไม่ได้โดยตั้งใจ (ดูข้อ 49)
       const manager = await testUser('manager.test@')
-      const s6 = await startServer(scene, cfg,
-        { CONNECT_ACCOUNT_EMAIL: manager.email, CONNECT_ACCOUNT_PASSWORD: manager.password }, PORT + 4)
+      const s6 = await startServer(scene, cfg, {}, PORT + 4)
       extraServers.push(s6)
+      const managerCookie = await login(s6.base, manager)
       const flip = await fetch(s6.base + '/api/command', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s6.base },
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s6.base, cookie: managerCookie },
         body: JSON.stringify({ action: 'bot_switch', data: { switch: 'generate', enabled: true, inbox_id: ib } }) })
       const whileOn = await claim()
       ck(48, 'ผู้จัดการกดเปิดจากหน้าจอแล้วงานเดินต่อจากของที่ค้างไว้ ไม่ได้หายไป',
