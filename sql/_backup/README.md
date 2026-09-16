@@ -28,6 +28,7 @@ ssh root@187.53.139.175 'docker exec supabase-db psql -U postgres -d postgres -A
 | `receive_event_prod_20260916_pre035.sql` | 2026-09-16 06:0xZ | `035_echo_attribution.sql` | รุ่น 033 (กิ่ง echo ยังตัดสินสองทาง bot/agent และไม่กันข้อความของเราเองซ้ำ) |
 | `receive_event_prod_20260916_pre036.sql` | 2026-09-16 06:05Z | `036_echo_source_from_queue.sql` | รุ่น 035 (ป้าย source ยังตัดสินจาก app_id ก่อน) |
 | `refresh_sales_staff_kpi_daily_prod_20260916.sql` | 2026-09-16 05:5xZ | `034_kpi_refresh_resync.sql` | รุ่นของ `009` (คำนวณในตัวเอง) ที่ทับรุ่นของ `011` (เรียก `inbox.reply_stats`) — ผลลัพธ์เท่ากันทุกตัวเลข |
+| `echo_duplicates_rows_20260916.sql` | 2026-09-16 | `_backfill/20260916_echo_duplicates.sql` | แถวข้อมูลจริง ไม่ใช่นิยามฟังก์ชัน — `inbox.message` / `human_reply_events` / `bot.reply_sample` ที่ backfill จะลบ (8 คู่) ประกอบเป็น insert ... on conflict do nothing กู้คืนซ้ำได้ |
 
 ## เหตุการณ์ 2026-09-16 (ที่มาของไฟล์ทั้งหมดนี้)
 

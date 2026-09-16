@@ -65,6 +65,21 @@ delete from inbox.human_reply_events h
                 where w.conversation_id = h.conversation_id and w.source = 'workspace'
                   and abs(extract(epoch from (w.created_at - h.created_at))) < 120);
 
+-- ── 2.5) ตัวอย่างฝึกบอทที่ผูกกับแถวซ้ำ ────────────────────────────────
+-- ★ ต้องลบตรงนี้เอง ห้ามปล่อยให้ FK cascade ทำเงียบ ๆ
+--   bot.reply_sample.message_id เป็น FK แบบ ON DELETE CASCADE และเป็น PK ด้วย
+--   ถ้าไม่เขียนไว้ตรงนี้ การลบแถวข้อความจะพาตัวอย่างฝึก 8 แถวหายไปโดยไม่มีใครเห็น
+--
+-- ★ ทำไมลบทิ้งได้ (ตรวจของจริงก่อนแล้ว ทั้ง 8 คู่):
+--   · ทุก dup_id มี 'ฝาแฝด' ที่ชี้ไป original_id อยู่แล้ว (conflict_on_original = 1 ทุกแถว)
+--     จึงย้ายให้ชี้ต้นฉบับแทนไม่ได้ เพราะ message_id เป็น primary key
+--   · แถวฝาแฝดที่ชี้ต้นฉบับมี agent_id ครบ ส่วนแถวของ echo ไม่มี (agent_id ว่าง)
+--   · bot_draft ว่างทั้งคู่ (ยาว 0) ข้อมูลฝึกจึงไม่ได้หายไปไหน
+--   · think_seconds ของแถว echo สูงกว่าเล็กน้อยเพราะจับเวลาจากจังหวะที่ echo เด้งกลับ
+--     ไม่ใช่จังหวะที่คนกดส่ง → เป็นค่าที่ผิดอยู่แล้ว
+--   สำรองไว้ครบที่ sql/_backup/echo_duplicates_rows_20260916.sql
+delete from bot.reply_sample rs using _dup d where rs.message_id = d.dup_id;
+
 -- ── 3) ลบแถวข้อความที่ซ้ำ แล้วย้าย mid ไปไว้ที่แถวต้นทาง ──────────────
 --     ต้องลบก่อนค่อยย้าย mid ไม่งั้นชน unique (conversation_id, external_message_id)
 delete from inbox.message m using _dup d where m.id = d.dup_id;
@@ -93,7 +108,9 @@ select c.id as conversation_id, c.last_human_reply_at as after_value
  where c.id in (select conversation_id from _dup)
  order by 1;
 
-select (select count(*) from inbox.message m join _dup d on d.dup_id = m.id) as duplicates_left,
+select (select count(*) from bot.reply_sample rs join _dup d on d.dup_id = rs.message_id) as reply_samples_left,
+       (select count(*) from bot.reply_sample rs join _dup d on d.original_id = rs.message_id) as reply_samples_kept_on_original,
+       (select count(*) from inbox.message m join _dup d on d.dup_id = m.id) as duplicates_left,
        (select count(*) from inbox.message m join _dup d on d.original_id = m.id
          where m.external_message_id is not null) as originals_with_mid,
        (select count(*) from connect_private.audit where action = 'backfill_echo_duplicate') as audit_rows;
