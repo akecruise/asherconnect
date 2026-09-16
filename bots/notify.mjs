@@ -86,17 +86,26 @@ export function formatNotify(payload = {}, { inboxUrl = null } = {}) {
  * ★ ปลายทางมาจาก env ที่นี่ ไม่ได้อยู่ในฐาน (กติกาข้อ 6)
  *   ฐานสั่งแค่ว่า "แจ้ง" ส่วนแจ้งไปที่ไหนเป็นเรื่องของเครื่องที่รันอยู่
  *
- * telegram กับ email ใช้เฉพาะตอนได้เบอร์/LINE มา เหมือนของเดิม (fanout)
- * เพราะสองทางนั้นไว้สะกิดคนที่ไม่ได้เฝ้าจอ ไม่ใช่รายงานทุกข้อความ
+ * email ใช้เฉพาะตอนได้เบอร์/LINE มา เหมือนของเดิม (fanout)
+ * เพราะเป็นทางที่ไว้สะกิดคนที่ไม่ได้เฝ้าจอ ไม่ใช่รายงานทุกข้อความ
+ *
+ * ★ TELEGRAM_NOTIFY_ALL=true — ให้ Telegram แจ้งทุกข้อความเหมือนกลุ่ม LINE
+ *   ทีมตัดสินใจ 16 ก.ย. 2026 ว่าให้แจ้งทั้งสองทาง ไม่ใช่ให้ Telegram รอเฉพาะ lead
+ *   เหตุผล: คนละกลุ่มคนละชุด (LINE = Asher Notify · Telegram = Asher Sale Team)
+ *   จึงไม่ใช่การแจ้งซ้ำให้คนเดิม
+ *
+ *   lead ยังได้เพิ่มตามเดิม — ได้เบอร์/LINE มาเมื่อไหร่ อีเมลจะยิงเพิ่มอีกทาง
+ *   ไม่ตั้ง flag นี้ = Telegram กลับไปยิงเฉพาะ lead ตามพฤติกรรมเดิมของ fanout
  */
 export function notifyTargets(payload = {}, env = process.env) {
   const isLead = Boolean(payload.phone || payload.line_id)
+  const telegramAll = String(env.TELEGRAM_NOTIFY_ALL ?? '').toLowerCase() === 'true'
   const out = []
   if (env.LINE_NOTIFY_GROUP_ID && env.LINE_NOTIFY_TOKEN) {
     out.push({ channel: 'line_group', target: env.LINE_NOTIFY_GROUP_ID,
                config: { access_token: env.LINE_NOTIFY_TOKEN } })
   }
-  if (isLead && env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+  if ((isLead || telegramAll) && env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
     out.push({ channel: 'telegram', target: env.TELEGRAM_CHAT_ID,
                config: { telegram_bot_token: env.TELEGRAM_BOT_TOKEN } })
   }

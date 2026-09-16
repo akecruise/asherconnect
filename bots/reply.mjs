@@ -159,6 +159,32 @@ export function buildSystem({ context = '', known = '', style = {}, ctx = {}, pr
   return lines.join('\n')
 }
 
+/**
+ * system prompt แบบแยกก้อน เพื่อให้ prompt caching ทำงาน
+ *
+ * ★ caching เป็นการจับคู่ "คำนำหน้า" — เปลี่ยนไบต์เดียวในก้อนแรก แคชตายทั้งหมด
+ *   จึงต้องแยกของที่คงที่ (กฎ + ข้อมูลโครงการ ~4,900 tokens) ออกจากของที่เปลี่ยนทุกครั้ง
+ *   (ADDITIONAL DATA = เบอร์/LINE ที่ลูกค้าเคยให้ + ผลค้นความรู้)
+ *
+ * ก้อนแรกซ้ำเดิมทุกข้อความ จึงคิดเงินแค่ 10% ของราคาปกติเมื่อโดนแคช
+ * วัดจริง 16 ก.ย. 2026: 5,013 tokens/ข้อความ → ประหยัดราว 76% ของค่า API
+ *
+ * styleLines ยังอยู่ในก้อนที่แคชโดยตั้งใจ — มันเปลี่ยนตาม is_new_chat เท่านั้น
+ * จึงมีแค่สองรูปแบบ เกิดเป็นแคชสองชุดที่ถูกใช้ซ้ำทั้งคู่ ไม่ใช่แคชที่ตายทุกครั้ง
+ *
+ * ตรวจว่าได้ผลจริงที่ usage.cache_read_input_tokens — ถ้าเป็น 0 ตลอดแปลว่าแคชไม่ติด
+ */
+export function buildSystemBlocks({ context = '', known = '', style = {}, ctx = {}, project = 'naii' } = {}) {
+  const stable = SYSTEM_LINES.slice()
+  stable.push(...styleLines(style, ctx))
+  stable.push(...JSON_OUTPUT_RULES)
+  stable.push('', 'PROJECT DATA:', projectDataFor(project))
+
+  const blocks = [{ type: 'text', text: stable.join('\n'), cache_control: { type: 'ephemeral' } }]
+  if (context || known) blocks.push({ type: 'text', text: ['', 'ADDITIONAL DATA:', known, context].join('\n') })
+  return blocks
+}
+
 // ───────────────────────────────────────────── หมวดคำถามแบบไม่ใช้ AI (ตัวสำรอง)
 
 const TOPIC_RULES = [
@@ -276,7 +302,7 @@ export async function generateReply({
   const response = await fetcher(ANTHROPIC_URL, {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model, max_tokens: maxTokens, system: buildSystem({ context, known, style, ctx, project }), messages }),
+    body: JSON.stringify({ model, max_tokens: maxTokens, system: buildSystemBlocks({ context, known, style, ctx, project }), messages }),
     signal: AbortSignal.timeout(60000),
   })
   if (!response.ok) {

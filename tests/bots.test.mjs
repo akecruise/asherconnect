@@ -11,7 +11,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  loadProjectData, projectDataFor, buildSystem, styleLines, cleanReply,
+  loadProjectData, projectDataFor, buildSystem, buildSystemBlocks, styleLines, cleanReply,
   parseIntent, normalizeMessages, generateReply, detectTopicCode, maskPII,
 } from '../bots/reply.mjs'
 import { classifyOnly, intentRow } from '../bots/classify.mjs'
@@ -30,6 +30,10 @@ const claude = (text, status = 200) => {
   }
   return { seen, fetcher }
 }
+
+// system เป็น array ของก้อน (เพื่อ prompt caching) — รวมข้อความทุกก้อนก่อนตรวจ
+// ตรวจแบบนี้ทำให้เทสต์ไม่ผูกกับจำนวนก้อน จะแบ่งกี่ก้อนก็ยังตรวจเนื้อความได้เหมือนเดิม
+const systemText = body => (Array.isArray(body.system) ? body.system.map(b => b.text).join('\n') : body.system)
 
 // ── ข้อมูลโครงการ ──────────────────────────────────────────────────────────
 
@@ -60,6 +64,33 @@ test('system prompt พาข้อมูลโครงการกับสไ
   assert.equal(s.includes('STYLE RULES'), true)
   assert.equal(s.includes('OUTPUT FORMAT'), true)
   assert.equal(s.includes('[OFFTOPIC]'), true)
+})
+
+test('แยกก้อนเพื่อ caching แล้ว โมเดลต้องยังเห็นข้อความเดิมเป๊ะ', () => {
+  // ข้อกังวลเดียวของการแยกก้อนคือเนื้อความเปลี่ยนโดยไม่ตั้งใจ — ผูกไว้ตรงนี้
+  for (const args of [
+    { project: 'naii', ctx: { is_new_chat: true } },
+    { project: 'naii', ctx: { is_new_chat: false }, known: 'มีเบอร์แล้ว', context: 'บริบทเพิ่ม' },
+    { project: 'vibe', ctx: { is_new_chat: true }, known: 'มีเบอร์แล้ว' },
+  ]) {
+    const blocks = buildSystemBlocks(args)
+    assert.equal(blocks.map(b => b.text).join('\n'), buildSystem(args),
+      'ข้อความรวมของทุกก้อนต้องเท่ากับ buildSystem เดิม')
+  }
+})
+
+test('ก้อนแรกต้องติด cache_control และต้องเป็นก้อนที่คงที่', () => {
+  const a = buildSystemBlocks({ project: 'naii', ctx: { is_new_chat: true }, known: 'เบอร์ ก' })
+  const b = buildSystemBlocks({ project: 'naii', ctx: { is_new_chat: true }, known: 'เบอร์ ข' })
+
+  assert.deepEqual(a[0].cache_control, { type: 'ephemeral' })
+  assert.equal(a[0].text, b[0].text, 'ก้อนที่แคชต้องไม่ขยับตาม known — ไม่งั้นแคชตายทุกครั้ง')
+  assert.equal(a[0].text.includes('PROJECT DATA:'), true)
+  assert.notEqual(a[1].text, b[1].text, 'ของที่เปลี่ยนต้องอยู่ก้อนหลัง')
+  assert.equal(a[1].cache_control, undefined, 'ก้อนที่เปลี่ยนต้องไม่ติด cache_control')
+
+  // ไม่มี ADDITIONAL DATA ก็ต้องไม่สร้างก้อนเปล่า
+  assert.equal(buildSystemBlocks({ project: 'naii', ctx: {} }).length, 1)
 })
 
 test('ลูกค้าเก่าต้องไม่โดนทักซ้ำและไม่โดนยิงโบรชัวร์ซ้ำ', () => {
@@ -141,7 +172,7 @@ test('generateReply ส่ง system prompt กับประวัติไป
   assert.equal(r.intent.topics[0].l1, 'price')
   assert.equal(c.seen.url, 'https://api.anthropic.com/v1/messages')
   assert.equal(c.seen.headers['x-api-key'], 'sk-ปลอม')
-  assert.equal(c.seen.body.system.includes('2.39'), true)
+  assert.equal(systemText(c.seen.body).includes('2.39'), true)
   assert.deepEqual(c.seen.body.messages, [{ role: 'user', content: 'ราคาเท่าไหร่' }])
 })
 
@@ -163,8 +194,8 @@ test('ลูกค้าที่ให้เบอร์มาแล้ว ต�
   const c = claude('{"reply":"ทีมจะติดต่อกลับค่ะ","confidence":0.9}')
   await generateReply({ text: 'ติดต่อกลับได้เลย', known: 'Customer ALREADY gave phone number: 0812345678. Do NOT ask for phone again.',
     apiKey: 'k', fetcher: c.fetcher })
-  assert.equal(c.seen.body.system.includes('ALREADY gave phone number: 0812345678'), true)
-  assert.equal(c.seen.body.system.includes('ADDITIONAL DATA'), true)
+  assert.equal(systemText(c.seen.body).includes('ALREADY gave phone number: 0812345678'), true)
+  assert.equal(systemText(c.seen.body).includes('ADDITIONAL DATA'), true)
 })
 
 // ── ถอดหมวดคำถาม (mock fetch) ─────────────────────────────────────────────
@@ -174,7 +205,7 @@ test('classifyOnly อ่านก้อนหมวดที่โมเดล�
   const intent = await classifyOnly('ผ่อนเดือนละเท่าไหร่', null, { apiKey: 'k', fetcher: c.fetcher })
   assert.equal(intent.topics[0].l1, 'finance')
   assert.equal(intent.stage, 'intent')
-  assert.equal(c.seen.body.system.includes('TAXONOMY'), true)
+  assert.equal(systemText(c.seen.body).includes('TAXONOMY'), true)
   assert.equal(c.seen.body.temperature, 0)
 })
 
@@ -237,6 +268,24 @@ test('ปลายทางของการแจ้งมาจาก env · 
   assert.deepEqual(notifyTargets({ phone: '0812345678' }, env).map(t => t.channel),
     ['line_group', 'telegram', 'email'])
   assert.deepEqual(notifyTargets({ phone: '0812345678' }, {}), [])   // ไม่ตั้ง env = ไม่มีปลายทาง
+})
+
+test('TELEGRAM_NOTIFY_ALL=true ให้ Telegram แจ้งทุกข้อความ · อีเมลยังเฉพาะ lead', () => {
+  // ใช้ตอนที่ยังไม่มี LINE group id — ทีมต้องไม่ตาบอดระหว่างรอ
+  const tgOnly = { TELEGRAM_BOT_TOKEN: 'b', TELEGRAM_CHAT_ID: '-100', TELEGRAM_NOTIFY_ALL: 'true',
+                   RESEND_API_KEY: 're', LEAD_EMAIL_TO: 'sales@asher.local' }
+  assert.deepEqual(notifyTargets({}, tgOnly).map(t => t.channel), ['telegram'])
+  assert.deepEqual(notifyTargets({ phone: '0812345678' }, tgOnly).map(t => t.channel), ['telegram', 'email'])
+
+  // ค่าอื่นที่ไม่ใช่ 'true' ต้องไม่เปิด — กันพิมพ์ผิดแล้วสแปมทีมโดยไม่ตั้งใจ
+  for (const v of ['false', '1', 'yes', '', undefined]) {
+    assert.deepEqual(notifyTargets({}, { ...tgOnly, TELEGRAM_NOTIFY_ALL: v }).map(t => t.channel), [],
+      `TELEGRAM_NOTIFY_ALL=${v} ไม่ควรเปิด`)
+  }
+
+  // มี LINE ครบแล้วยังใช้ร่วมกันได้ ไม่ตัดทางใดทางหนึ่งทิ้ง
+  const both = { ...tgOnly, LINE_NOTIFY_GROUP_ID: 'C123', LINE_NOTIFY_TOKEN: 't' }
+  assert.deepEqual(notifyTargets({}, both).map(t => t.channel), ['line_group', 'telegram'])
 })
 
 // ── กันพลาดซ้ำ ─────────────────────────────────────────────────────────────
