@@ -76,6 +76,10 @@ test('ตัวตนแยกกัน · คุกกี้ · ออกจา
 
 test('เส้นทาง HTTP บังคับล็อกอินและต้นทาง ส่วน webhook ไม่เกี่ยวกับเซสชัน', async () => {
   const sessionDir = await temp()
+  const messageId = '22222222-2222-2222-2222-222222222222'
+  const mediaPath = `11111111-1111-1111-1111-111111111111/${messageId}.jpg`
+  const media = [{ path: mediaPath, mime: 'image/jpeg', bytes: 5 }]
+  let storageReads = 0
   const upstream = http.createServer(async (req, res) => {
     let raw = ''
     for await (const c of req) raw += c
@@ -87,6 +91,21 @@ test('เส้นทาง HTTP บังคับล็อกอินแล�
     }
     if (req.url.startsWith('/auth/v1/logout')) return res.end('{}')
     const identity = req.headers.authorization?.slice(7)
+    if (req.url === '/rest/v1/rpc/media_of') {
+      assert.equal(req.headers['content-profile'], 'inbox')
+      return res.end(JSON.stringify({ [messageId]: media }))
+    }
+    if (req.url === '/rest/v1/rpc/media_access') {
+      assert.equal(req.headers['content-profile'], 'inbox')
+      return res.end(JSON.stringify(body.p_path === mediaPath && identity === 'a@example.com'))
+    }
+    if (req.url.startsWith('/storage/v1/object/authenticated/inbox-media/')) {
+      assert.equal(identity, 'mock-service')
+      storageReads++
+      res.setHeader('Content-Type', 'image/jpeg')
+      return res.end('image')
+    }
+    if (['detail', 'messages'].includes(body.p_action)) return res.end(JSON.stringify({ messages: [{ id: messageId }] }))
     res.end(JSON.stringify(body.p_action === 'bootstrap' ? { user: { id: identity, email: identity }, projects: [], assignees: [], canned: [] } : []))
   })
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening')
@@ -121,6 +140,23 @@ test('เส้นทาง HTTP บังคับล็อกอินแล�
     const login = await post('/api/login', { email: 'a@example.com', password: 'correct' })
     assert.equal(login.status, 200)
     const cookie = login.headers.get('set-cookie').split(';')[0]
+
+    for (const action of ['detail', 'messages']) {
+      const response = await post('/api/command', { action, data: { id: messageId } }, cookie)
+      assert.equal(response.status, 200)
+      assert.deepEqual((await response.json()).messages[0].media, media)
+    }
+    assert.equal((await fetch(`${base}/media/${mediaPath}`)).status, 401)
+    assert.equal(storageReads, 0)
+    assert.equal((await fetch(`${base}/media/${mediaPath}`, { headers: { authorization: 'Bearer denied-user' } })).status, 403)
+    assert.equal(storageReads, 0)
+    for (const headers of [{ cookie }, { authorization: 'Bearer a@example.com' }]) {
+      const response = await fetch(`${base}/media/${mediaPath}`, { headers })
+      assert.equal(response.status, 200)
+      assert.equal(await response.text(), 'image')
+      assert.equal(response.headers.get('cache-control'), 'private, no-store')
+    }
+    assert.equal(storageReads, 2)
 
     // ★ ข้อพิสูจน์ว่าฐานเห็นคนจริง ไม่ใช่บัญชีกลาง: ตัวตนที่ตอบกลับมาคือ token ของคนที่ล็อกอิน
     const boot = await post('/api/command', { action: 'bootstrap', data: {} }, cookie)

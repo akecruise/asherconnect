@@ -146,7 +146,7 @@ function lineMessageContent(m) {
              attribution: { provider_message_id: m.id, location: { lat: m.latitude ?? null, lng: m.longitude ?? null } } }
   }
   return { content_type: m.type ?? 'unknown', text: `[${m.type ?? 'แนบ'}] ${m.fileName || 'ลูกค้าส่งสื่อแนบ'}`.trim(),
-           attribution: { provider_message_id: m.id } }
+           attribution: { provider_message_id: m.id, ...(m.contentProvider ? { content_provider: m.contentProvider } : {}) } }
 }
 
 function messengerEvents(body, config) {

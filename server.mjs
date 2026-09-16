@@ -23,6 +23,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifySignature, matchesDestination, normalizeWebhook, deliver } from './providers.mjs'
 import { fetchProfile } from './lib/profile.mjs'
+import { mediaTasks, storagePath, enrichMessageMedia, MEDIA_MAX_BYTES } from './lib/media.mjs'
+import { createMediaHandler } from './lib/media-http.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
@@ -649,6 +651,98 @@ async function refreshProfiles() {
   }
 }
 
+// ───────────────────────────────────────────── สื่อแนบ (รูป/วิดีโอ/เสียง/ไฟล์)
+//
+// ของที่ลูกค้าส่งมามีแค่ทางใดทางหนึ่ง: Messenger แถม URL ชั่วคราวมาใน webhook ซึ่งหมดอายุ
+// ภายในไม่กี่ชั่วโมง ส่วน LINE ไม่ให้ URL เลย ต้องเรียก Content API ด้วย token ของ channel นั้นเอง
+// ระบบจึงต้องกาฝากไฟล์มาเก็บที่ Storage ทันทีที่รับเข้า ไม่งั้นสื่อหายตามอายุของ URL
+//
+// ★ ทั้งหมด "ยิงทิ้ง" จาก processInbound — ข้อความลงฐานเสร็จแล้ว และ 200 ตอบ Meta/LINE ไปแล้ว
+//   ความพลาดที่นี่ต้อง log เสมอ (กติกาข้อ 1) แต่ห้ามพาคิวขาเข้าช้าหรือพังด้วย
+//   และเหมือน lib/profile.mjs: ห้าม log token กับ URL ของไฟล์ที่มีของลูกค้า — มีแต่ id กับเหตุผล
+
+const MEDIA_RETRIES = 3
+const MEDIA_TIMEOUT_MS = 30_000
+const MEDIA_GAP_MS = 150        // เว้นจังหวะ — รูปมาหลายก้อนติดกันไม่ควรยิง LINE/Meta รัว ๆ
+
+async function downloadMediaBytes(task, config) {
+  const isLine = task.source === 'line_content'
+  const url = isLine
+    ? `https://api-data.line.me/v2/bot/message/${task.line_message_id}/content`
+    : task.url
+  const headers = isLine ? { Authorization: `Bearer ${config.access_token}` } : undefined
+  for (let attempt = 1; attempt <= MEDIA_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS) })
+      // 403/404 = ของหมดอายุหรือถูกถอดไปแล้ว ยิงซ้ำไม่มีทางดีขึ้น จึงไม่ retry
+      if (response.status === 403 || response.status === 404) {
+        log.warn('media_unreachable', { message_id: task.message_id, status: response.status })
+        return null
+      }
+      if (!response.ok) throw new Error(`http_${response.status}`)
+      const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase() || 'application/octet-stream'
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (!bytes.length) throw new Error('empty_body')
+      if (bytes.length > MEDIA_MAX_BYTES) {
+        log.warn('media_too_large', { message_id: task.message_id, bytes: bytes.length })
+        return null
+      }
+      return { bytes, type }
+    } catch (e) {
+      if (attempt === MEDIA_RETRIES) {
+        log.warn('media_download_failed', { message_id: task.message_id, source: task.source, attempts: attempt, reason: e.message })
+        return null
+      }
+      await new Promise(r => setTimeout(r, 800 * attempt * attempt))
+    }
+  }
+}
+
+async function uploadMediaObject(path, { bytes, type }) {
+  const response = await fetch(`${upstream}/storage/v1/object/inbox-media/${path}`, {
+    method: 'POST',
+    headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': type, 'x-upsert': 'true' },
+    body: bytes,
+    signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
+  })
+  if (!response.ok) throw new Error(`storage_${response.status}`)
+}
+
+async function syncMedia(config, events, received) {
+  const jobs = events.flatMap((event, i) => mediaTasks(event, received[i]))
+  if (!jobs.length) return
+  log.info('media_sync_started', { channel: config.key, count: jobs.length })
+  // ข้อความเดียวมีหลายไฟล์ได้ (Messenger) — สะสมผลต่อ message_id แล้วค่อยผูกกับข้อความครั้งเดียว
+  const byMessage = new Map()
+  const order = new Map()
+  for (const task of jobs) {
+    const n = (order.get(task.message_id) ?? 0) + 1
+    order.set(task.message_id, n)
+    try {
+      const got = await downloadMediaBytes(task, config)
+      if (!got) continue
+      const path = storagePath(config.inbox_id, task.message_id, n, got.type)
+      await uploadMediaObject(path, got)
+      const media = byMessage.get(task.message_id) ?? []
+      media.push({ path, mime: got.type, bytes: got.bytes.length })
+      byMessage.set(task.message_id, media)
+      log.info('media_stored', { message_id: task.message_id, path })
+    } catch (e) {
+      log.warn('media_store_failed', { message_id: task.message_id, reason: e.message })
+    }
+    await new Promise(r => setTimeout(r, MEDIA_GAP_MS))
+  }
+  for (const [messageId, media] of byMessage) {
+    try {
+      const attached = await rpcDirect(service, 'media_attach', { p_message_id: messageId, p_media: media })
+      // false = ไม่พบข้อความ (เช่นโดน purge ระหว่างทาง) — ไฟล์บน Storage คงอยู่เป็นขยะ ไม่ใช่ความเสียหาย
+      if (!attached) log.warn('media_attach_missed', { message_id: messageId })
+    } catch (e) {
+      log.warn('media_attach_failed', { message_id: messageId, reason: e.message })
+    }
+  }
+}
+
 async function processInbound(job) {
   const config = activeChannels.find(c => c.key === job.channel_key)
   const finish = body => rpc(service, 'finish_inbound', { log_id: job.id, lease_id: job.lease_id, ...body }, true)
@@ -659,13 +753,18 @@ async function processInbound(job) {
 
   try {
     const events = normalizeWebhook(config.channel, job.payload, config)
-    for (const event of events) await rpc(service, 'receive', event, true)
+    const received = []
+    for (const event of events) received.push(await rpc(service, 'receive', event, true))
     await finish({ status: 'done', events_count: events.length })
     log.info('webhook_processed', { channel: job.channel_key, log_id: job.id, events: events.length })
     // ★ ยิงทิ้งไว้ ไม่ await — ข้อความลงฐานเสร็จไปแล้ว โปรไฟล์เป็นของแถมที่ขาดได้
     //   ถ้า await ตรงนี้ คิวขาเข้าจะช้าลงตามเวลาที่ LINE/Meta ตอบ และถ้า API ล่ม คิวจะตัน
     syncProfiles(config, events).catch(e =>
       log.warn('profile_sync_failed', { channel: job.channel_key, reason: e.message }))
+    // ★ สื่อแนบยิงทิ้งด้วยหลักเดียวกัน — เก็บช้าลงหนึ่งรอบยังทันก่อน URL หมดอายุ
+    //   แต่ห้ามให้การดาวน์โหลดพาคิวขาเข้าไปด้วย
+    syncMedia(config, events, received)
+      .catch(e => log.warn('media_sync_failed', { channel: job.channel_key, reason: e.message }))
   } catch (e) {
     log.warn('webhook_processing_failed', { channel: job.channel_key, log_id: job.id, reason: e.message })
     await finish({ status: 'failed', error: e.message })
@@ -938,6 +1037,13 @@ async function handleCommand(req, res) {
 
   const data = await rpc(accessToken, input.action, input.data)
 
+  // ท่อรูป: media เก็บที่คอลัมน์ inbox.message.media โดยไม่แตะ connect_private.api
+  // (เหตุผลใน sql/037) — ตรงนี้จึงเติมเข้าคำตอบของ detail ก่อนส่งกลับหน้าจอ
+  // ถ้าอ่านแผนที่ไม่สำเร็จให้ข้ามไป หน้าจอต้องยังเปิดได้ ขาดได้แค่รูป
+  await enrichMessageMedia(input.action, data, input.data?.id, id =>
+    rpcDirect(accessToken, 'media_of', { p_conversation_id: id })
+      .catch(e => { log.warn('media_lookup_failed', { reason: e.message }); return null }))
+
   if (input.action === 'bootstrap') {
     data.channels = await channelStates()
   }
@@ -973,6 +1079,16 @@ async function handleStatic(req, res, url) {
   res.end(req.method === 'HEAD' ? undefined : data)
 }
 
+// รูป/ไฟล์ที่ท่อสื่อแนบเก็บไว้ — เสิร์ฟผ่านตัวเองเพื่อคุมสิทธิ์ด้วยเซสชันเดียวกับหน้าจอ
+// bucket เป็น private และห้ามให้เบราว์เซอร์คุยกับ Storage ตรง ๆ จึงส่งผ่านตรงนี้
+const handleMedia = createMediaHandler({
+  sessions, rpcDirect, fail,
+  fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+    headers: { apikey: anon, Authorization: `Bearer ${service}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  }),
+})
+
 async function route(req, res, url) {
   if (url.pathname === '/health' && req.method === 'GET') {
     const state = health()
@@ -988,6 +1104,8 @@ async function route(req, res, url) {
     if (url.pathname !== '/api/command') throw fail(404, 'not_found')
     return handleCommand(req, res)
   }
+
+  if (url.pathname.startsWith('/media/')) return handleMedia(req, res, url)
 
   return handleStatic(req, res, url)
 }

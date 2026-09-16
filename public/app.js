@@ -300,7 +300,46 @@ function renderList(){
   }
   if(!items.length)$('conversations').append(text('p','ไม่พบเคสในรายการนี้','muted'))
 }
-function renderMessages(messages,prepend=false){if(!prepend)$('messages').replaceChildren();const fragment=document.createDocumentFragment();for(const m of messages){const b=text('div',m.content,'bubble'+(m.sender_type==='agent'?' out':m.sender_type==='bot'?' bot':''));const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':'';b.append(text('small',date(m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''));if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}fragment.append(b)}if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment);$('older').hidden=messages.length<100}
+// ชนิดข้อความที่ปกติต้องมีสื่อแนบ — เจอแบบนี้แต่ไม่มี media แปลว่าเป็นของเก่าก่อนท่อรูป (sql/037)
+// สื่อของเก่าหายไปตามอายุ URL ของฝั่งผู้ให้บริการ กู้คืนไม่ได้ จึงแสดงป้ายแทนรูปให้ชัด
+const MEDIA_TYPES = new Set(['attachment', 'image', 'video', 'audio', 'file'])
+const mediaChip = label => text('span', label, 'media-miss')
+function renderMessages(messages,prepend=false){
+  if(!prepend)$('messages').replaceChildren()
+  const fragment=document.createDocumentFragment()
+  for(const m of messages){
+    const b=text('div','','bubble'+(m.sender_type==='agent'?' out':m.sender_type==='bot'?' bot':''))
+    const files=Array.isArray(m.media)?m.media:[]
+    if(files.length){
+      for(const f of files){
+        if(/^image\//.test(f.mime||'')){
+          const img=document.createElement('img')
+          img.className='media-img';img.loading='lazy';img.alt='[รูปแนบ]'
+          img.addEventListener('error',()=>img.replaceWith(mediaChip('[รูปเปิดไม่ได้]')))
+          img.src='/media/'+f.path
+          b.append(img)
+        }else{
+          const a=document.createElement('a')
+          a.className='media-file';a.href='/media/'+f.path;a.target='_blank';a.rel='noopener'
+          a.textContent='[ไฟล์แนบ · '+(f.mime||'ไม่ทราบชนิด')+']'
+          b.append(a)
+        }
+      }
+      // คำพูดของลูกค้าที่พิมพ์มากับรูป — ข้อความใน [ ] เป็นป้ายของระบบ ไม่ใช่คำพูด
+      if(m.content&&!m.content.startsWith('['))b.append(text('p',m.content,'media-caption'))
+    }else if(MEDIA_TYPES.has(m.content_type||'')){
+      b.append(mediaChip('[รูป/ไฟล์แนบยังไม่พร้อม]'))
+    }else{
+      b.append(document.createTextNode(m.content))
+    }
+    const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':''
+    b.append(text('small',date(m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
+    if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}
+    fragment.append(b)
+  }
+  if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment)
+  $('older').hidden=messages.length<100
+}
 async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight}
 // รูปกับโครงการบนหัวแชท — รูปเอาจากแถวในรายการก่อน (ที่นั่นมี picture_url แน่นอน)
 // แล้วค่อยถอยไปหาของใน detail เผื่อเปิดเคสที่ยังไม่อยู่ในรายการหน้านี้
