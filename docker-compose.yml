@@ -11,6 +11,9 @@ services:
       CONNECT_CHANNELS_FILE: /run/connect/channels.json
     volumes:
       - ./channels.json:/run/connect/channels.json:ro
+      # เซสชันของคนที่ล็อกอินอยู่ — ต้องอยู่นอก container ไม่งั้น deploy ครั้งเดียว
+      # = เซลส์ทั้งออฟฟิศถูกเด้งออกกลางคันพร้อมกัน รวมทั้งคนที่กำลังพิมพ์ตอบลูกค้าค้างอยู่
+      - connect-sessions:/app/.sessions
 
     # ── เพดานหน่วยความจำ ──────────────────────────────────────────────────
     # เครื่องนี้รัน Supabase ทั้งสแตกอยู่ด้วย ถ้าตัวนี้รั่วแล้วกินไม่หยุด
@@ -40,3 +43,5 @@ services:
 networks:
   supabase_default:
     external: true
+volumes:
+  connect-sessions:
