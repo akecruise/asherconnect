@@ -22,6 +22,28 @@
 
 begin;
 
+-- ── guard: ห้ามย้อนรุ่น inbox.refresh_sales_staff_kpi_daily ───────────
+-- ★ ไฟล์นี้ create or replace refresh_sales_staff_kpi_daily ด้วย ทั้งที่
+--   sql/011_cloud_functions.sql เป็นเจ้าของรุ่นล่าสุดตาม ORDER.txt
+--   เกิดจริงแล้ว 2026-09-16: รัน 009 ทั้งไฟล์ (งาน is_test) แล้วรุ่นของ 011
+--   ที่ delegate ให้ inbox.reply_stats() ถูกทับเงียบ ๆ กลับไปเป็นสูตรคำนวณเอง
+--   ผลตัวเลขเท่ากันก็จริง แต่กลายเป็นสูตรสองที่ที่ต้องแก้พร้อมกันตลอดไป
+--
+-- ★ ถ้าคุณตั้งใจจะรัน 009 ซ้ำ (เช่น แก้ตัวรายงานให้ไม่นับแชททดสอบ):
+--   ให้รัน sql/034_kpi_refresh_resync.sql ต่อทันทีหลังจากนั้น แล้ว guard นี้จะผ่านเอง
+--   หรือลบ/คอมเมนต์นิยาม refresh_sales_staff_kpi_daily ในไฟล์นี้ทิ้ง
+--   (พร้อมย้าย grant บรรทัด 260/263 ไปไว้กับ 011) เพื่อให้เหลือเจ้าของเดียวถาวร
+do $guard$
+begin
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'inbox' and p.proname = 'refresh_sales_staff_kpi_daily'
+                and strpos(pg_get_functiondef(p.oid), 'reply_stats') > 0)
+  then
+    raise exception 'ฐานนี้มี inbox.refresh_sales_staff_kpi_daily รุ่นที่ delegate ให้ inbox.reply_stats (sql/011 + 034) อยู่แล้ว — ไฟล์นี้จะทับกลับเป็นสูตรคำนวณเองของ 009 จึงหยุดก่อนที่จะมีอะไร commit. ถ้าตั้งใจรัน 009 ซ้ำจริง ให้รัน sql/034_kpi_refresh_resync.sql ต่อทันที';
+  end if;
+end $guard$;
+
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- 1) สถิติรายคนต่อวัน — เก็บไว้เพื่อไม่ต้องคำนวณย้อนหลังใหม่ทุกครั้ง
 -- ───────────────────────────────────────────────────────────────────────────

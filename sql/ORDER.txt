@@ -1,0 +1,118 @@
+# =====================================================================
+# ลำดับการรันไฟล์ใน sql/ — แหล่งความจริงเดียว
+# =====================================================================
+# ★ เลขนำหน้าชื่อไฟล์ไม่ใช่ลำดับ — มี 022 / 023 / 024 อย่างละสองไฟล์
+#   เพราะถูกตั้งเลขทับของที่ใช้ไปแล้ว ลำดับจริงอยู่ในไฟล์นี้เท่านั้น
+#
+# กฎของไฟล์ใหม่: ตั้งชื่อ YYYYMMDDHHMM_ชื่องาน.sql (ชนกันไม่ได้ เรียงถูกเสมอ
+#   ตรงกับที่ migrations/20260914-shadow-replay.sql ใช้อยู่แล้ว) แล้วต่อท้ายไฟล์นี้
+#
+# ตรวจก่อนรันเสมอ:  node sql/run.mjs check
+# =====================================================================
+
+_ledger.sql
+
+# ── ชุดที่ลง VPS แล้วเมื่อ 2026-09-14 — เรียงตามเลข ตามที่รันจริง ──
+# ★ 001 มี guard ว่าต้องมี bot.webhook_log ก่อน ลำดับช่วงนี้ห้ามสลับ
+001_bot_schema.sql
+002_decide.sql
+003_job_worker.sql
+004_bot_switch.sql
+005_line.sql
+006_receive_line.sql
+007_line_wiring.sql
+008_human_reply_signal.sql
+009_report.sql
+010_report_api.sql
+011_cloud_functions.sql
+012_report_weekly_sla.sql
+013_conversation_outcomes.sql
+014_fix_extract_phone.sql
+
+# ── ชุดที่ทำหลังจากนั้น ──
+015_bot_switch_admin_only.sql
+
+# ── ชั้น stats + capture (ยังไม่ได้ลง VPS ณ 2026-09-15) ──
+016_stats_schema.sql
+017_stats_functions.sql
+018_stats_api.sql
+019_stats_seed_cron.sql
+020_capture_layer.sql
+# ★ 021 นิยาม purge_channel_events ทับของ 020 โดยตั้งใจ (ชื่อและลายเซ็นเดียวกัน)
+#   สลับลำดับเมื่อไหร่จะได้ตัวที่ไม่อ่าน retention_policy โดยไม่มีอะไรฟ้อง
+#   — บันทึกไว้แล้วที่ tests/stats/run.mjs:25
+021_outbox.sql
+
+# ── ตั้งแต่นี้ไปเรียงตามเวลาที่เขียนจริง ไม่ใช่ตามเลข ──
+# ★ สี่ไฟล์ข้างล่างนี้ต่างก็ create or replace connect_private.api ทั้งก้อน
+#   ตัวที่รันทีหลังชนะเสมอ ลำดับจึงห้ามสลับเด็ดขาด:
+#     022_send_mode_switch -> 024_case_status_api
+#     -> 025_reply_without_claim -> 026_contact_external_id
+#   (run.mjs พิมพ์รายการนี้ให้ดูทุกครั้งที่รัน ไม่ต้องจำเอง)
+022_send_mode_switch.sql
+# 023_sla_case_status สร้าง view inbox.case_status ที่ 024_case_status_api ใช้
+023_sla_case_status.sql
+024_case_status_api.sql
+022_contact_profile_sync.sql
+023_channel_health.sql
+025_reply_without_claim.sql
+024_queue_counts.sql
+026_contact_external_id.sql
+
+# ── หน้าสถิติการตอบ (2026-09-15) ──
+# ★ 027 เขียนทับ stats_overview/agents/timeline/open_windows/scope ของ 018
+#   โดยตั้งใจ — เป็นการยกด่านสิทธิ์เป็น manager และเพิ่มตัวกรอง/คะแนน
+#   run.mjs จะขึ้นว่า [ทับเฉย ๆ] ซึ่งถูกแล้ว ไม่ต้อง drop ก่อนเพราะลายเซ็นเท่าเดิม
+#   ★ ต้องอยู่หลัง 023 เสมอ — อ่าน inbox.settings / setting_int / setting_time / sla_elapsed_minutes จาก 023
+027_stats_v2.sql
+
+# ★ 028 เปลี่ยนพฤติกรรมของระบบที่รันอยู่ (ตั้ง pg_cron 3 งาน)
+#   ลงเมื่อพร้อมให้ตัวเลขเริ่มเดินจริงเท่านั้น — ไม่ได้แตะ cron ของระบบเก่า (011)
+#   สองระบบเดินขนานกันก่อน แล้วค่อยตัดสินใจ cutover แยกต่างหาก
+028_stats_cron.sql
+
+# ── ของที่ลงฐานไปแล้วแต่ตกหล่นจากทะเบียน (เติมย้อนหลัง 2026-09-16) ──
+# run.mjs check ฟ้องว่าสามไฟล์นี้อยู่บนดิสก์แต่ไม่มีใครสั่งให้รัน
+# ทั้งสามมีของอยู่บนโปรดักชันแล้ว (ตรวจจากวัตถุจริง ไม่ได้เชื่อชื่อไฟล์)
+029_logs_api.sql
+030_policy_log.sql
+
+# ★ 031 คือคำสั่ง "test" ที่ทีมใช้รีเซ็ตแชททดสอบ — เป็นงานของ agent อีกตัว
+#   ให้ inbox.conversation.is_test + connect_private.reset_test_conversation()
+#   ★ กิ่ง worker ที่เรียกฟังก์ชันนี้ (action 'reset_test') ไม่ได้อยู่ในไฟล์นี้
+#     แต่อยู่ใน 032 — ถ้าลง 031 อย่างเดียวคำสั่ง test จะยังไม่ทำงาน
+031_test_reset.sql
+
+# ── กู้นิยามที่ถูกรันทับ (2026-09-16) ──
+# ★ 032 ต้องอยู่ "ท้ายสุด" ของทุกไฟล์ที่แตะ connect_private.worker เสมอ
+#   002/003/004/007/008 ต่างก็ create or replace worker ทั้งก้อน ตัวที่รันทีหลังชนะ
+#   เหตุจริง: 2026-09-16 มีการรัน 002 ทั้งไฟล์ใส่โปรดักชันอีกครั้ง worker เหลือ
+#   8 จาก 21 action → ตัวส่งข้อความหาลูกค้าตายทั้งระบบ
+#   ทั้งห้าไฟล์นั้นมี guard แล้ว: ถ้าฐานมี worker รุ่น 032 อยู่จะหยุดดัง ๆ ไม่เงียบอีก
+# ★ 032 รวม action ที่กระจายอยู่หลายที่ไว้ที่เดียว 21 กิ่ง — รวมทั้งสี่ profile_*
+#   ที่ต้นฉบับอยู่ใน repo asher-web (20260915150000/160000/180000) ไม่เคยอยู่ใน sql/ นี้
+#   และ reset_test ที่ไฟล์ของ asher-web ทำหายไปแล้วตั้งแต่ 2026-09-15
+032_worker_resync.sql
+
+# ★ 033 ยังไม่ได้ลงโปรดักชัน (รออนุมัติ) — กู้อีกสองชิ้นที่ 002 พาย้อนรุ่นไปด้วย
+#   connect_private.receive_event (กิ่ง group_command + reply_token + ad) จาก 006
+#   inbox.extract_phone (วงเล็บนอกสุดของ regex) จาก 014
+033_receive_event_resync.sql
+
+# ★ 034 คืน inbox.refresh_sales_staff_kpi_daily ให้เป็นรุ่นของ 011 (delegate ให้ reply_stats)
+#   ที่ถูก 009 รันทับเมื่อ 2026-09-16 — ผลตัวเลขเท่ากันทุกช่อง พิสูจน์แล้วก่อนลง
+#   ★ ต้องอยู่หลัง 009 และหลัง 011 เสมอ · 009 มี guard กันทับซ้ำแล้ว
+034_kpi_refresh_resync.sql
+
+# ★ 035 กิ่ง echo ของ Messenger: รู้ว่าใครส่ง (bot/workspace/page_inbox/other_app)
+#   กันข้อความของเราเองเด้งกลับมาเป็นแถวที่สอง และให้เครดิตคนตอบจาก team.signatures
+#   ★ ต้องอยู่หลัง 033 เสมอ — ไฟล์นี้ประกอบจากนิยาม receive_event รุ่น 033
+#     และมีด่านตรวจในตัวว่าฐานต้องมีกิ่ง group_command อยู่แล้วถึงจะยอมลง
+035_echo_attribution.sql
+
+# ★ 036 สลับลำดับการตัดสิน source ในกิ่ง echo ให้เชื่อคิวขาออก (mid) ก่อน app_id
+#   เหตุ: echo ของข้อความที่เราส่งเอง 8 ก้อนบนโปรดักชันมาด้วย app_id สองค่า
+#   (946246731840651 ห้าก้อน · 1905070200457329 สามก้อน) — app_id จึงเชื่อไม่ได้ทั้งหมด
+#   ★ ต้องอยู่หลัง 035 · มีด่านตรวจในตัวว่าฐานต้องเป็นรุ่น 035 ก่อน
+036_echo_source_from_queue.sql
+

@@ -16,6 +16,50 @@
 
 begin;
 
+-- ── guard: ห้ามย้อนรุ่นของที่ไฟล์หลัง ๆ เป็นเจ้าของ ─────────────────────
+-- ★ วางไว้เป็น "คำสั่งแรกหลัง begin; ของ transaction แรก" โดยตั้งใจ
+--   ไฟล์นี้มีได้หลาย transaction — ถ้า guard อยู่ใน transaction ท้าย ๆ
+--   transaction แรกจะ commit ไปแล้วก่อนที่ guard จะทัน raise
+--   (เกิดจริง 2026-09-16: guard รุ่นแรกอยู่ใน tx ที่สองของ sql/002
+--    ซึ่งกัน worker ได้ แต่ receive_event/extract_phone ใน tx แรกยังหลุด)
+--
+-- ★ เหตุที่ต้องมี: 2026-09-16 ราว 04:21 UTC มีการรัน sql/002_decide.sql
+--   ทั้งไฟล์ใส่โปรดักชัน สามชิ้นที่ไฟล์หลัง ๆ เป็นเจ้าของรุ่นล่าสุดถูกย้อนรุ่น
+--   เงียบ ๆ ไม่มีอะไรฟ้อง:
+--     connect_private.worker        เหลือ 8 จาก 21 action → ส่งข้อความหาลูกค้าไม่ได้ 37 นาที
+--     connect_private.receive_event กิ่ง group_command หาย → คำสั่งในกลุ่ม LINE ตาย
+--     inbox.extract_phone           เสีย fix ของ 014 → จับเบอร์ลูกค้าไม่ได้
+--   รายละเอียดทั้งหมดอยู่ใน sql/032_worker_resync.sql และ sql/033_receive_event_resync.sql
+do $guard$
+declare v_newer text[] := '{}';
+begin
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'connect_private' and p.proname = 'worker'
+                and strpos(pg_get_functiondef(p.oid), 'profile_refresh_due') > 0)
+    then v_newer := v_newer || 'connect_private.worker รุ่น 032 (21 action)'::text; end if;
+
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'connect_private' and p.proname = 'receive_event'
+                and strpos(pg_get_functiondef(p.oid), 'group_command') > 0)
+    then v_newer := v_newer || 'connect_private.receive_event มีกิ่ง group_command (sql/006 ขึ้นไป)'::text; end if;
+
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'connect_private' and p.proname = 'receive_event'
+                and strpos(pg_get_functiondef(p.oid), 'is_test') > 0)
+    then v_newer := v_newer || 'connect_private.receive_event มีธง is_test (sql/031 + 033)'::text; end if;
+
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+              where n.nspname = 'inbox' and p.proname = 'extract_phone'
+                and strpos(pg_get_functiondef(p.oid), 'วงเล็บนอกสุดครอบทั้งก้อน') > 0)
+    then v_newer := v_newer || 'inbox.extract_phone รุ่น 014 (วงเล็บนอกสุด)'::text; end if;
+
+  if array_length(v_newer, 1) > 0 then
+    raise exception 'ฐานนี้มีรุ่นที่ใหม่กว่าไฟล์นี้อยู่แล้ว: % — ไฟล์นี้จะทำของหายเงียบ ๆ จึงหยุดก่อนที่จะมีอะไร commit. ถ้าต้องลงใหม่ทั้งชุด ให้ไล่ตาม sql/ORDER.txt ตั้งแต่ต้นจนจบ (032/033 อยู่ท้ายสุด) ห้ามหยุดกลางทาง',
+      array_to_string(v_newer, ' · ');
+  end if;
+end $guard$;
+
+
 CREATE OR REPLACE FUNCTION connect_private.worker(p_action text, p_data jsonb DEFAULT '{}'::jsonb)
  RETURNS jsonb
  LANGUAGE plpgsql
