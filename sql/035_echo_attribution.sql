@@ -1,0 +1,488 @@
+-- =====================================================================
+-- 035_echo_attribution.sql — echo ของ Messenger: รู้ว่าใครส่ง และไม่นับซ้ำ
+-- =====================================================================
+-- ปัญหาที่แก้ (ทั้งสี่ข้อวัดจากของจริงบนโปรดักชัน ไม่ได้เดา)
+--
+-- 1. ★ บอทปิดปากตัวเอง
+--    กิ่ง echo เดิมตัดสินสองทางด้วย app_id = inbox.cfg_text('team.bot_app_id','')
+--    แต่คีย์นั้น "ไม่เคยถูกตั้งค่าเลย" ในทุก inbox → เทียบกับค่าว่างจึงไม่มีทางตรง
+--    → echo ของบอทเองถูกป้ายเป็น 'agent' → เรียก mark_human_reply()
+--    → last_human_reply_at ขึ้น → decide_reply เห็น human_owns_convo
+--    → บอทตอบได้ครั้งเดียวแล้วเงียบถาวรในแชทนั้น
+--    ไฟล์นี้หว่าน team.bot_app_id = 946246731840651 (แอป "Asher Bot") ให้ inbox
+--    ช่องทาง messenger ทุกใบ ด้วย on conflict do nothing (ไม่ทับค่าที่คนตั้งเอง)
+--
+-- 2. ★ ทุกข้อความที่แอปเราส่ง ขึ้นซ้ำสองแถว
+--    ของจริง 2026-09-15 14:28-14:29 ทุกข้อความของเรามีแถวคู่ห่างกัน ~1 วินาที
+--    แถวแรก external_message_id ว่าง (ของเราเอง) แถวสองมี mid (echo เด้งกลับ)
+--    unique index (conversation_id, external_message_id) ช่วยไม่ได้เพราะข้างหนึ่งเป็น NULL
+--    ไฟล์นี้กันสองชั้น:
+--      ชั้น A  mid ของ echo = connect_private.delivery.provider_id ที่ตัวส่งบันทึกไว้
+--      ชั้น B  เผื่อ echo มาถึงก่อนตัวส่งจะบันทึก provider_id (แข่งกันได้จริง)
+--             จับคู่ด้วย app_id ของแอปเรา + เนื้อความตรงกัน + ในหน้าต่าง
+--             echo.self_match_window_min (ตั้งต้น 10 นาที)
+--    เจอแล้วจะ "ผูก mid กลับเข้าแถวเดิม" ไม่สร้างแถวใหม่ และไม่นับว่าคนตอบ
+--
+-- 3. ★ แยกที่มาให้ละเอียดกว่าเดิม  bot / workspace / page_inbox / other_app
+--    ของจริงที่นับได้จาก connect_private.webhook_log (29 ก้อน echo):
+--      263902037430900  21 ก้อน  Page Inbox / Business Suite ของ Meta
+--      946246731840651   5 ก้อน  แอปเราเอง
+--      1905070200457329  3 ก้อน  เครื่องมือ Meta อีกตัว
+--    ★ ไม่มี echo ก้อนไหนที่ app_id ว่างเลยสักก้อน — คอมเมนต์ใน providers.mjs
+--      ที่เขียนว่า "ไม่มี app_id = ส่งจากหน้า Page Inbox โดยตรง" จึงไม่ตรงกับของจริง
+--      (เสนอ diff แก้คอมเมนต์ไว้ในรายงาน ไม่ได้แก้ในไฟล์นี้)
+--    ทะเบียนแอปของ Page Inbox อยู่ที่คีย์ team.page_inbox_app_ids แก้ได้โดยไม่ต้อง deploy
+--
+-- 4. ★ ให้เครดิตคนตอบจากลายเซ็นท้ายข้อความ (team.signatures)
+--    คอนฟิกนี้ถูก seed_bot_defaults หว่านไว้ตั้งแต่แรกแต่ "ยังไม่มีใครใช้เลย"
+--    (ตรวจแล้ว: ไม่มีฟังก์ชันหรือโค้ดแอปตัวไหนอ่านคีย์นี้) ที่นี่คือที่แรก
+--    ★ inbox.sales_staff ตอนนี้ว่าง 0 แถว — จึงบันทึกได้แค่ "ชื่อ" ลง
+--      inbox.human_reply_events.note ส่วน sender_id ยังว่างจนกว่าจะมีคนลงทะเบียน
+--      พร้อม user_id (รายงาน reply_episodes/reply_stats join ด้วย sales_staff.user_id)
+--      → ดูหัวข้อ "สิ่งที่ต้องตัดสิน" ในรายงาน
+--
+-- SLA: ไม่ต้องแก้อะไร — inbox.reply_episodes นับจาก sender_type in ('agent','bot')
+--      แถว echo จึงเข้า SLA อยู่แล้ว ที่ 035 เพิ่มคือ "ซ้ำน้อยลง" กับ "รู้ว่าใครตอบ"
+--
+-- ★ สิ่งที่ไฟล์นี้ตั้งใจไม่ทำ
+--   · ไม่แตะ trigger ขาออก และไม่มีใครใส่แถวลง connect_private.delivery เพิ่ม
+--     (เจ้าของคิวขาออกยังมีรายเดียวคือ inbox.enqueue_outbound)
+--   · ไม่ส่งข้อความหาลูกค้า ไม่สร้างงานแจ้งเตือนย้อนหลัง
+--   · ไม่แก้ข้อมูลเก่า — แถวซ้ำและป้ายผิดที่เกิดไปแล้วอยู่ในไฟล์ซ้อมที่
+--     sql/_backfill/20260916_echo_duplicates.sql (ซ้อมแล้ว ยังไม่ลง)
+--
+-- ประกอบจากนิยาม receive_event ที่อยู่บนโปรดักชัน ณ 2026-09-16 06:0x UTC
+-- (รุ่นที่ 033 ลงไว้) สำรองไว้ที่ sql/_backup/receive_event_prod_20260916_pre035.sql
+-- กิ่งอื่นทั้งหมดไม่ถูกแตะ — group_command / reply_token / follow / ad / is_test
+-- ยังอยู่ครบเท่าเดิม (นับ marker ก่อน-หลังแล้วเท่ากัน)
+-- =====================================================================
+
+begin;
+
+-- ── ด่านตรวจของที่ต้องมีก่อน ─────────────────────────────────────────
+do $dep$
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'connect_private' and table_name = 'delivery'
+                    and column_name = 'provider_id')
+  then raise exception 'ไม่พบ connect_private.delivery.provider_id — ชั้นกันซ้ำด้วย mid ทำงานไม่ได้'; end if;
+
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'connect_private' and p.proname = 'mark_human_reply'
+                    and pg_get_function_arguments(p.oid) like '%p_note%')
+  then raise exception 'connect_private.mark_human_reply ไม่มีอาร์กิวเมนต์ p_note — ต้องลง sql/008 ขึ้นไปก่อน'; end if;
+
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'connect_private' and p.proname = 'receive_event'
+                    and strpos(pg_get_functiondef(p.oid), 'group_command') > 0)
+  then raise exception 'receive_event บนฐานยังไม่ใช่รุ่น 033 (ไม่มีกิ่ง group_command) — ต้องลง sql/033 ก่อน ไม่งั้น 035 จะพากลับไปเป็นรุ่นเก่า'; end if;
+end $dep$;
+
+-- ── ขยายค่าที่ human_reply_events.source รับได้ ────────────────────────
+-- เดิม sql/005_line.sql จำกัดไว้ 4 ค่า (workspace/echo/group_cmd/api)
+-- ตอนนั้นยังแยกไม่ได้ว่าคนตอบมาจากไหน จึงเหมาว่า 'echo' ทั้งหมด
+-- ★ คง 'echo' ไว้ ไม่ลบทิ้ง — 29 แถวเดิมบนโปรดักชันใช้ค่านี้ และแถวเก่า
+--   ก็แยกที่มาไม่ได้จริง ๆ การไปไล่เปลี่ยนย้อนหลังจะเป็นการเดาแทนข้อมูล
+alter table inbox.human_reply_events drop constraint if exists human_reply_events_source_check;
+alter table inbox.human_reply_events add constraint human_reply_events_source_check
+  check (source in ('workspace','echo','group_cmd','api','page_inbox','other_app'));
+
+-- ── คอนฟิกที่กิ่งใหม่ใช้ ─────────────────────────────────────────────
+-- ★ on conflict do nothing ทุกบรรทัด — ค่าที่คนตั้งไว้เองสำคัญกว่าค่าตั้งต้นเสมอ
+--   (เหตุผลเดียวกับ send.live_enabled ใน sql/022)
+insert into inbox.bot_config(inbox_id, key, value, note)
+select i.id, 'team.bot_app_id', to_jsonb('946246731840651'::text),
+       'app id ของแอป Asher Bot — echo ที่มี app_id นี้คือของแอปเราเอง ไม่ใช่คนตอบ'
+  from inbox.inbox i where i.channel = 'messenger' and i.is_active
+on conflict (inbox_id, key) do nothing;
+
+insert into inbox.bot_config(inbox_id, key, value, note)
+select i.id, 'team.page_inbox_app_ids', to_jsonb('263902037430900'::text),
+       'ทะเบียน app id ของ Page Inbox / Business Suite (คั่นด้วยจุลภาคได้) — นอกทะเบียนนับเป็น other_app'
+  from inbox.inbox i where i.channel = 'messenger' and i.is_active
+on conflict (inbox_id, key) do nothing;
+
+insert into inbox.bot_config(inbox_id, key, value, note)
+select i.id, 'echo.self_match_window_min', to_jsonb(10),
+       'หน้าต่างจับคู่ echo ของแอปเราเองตอน mid ยังไม่ทันถูกบันทึกลงคิว (นาที)'
+  from inbox.inbox i where i.channel = 'messenger' and i.is_active
+on conflict (inbox_id, key) do nothing;
+
+CREATE OR REPLACE FUNCTION connect_private.receive_event(p_data jsonb, p_now timestamp with time zone, p_jitter integer DEFAULT 0)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+declare
+  v_inbox inbox.inbox; v_contact uuid; v_id uuid; v_message uuid; v_lead uuid;
+  v_event_type text; v_time timestamptz; v_text text; v_has_text boolean;
+  v_is_new boolean; v_convo inbox.conversation; v_prev_count int;
+  v_ctx jsonb; v_decision jsonb; v_reply jsonb; v_notify jsonb;
+  v_phone text; v_line text; v_repeat boolean; v_last_page timestamptz;
+  v_unanswered double precision; v_sender text; v_app_id text; v_cancelled int := 0;
+  v_delay int; v_action text; v_decision_id bigint; v_topic text;
+  v_cmd jsonb; v_ad jsonb; v_ad_id text; v_welcome text;
+  -- ★ เพิ่มใน 035: แยกที่มาของ echo และกันข้อความของเราเองซ้ำ
+  v_bot_app text; v_is_ours boolean; v_own uuid; v_source text;
+  v_who text; v_staff uuid; v_staff_user uuid;
+begin
+  select * into v_inbox from inbox.inbox where id = (p_data->>'inbox_id')::uuid and is_active;
+  if not found then raise exception 'channel_not_configured'; end if;
+  if coalesce(p_data->>'event_id','') = '' then raise exception 'invalid_event'; end if;
+
+  v_event_type := coalesce(p_data->>'event_type', 'message');
+  if v_event_type not in ('message','postback','follow','unfollow','echo','group_command') then
+    v_event_type := 'other';
+  end if;
+
+  -- ── ด่านกันซ้ำ ครอบทุกชนิดรวมทั้งคำสั่งในกลุ่ม
+  -- LINE ยิงซ้ำได้ ถ้าไม่กัน คำสั่ง "ตอบแล้ว" จะถูกทำสองรอบ (ไม่เสียหาย แต่ log จะโกหก)
+  insert into connect_private.inbound_event(inbox_id, event_id, event_type)
+  values (v_inbox.id, p_data->>'event_id',
+          case when v_event_type in ('echo','group_command') then 'other' else v_event_type end)
+  on conflict do nothing;
+  if not found then return jsonb_build_object('duplicate', true); end if;
+
+  -- ── คำสั่งในกลุ่ม: ไม่มีลูกค้า ไม่มีบทสนทนา ไม่แตะ contact เลย
+  if v_event_type = 'group_command' then
+    v_cmd := connect_private.group_command(v_inbox.id, p_data->>'group_id', p_data->>'external_id',
+                                           p_data->>'text', p_now);
+    if not coalesce((v_cmd->>'handled')::boolean, false) then
+      -- ไม่ใช่คำสั่งที่รู้จัก = คุยกันเองในกลุ่ม ไม่ต้องตอบ
+      return jsonb_build_object('event_type', 'group_command', 'handled', false);
+    end if;
+    if coalesce(v_cmd->>'reply','') <> '' then
+      insert into connect_private.job(kind, channel, inbox_id, conversation_id, target, payload, send_after)
+      values ('send', 'line_group', v_inbox.id, nullif(v_cmd->>'conversation_id','')::uuid,
+              p_data->>'group_id',
+              jsonb_build_object('type','text','text', v_cmd->>'reply'), p_now);
+    end if;
+    return jsonb_build_object('event_type', 'group_command', 'handled', true,
+                              'reply', v_cmd->>'reply', 'conversation_id', v_cmd->>'conversation_id');
+  end if;
+
+  if coalesce(p_data->>'external_id','') = '' then raise exception 'invalid_event'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(v_inbox.id::text || ':' || (p_data->>'external_id'), 0));
+  v_contact := core.resolve_identity(v_inbox.channel, p_data->>'external_id', v_inbox.id::text,
+                                     p_data->>'display_name', v_inbox.project_id);
+  select id into v_id from inbox.conversation
+   where inbox_id = v_inbox.id and contact_id = v_contact order by created_at desc limit 1 for update;
+  v_is_new := v_id is null;
+  if v_is_new then
+    insert into inbox.conversation(inbox_id, contact_id) values (v_inbox.id, v_contact) returning id into v_id;
+  end if;
+  select * into v_convo from inbox.conversation where id = v_id;
+  v_lead := connect_private.ensure_lead(v_id);
+  v_time := least(p_now, coalesce((p_data->>'occurred_at')::timestamptz, p_now));
+  v_text := coalesce(p_data->>'text', '[ข้อความที่ไม่ใช่ข้อความตัวอักษร]');
+
+  -- ── reply token เก็บไว้ให้ชั้นส่งของใช้ ถ้ามันมาด้วย
+  if coalesce(p_data->>'reply_token','') <> '' then
+    update inbox.conversation
+       set last_reply_token = p_data->>'reply_token', last_reply_token_at = v_time
+     where id = v_id;
+  end if;
+
+  -- ── บล็อกบัญชี: ไม่มีข้อความ ไม่มีอะไรให้ตัดสินใจ
+  if v_event_type = 'unfollow' then
+    update core.contact set blocked = true, blocked_at = v_time where id = v_contact;
+    insert into inbox.message(conversation_id, sender_type, content, content_type, event_type,
+                              external_message_id, created_at)
+    values (v_id, 'system', '[ลูกค้าบล็อกบัญชี]', 'unfollow', 'unfollow', p_data->>'event_id', v_time)
+    returning id into v_message;
+    update connect_private.inbound_event set message_id = v_message
+     where inbox_id = v_inbox.id and event_id = p_data->>'event_id';
+    return jsonb_build_object('id', v_id, 'message_id', v_message, 'event_type', 'unfollow', 'blocked', true);
+  end if;
+
+  -- ── echo: เพจเป็นคนส่ง ไม่ใช่ลูกค้า — ต้องรู้ให้ได้ว่า "ใครในฝั่งเรา"
+  --
+  -- ของเดิมตัดสินแค่สองทาง (bot / agent) จาก app_id เทียบกับ team.bot_app_id
+  -- ซึ่งไม่เคยถูกตั้งค่าเลย → echo ของบอทเองถูกป้ายเป็น agent แล้วไปเรียก
+  -- mark_human_reply() ทำให้ decide_reply เห็น human_owns_convo
+  -- ผลคือบอทตอบครั้งเดียวแล้วเงียบถาวรในแชทนั้น (ดูหัวไฟล์ 035)
+  if v_event_type = 'echo' then
+    v_app_id  := p_data->>'app_id';
+    v_bot_app := inbox.cfg_text(v_inbox.id, 'team.bot_app_id', '');
+    v_is_ours := v_app_id is not null and v_bot_app <> '' and v_app_id = v_bot_app;
+
+    -- ★ กันซ้ำชั้นที่สอง — ด่าน connect_private.inbound_event กันได้แค่
+    --   "echo ก้อนเดิมถูกยิงมาสองครั้ง" แต่กันไม่ได้ว่า "ข้อความที่เราส่งเอง
+    --   เด้งกลับมาเป็นแถวที่สองในบทสนทนา" ซึ่งเกิดกับทุกข้อความที่แอปส่ง
+    --   (ของจริง 2026-09-15: ทุกข้อความของเรามีแถวคู่ ห่างกันราว 1 วินาที)
+    --   ด่านนี้คือ mid ของ echo = provider_id ที่ตัวส่งบันทึกไว้ในคิวขาออก
+    select d.message_id into v_own
+      from connect_private.delivery d
+     where d.provider_id = p_data->>'event_id'
+     limit 1;
+
+    -- ★ กรณี echo มาถึงก่อนที่ตัวส่งจะบันทึก provider_id ลงคิว (แข่งกันได้จริง —
+    --   Meta เด้ง echo กลับใน ~1 วินาที ส่วน worker กว่าจะ finish อาจช้ากว่านั้น)
+    --   เคสนี้ mid ยังไม่มีในคิว จึงจับคู่ด้วยเนื้อความ + หน้าต่างเวลาสั้น ๆ แทน
+    --   ★ ปลอดภัยเพราะทำงานเฉพาะเมื่อ app_id เป็นของแอปเราเท่านั้น — เซลส์ที่
+    --     พิมพ์ข้อความเดียวกันจาก Page Inbox มี app_id ของ Meta ไม่เข้าเงื่อนไขนี้
+    if v_own is null and v_is_ours then
+      select m.id into v_own
+        from inbox.message m
+       where m.conversation_id = v_id
+         and m.sender_type in ('bot','agent')
+         and m.external_message_id is null
+         and m.content = v_text
+         and m.created_at >= v_time - make_interval(mins => inbox.cfg_int(v_inbox.id, 'echo.self_match_window_min', 10))
+       order by m.created_at desc
+       limit 1;
+    end if;
+
+    -- ★ ป้ายที่มา สี่ทาง
+    --   bot        แอปเราส่ง และแถวต้นทางเป็นข้อความของบอท
+    --   workspace  แอปเราส่ง แต่แถวต้นทางเป็นเซลส์กดส่งจากหน้าจอเรา
+    --   page_inbox คนตอบจาก Page Inbox / Business Suite ของ Meta
+    --   other_app  แอปอื่นที่ผูกกับเพจนี้
+    -- ★ ข้อเท็จจริงจากของจริง: Page Inbox ส่ง app_id ของ Business Suite มาด้วย
+    --   เสมอ (263902037430900) ไม่ได้ปล่อยว่างอย่างที่คอมเมนต์ใน providers.mjs เขียนไว้
+    --   จึงเทียบกับทะเบียน team.page_inbox_app_ids ไม่ใช่เช็ค null
+    if v_is_ours then
+      v_source := case when v_own is not null
+                        and (select m.sender_type from inbox.message m where m.id = v_own) = 'agent'
+                       then 'workspace' else 'bot' end;
+    elsif v_app_id is null
+       or position(v_app_id in inbox.cfg_text(v_inbox.id, 'team.page_inbox_app_ids', '')) > 0 then
+      v_source := 'page_inbox';
+    else
+      v_source := 'other_app';
+    end if;
+
+    -- ── ของเราเอง: ผูก mid กลับเข้าแถวเดิม ไม่สร้างแถวใหม่ ไม่นับว่า "คนตอบ"
+    if v_own is not null then
+      update inbox.message
+         set external_message_id = p_data->>'event_id'
+       where id = v_own and external_message_id is null;
+      if v_source = 'bot' then
+        update inbox.conversation set last_bot_reply_at = v_time where id = v_id;
+      end if;
+      update connect_private.inbound_event set message_id = v_own
+       where inbox_id = v_inbox.id and event_id = p_data->>'event_id';
+      return jsonb_build_object('id', v_id, 'message_id', v_own, 'event_type', 'echo',
+                                'source', v_source, 'duplicate_of', v_own, 'linked_mid', true);
+    end if;
+
+    -- ── ใครตอบ: อ่านจากลายเซ็นท้ายข้อความ (team.signatures)
+    --   ★ ยังไม่มีใครใช้คอนฟิกนี้มาก่อน — seed_bot_defaults หว่านไว้เฉย ๆ
+    --     ที่นี่เป็นที่แรกที่เอามาใช้จริง
+    --   ★ inbox.sales_staff ยังว่าง 0 แถว ตอนนี้จึงได้แต่ชื่อ (ลงใน note)
+    --     พอมีใครลงทะเบียนพร้อม user_id แล้ว sender_id จะถูกเซ็ตให้เองทันที
+    --     และรายงานที่ join sales_staff อยู่แล้วจะเห็นชื่อคนตอบโดยไม่ต้องแก้อะไร
+    if not v_is_ours then
+      select s.key into v_who
+        from jsonb_each_text(inbox.bot_cfg(v_inbox.id, 'team.signatures', '{}'::jsonb)) as s(key, pat)
+       where coalesce(s.pat,'') <> '' and v_text ~* s.pat
+       order by length(s.pat) desc
+       limit 1;
+      if v_who is not null then
+        select st.id, st.user_id into v_staff, v_staff_user
+          from inbox.sales_staff st
+         where lower(st.name) = lower(v_who) and coalesce(st.is_active, true)
+         limit 1;
+      end if;
+    end if;
+
+    -- ธงเดียวกับที่ connect_private.replay() ใช้ — กัน trigger สร้างงานขาออก
+    -- ถ้าไม่ตั้ง ข้อความที่ทีมเพิ่งตอบไปจะถูกส่งกลับไปหาลูกค้าอีกรอบ
+    perform set_config('connect.replay', 'on', true);
+    v_sender := case when v_is_ours then 'bot' else 'agent' end;
+    insert into inbox.message(conversation_id, sender_type, sender_id, content, content_type, event_type,
+                              external_message_id, created_at)
+    values (v_id, v_sender, v_staff_user, v_text, coalesce(p_data->>'content_type','text'), 'message',
+            p_data->>'event_id', v_time)
+    returning id into v_message;
+
+    if v_sender = 'agent' then
+      -- ★ source ละเอียดกว่าคำว่า 'echo' เดิม — แยกได้ว่าเซลส์ตอบจากที่ไหน
+      --   (page_inbox / other_app) เทียบกับ 'workspace' ที่ตัวส่งของเราบันทึกไว้
+      v_cmd := connect_private.mark_human_reply(v_id, v_staff, v_source, v_time,
+                 coalesce(v_who, inbox.cfg_text(v_inbox.id, 'team.unknown_label', 'unknown')));
+      v_cancelled := coalesce((v_cmd->>'cancelled_jobs')::int, 0);
+    else
+      update inbox.conversation set last_bot_reply_at = v_time where id = v_id;
+    end if;
+
+    update connect_private.inbound_event set message_id = v_message
+     where inbox_id = v_inbox.id and event_id = p_data->>'event_id';
+    return jsonb_build_object('id', v_id, 'message_id', v_message, 'event_type', 'echo',
+                              'sender_type', v_sender, 'source', v_source, 'linked_mid', false,
+                              'responder', v_who, 'staff_id', v_staff, 'cancelled_jobs', v_cancelled);
+  end if;
+
+  -- ── เพิ่มเพื่อน: ทักทาย + บอกทีม · คนที่เคยบล็อกแล้วกลับมา ต้องปลดธงด้วย
+  if v_event_type = 'follow' then
+    update core.contact set blocked = false, blocked_at = null where id = v_contact;
+    insert into inbox.message(conversation_id, sender_type, content, content_type, event_type,
+                              external_message_id, created_at)
+    values (v_id, 'system', '[ลูกค้าเพิ่มเพื่อน]', 'follow', 'follow', p_data->>'event_id', v_time)
+    returning id into v_message;
+    update connect_private.inbound_event set message_id = v_message
+     where inbox_id = v_inbox.id and event_id = p_data->>'event_id';
+
+    v_welcome := inbox.cfg_text(v_inbox.id, 'line.welcome_on_follow', '');
+    if inbox.cfg_bool(v_inbox.id, 'reply.reply_to_follow', false) and v_welcome <> '' then
+      -- ข้อความต้อนรับเป็นข้อความของบอทตามปกติ trigger จะพาเข้าคิวขาออกเอง
+      -- ทางออกสู่ลูกค้าจึงยังมีทางเดียวทั้งระบบ
+      insert into inbox.message(conversation_id, sender_type, content, content_type, event_type)
+      values (v_id, 'bot', v_welcome, 'text', 'message');
+      update inbox.conversation set last_bot_reply_at = v_time where id = v_id;
+    end if;
+
+    if inbox.cfg_bool(v_inbox.id, 'notify.enabled', true)
+       and inbox.cfg_bool(v_inbox.id, 'notify.always_on_follow', false) then
+      insert into connect_private.job(kind, channel, inbox_id, conversation_id, message_id, payload, send_after)
+      values ('notify', 'team', v_inbox.id, v_id, v_message,
+              jsonb_build_object('kind','follow','reason','follow','text','เพิ่มเพื่อนใหม่',
+                                 'is_new_chat', v_is_new,
+                                 'code', right(p_data->>'external_id', 6)), p_now);
+      update inbox.conversation set last_notified_at = v_time where id = v_id;
+    end if;
+
+    return jsonb_build_object('id', v_id, 'message_id', v_message, 'event_type', 'follow');
+  end if;
+
+  -- ── ข้อความของลูกค้า
+  --
+  -- [AD:xxx] มาจากลิงก์โฆษณาที่ prefill ข้อความให้ลูกค้า — ตัด prefix ออกก่อนเก็บ
+  -- ไม่งั้นทั้งหน้าจอและบอทจะเห็นโค้ดโฆษณาปนอยู่ในสิ่งที่ลูกค้า "พิมพ์"
+  v_ad_id := p_data->>'ad_id';
+  if v_inbox.channel = 'line' then
+    v_ad := inbox.strip_ad_prefix(v_text, inbox.cfg_text(v_inbox.id, 'line.ad_prefix_pattern',
+                                                         '^\[AD:([a-zA-Z0-9_-]+)\]\s*'));
+    v_text := v_ad->>'text';
+    v_ad_id := coalesce(v_ad->>'ad_id', v_ad_id);
+  end if;
+
+  v_has_text := coalesce((p_data->>'has_text')::boolean, v_text !~ '^\[');
+
+  select count(*) into v_prev_count from (
+    select content from inbox.message
+     where conversation_id = v_id and sender_type = 'contact'
+     order by created_at desc limit 3 offset 1) m
+   where lower(btrim(m.content)) = lower(btrim(v_text));
+  v_repeat := length(btrim(v_text)) > 8 and v_prev_count > 0;
+
+  insert into inbox.message(conversation_id, sender_type, content, content_type, event_type,
+                            external_message_id, created_at)
+  values (v_id, 'contact', v_text, coalesce(p_data->>'content_type','text'), v_event_type,
+          p_data->>'event_id', v_time)
+  returning id into v_message;
+  update connect_private.inbound_event set message_id = v_message
+   where inbox_id = v_inbox.id and event_id = p_data->>'event_id';
+
+  if v_ad_id is not null or (p_data->>'ad_title') is not null then
+    update inbox.conversation set ad_id = coalesce(v_ad_id, ad_id),
+                                  ad_title = coalesce(p_data->>'ad_title', ad_title)
+     where id = v_id;
+  end if;
+
+  if v_event_type in ('message','postback') then
+    update inbox.conversation
+       set status = case when assignee_id is null then 'pending' else 'open' end,
+           sla_due_at = coalesce((select waiting_since from connect_private.case_state where conversation_id = v_id), v_time)
+                        + interval '30 minutes'
+     where id = v_id;
+    update connect_private.case_state set waiting_since = coalesce(waiting_since, v_time) where conversation_id = v_id;
+  end if;
+
+  v_phone := inbox.extract_phone(v_text);
+  v_line  := inbox.extract_line_id(v_text);
+  v_last_page := greatest(v_convo.last_human_reply_at, v_convo.last_bot_reply_at);
+  v_unanswered := case
+    when v_convo.last_notified_at is null then 'Infinity'::double precision
+    when v_last_page is null or v_last_page < v_convo.last_notified_at
+      then extract(epoch from (p_now - v_convo.last_notified_at)) / 60
+    else 0 end;
+
+  v_ctx := jsonb_build_object(
+    'text', v_text,
+    'has_text', v_has_text,
+    'is_admin', coalesce((p_data->>'is_admin')::boolean, false),
+    'is_new_chat', v_is_new,
+    'gap_hours', case when v_convo.last_message_at is null then null
+                      else extract(epoch from (p_now - v_convo.last_message_at)) / 3600 end,
+    'unanswered_since_notify_min', case when v_unanswered = 'Infinity'::double precision then null else v_unanswered end,
+    'human_replied_min', case when v_convo.last_human_reply_at is null then null
+                              else extract(epoch from (p_now - v_convo.last_human_reply_at)) / 60 end,
+    'phone_in_text', v_phone,
+    'line_in_text', v_line,
+    'verbatim_repeat', v_repeat,
+    'convo_mode', coalesce(v_convo.mode, 'bot'),
+    'is_standby', coalesce((p_data->>'is_standby')::boolean, false),
+    'event_type', v_event_type);
+
+  v_decision := inbox.decide_all(v_inbox.id, v_ctx, p_now, p_jitter);
+  v_reply  := v_decision->'reply';
+  v_notify := v_decision->'notify';
+  v_delay  := (v_decision->>'delay_sec')::int;
+  v_action := v_decision->>'notify_action';
+  v_topic  := p_data->>'topic';
+
+  insert into inbox.bot_decisions(conversation_id, message_id, event_id, topic,
+                                  reply_go, reply_reason, reply_wait_min,
+                                  notify_go, notify_reason, notify_action, delay_sec, text, decided_at)
+  values (v_id, v_message, p_data->>'event_id', v_topic,
+          (v_reply->>'go')::boolean, v_reply->>'reason', (v_reply->>'wait_min')::int,
+          (v_notify->>'go')::boolean, v_notify->>'reason', v_action, v_delay, left(v_text, 200), p_now)
+  returning id into v_decision_id;
+
+  if v_action in ('send','queue') then
+    insert into connect_private.job(kind, channel, inbox_id, conversation_id, message_id, payload, send_after)
+    values ('notify', 'team', v_inbox.id, v_id, v_message,
+            jsonb_build_object(
+              'reason', v_notify->>'reason', 'queued', v_action = 'queue',
+              'text', left(v_text, 200), 'event_type', v_event_type,
+              'is_new_chat', v_is_new, 'verbatim_repeat', v_repeat,
+              -- ★ แชททดสอบ: ให้ข้อความแจ้งติด [TEST] นำหน้า (sql/031)
+              --   ยังแจ้งตามปกติ เพราะทีมต้องเห็นว่าการทดสอบเดินถึงไหน
+              --   ★ บรรทัดนี้ไม่มีใน sql/006 — 006 เขียนก่อน 031 จะมีอยู่
+              --     ถ้ายก 006 มาทับเฉย ๆ ธงแชททดสอบจะหายไปเงียบ ๆ
+              'is_test', coalesce(v_convo.is_test, false),
+              'phone', v_phone, 'line_id', v_line, 'topic', v_topic,
+              'ad_title', v_convo.ad_title, 'code', right(p_data->>'external_id', 6),
+              'reply_go', (v_reply->>'go')::boolean, 'reply_reason', v_reply->>'reason',
+              'wait_min', (v_reply->>'wait_min')::int, 'delay_sec', v_delay),
+            case when v_action = 'queue'
+                 then date_trunc('day', p_now at time zone 'Asia/Bangkok' + interval '1 day')
+                      at time zone 'Asia/Bangkok'
+                      + make_interval(hours => split_part(inbox.cfg_text(v_inbox.id,'notify.digest_at','09:00'), ':', 1)::int,
+                                      mins  => split_part(inbox.cfg_text(v_inbox.id,'notify.digest_at','09:00'), ':', 2)::int)
+                 else p_now end);
+    update inbox.conversation set last_notified_at = v_time where id = v_id;
+  end if;
+
+  if coalesce((v_reply->>'go')::boolean, false) then
+    if not exists (select 1 from connect_private.job
+                    where conversation_id = v_id and kind = 'generate' and status in ('pending','processing')) then
+      insert into connect_private.job(kind, channel, inbox_id, conversation_id, message_id, target, payload, send_after)
+      values ('generate', v_inbox.channel, v_inbox.id, v_id, v_message, p_data->>'external_id',
+              jsonb_build_object('reason', v_reply->>'reason', 'is_new_chat', v_is_new,
+                                 'wait_min', (v_reply->>'wait_min')::int),
+              p_now + make_interval(secs => v_delay));
+    end if;
+  elsif inbox.cfg_bool(v_inbox.id, 'insight.enabled', true)
+        and inbox.cfg_bool(v_inbox.id, 'insight.classify_when_silent', true)
+        and v_has_text and not coalesce((p_data->>'is_admin')::boolean, false) then
+    insert into connect_private.job(kind, channel, inbox_id, conversation_id, message_id, payload, send_after)
+    values ('classify', v_inbox.channel, v_inbox.id, v_id, v_message,
+            jsonb_build_object('text', v_text, 'ad_title', v_convo.ad_title), p_now);
+  end if;
+
+  perform connect_private.emit(v_id, 'conversation_received',
+    jsonb_build_object('message_id', v_message, 'event_type', v_event_type,
+                       'decision_id', v_decision_id, 'attribution', p_data->'attribution'), null);
+
+  return jsonb_build_object('id', v_id, 'message_id', v_message, 'event_type', v_event_type,
+                            'ad_id', v_ad_id, 'decision', v_decision, 'decision_id', v_decision_id);
+end $function$;
+
+-- create or replace ไม่ล้าง ACL เดิม บรรทัดนี้ไว้เผื่อฐานที่ตั้งใหม่
+grant execute on function connect_private.receive_event(jsonb, timestamptz, int) to service_role;
+
+commit;
