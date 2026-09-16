@@ -1,8 +1,28 @@
+# ไฟล์ที่ห้ามเข้า image — รวมจากรุ่นที่รันจริงบนโปรดักชันกับรุ่นในรีโป
+# กฎ: เพิ่มได้ ลดไม่ได้ ถ้าไม่แน่ใจให้กันไว้ก่อน
+# ★ ลำดับสำคัญ: กฎท้ายชนะ บรรทัด ! จึงต้องอยู่ล่างสุดเสมอ
+
+# ── ความลับและข้อมูลตอนรันของโปรดักชัน ──
 .env
+.env.*
+.env.bak-*
+.secrets-archive/
 channels.json
+channels.json.*
+channels_*.json
 .sessions
+.sessions/
+
+# ── ของที่ไม่ต้องใช้ตอนรัน ──
+.git
+.git/
+node_modules/
 tests
 test-results
 database.sql
 README.md
-.git
+*.log
+start-error.txt
+
+# ── ยกเว้นตัวอย่างที่ไม่มีค่าจริง (ต้องอยู่ท้ายสุด) ──
+!.env.example
