@@ -603,10 +603,12 @@ $('message').addEventListener('keydown',e=>{
 })
 
 // ★ ย้าย element จริง ไม่ใช่สร้างปุ่มใหม่ซ้อน — id="refresh" ยังเป็นตัวเดิม event listener
-//   เดิมยังผูกอยู่ถูกตัว แค่ตำแหน่งใน DOM เปลี่ยนเป็นแถวหัว "แชท" ตามสเปกใหม่
+//   เดิมยังผูกอยู่ถูกตัว แค่ตำแหน่งใน DOM ย้ายเข้าแถบเมนูบนแถวเดียวกับตั้งค่า/สถิติ
+//   (รวมทุกเมนูอยู่ tab เดียว ไม่มีแถวหัว "แชท" แยกอีกแถวแล้ว) ต่อท้าย #nav-settings
+//   เพื่อให้ margin-left:auto ของ #nav-settings ดันทั้งคู่ไปชิดขวาด้วยกัน
 function relocateRefreshButton(){
- const btn=$('refresh'),slot=document.querySelector('.chat-list-actions')
- if(btn&&slot)slot.append(btn)
+ const btn=$('refresh'),nav=$('app-nav')
+ if(btn&&nav)nav.append(btn)
 }
 // เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
 // "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง

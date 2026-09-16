@@ -788,19 +788,8 @@ nav button.active {
   background: var(--ink); color: var(--surface);
 }
 
-/* ChatListHeader — แถบหัวกะทัดรัดของกล่องข้อความ (52px) */
-.chat-list-header {
-  display: flex; align-items: center; justify-content: space-between;
-  height: 52px; padding: 0 4px;
-}
-.chat-list-title { margin: 0; font-size: 22px; font-weight: 500; color: var(--ink) }
-.chat-list-actions { display: flex; align-items: center; gap: 2px }
-.chat-list-icon-btn {
-  width: 44px; height: 44px; flex: none; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: none; background: transparent; border-radius: 10px; color: var(--muted);
-}
-.chat-list-icon-btn:hover { background: var(--rule-soft); color: var(--ink) }
+/* ChatListHeader เดิม (52px แยกแถว) ถูกยุบรวมเข้าแถบเมนูบนแล้ว — ดูคอมเมนต์ที่ .nav-page-title
+   ท้ายไฟล์ (บล็อก "เฟส 1") เก็บ .chat-list-icon ไว้เพราะ #toggle-lead ในหัวแชทยังใช้อยู่ */
 .chat-list-icon { width: 24px; height: 24px }
 
 /* ขนาดช่องค้นหา/ชิป ตามสเปกใหม่ (ทับของเดิมที่เล็กกว่า) —
@@ -885,7 +874,7 @@ nav button.active {
 
 /* header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/สถิติ/อีเมล/ออกจากระบบ) — ย้ายเข้าแผงตั้งค่า
    ไม่ได้ย้าย element จริง (กัน id ซ้ำ/handler หลุด) แค่สลับการมองเห็นด้วยคลาสนี้ที่ nav-settings คุม
-   ปุ่มรีเฟรชถูกย้ายออกจาก header ไปอยู่ chat-list-header แล้วด้วย JS ตอนโหลดหน้า (ดู app.js) */
+   ปุ่มรีเฟรชถูกย้ายออกจาก header ไปอยู่แถบเมนูบน (#app-nav) แล้วด้วย JS ตอนโหลดหน้า (ดู app.js) */
 body.settings-open #workspace > header {
   display: flex !important; position: fixed; top: 0; left: 0; right: 0; z-index: 50;
   flex-wrap: wrap; height: auto; padding: 12px 16px; gap: 10px;
@@ -958,6 +947,9 @@ main { min-height: 100dvh; min-height: var(--vh-visible, 100dvh) }
   font-size: 15px; font-weight: 600; letter-spacing: -.2px; color: var(--ink);
   white-space: nowrap;
 }
+/* มือถือ: ไม่มีที่พอให้ทั้งแบรนด์และหัวข้อหน้า — โชว์ชื่อหน้า "แชท" แทนชื่อแบรนด์
+   (ไอคอนแท็บที่ active อยู่แล้วบอกตำแหน่งซ้ำอยู่ดี จอใหญ่มีที่พอเลยยังโชว์แบรนด์ได้) */
+.nav-page-title { display: none; font-size: 15px; font-weight: 600; color: var(--ink); white-space: nowrap }
 .app-nav .nav-item {
   flex: none; flex-direction: row; justify-content: center;
   width: 32px; height: 32px; min-width: 32px; min-height: 32px;
@@ -1048,6 +1040,7 @@ body.lead-open .lead-card { transform: none; visibility: visible }
   .nav-brand { margin-right: auto }
   .nav-brand-mark { width: 22px; height: 22px }
   .nav-brand-name { display: none }
+  .nav-page-title { display: block }
   .app-nav .nav-item { width: 30px; height: 30px; min-width: 30px; min-height: 30px }
   .app-nav .nav-item#nav-settings { margin-left: 0 }
 
@@ -1177,3 +1170,16 @@ body.lead-open .lead-card { transform: none; visibility: visible }
    <svg> เป็น flex item ของปุ่ม เลยถูกบีบตามค่าเริ่มต้น flex-shrink:1 ต้องสั่ง flex:none
    ให้มันถือขนาดตัวเองไว้ (ไอคอนอื่นในแอปที่ใช้ .nav-icon มี flex:none กันไว้อยู่แล้ว) */
 .lead-toggle svg { width: 20px; height: 20px; flex: none }
+
+/* ปุ่ม "← ก่อนหน้า / ถัดไป →" เดิมลอยอยู่กลางที่ว่างใต้แถวแชทแถวสุดท้าย (เห็นชัดตอนรายการสั้น
+   ไม่พอเต็มจอ) เพราะ .queue คือตัวเลื่อน (overflow-y:auto ทั้งกล่อง บรรทัด ~979) แล้ว .paging
+   เป็นแค่ block ต่อท้าย #conversations ธรรมดา — ตรึงให้อยู่แถวล่างสุดของจอเสมอแทน
+   (sticky กับตัวเลื่อน .queue เอง ไม่ใช่กับ viewport) พื้นที่ใต้แถวแชทจะได้ไม่ว่างเปล่าอีก */
+.queue > .paging {
+  position: sticky; bottom: 0; z-index: 5; margin-top: 0;
+  background: var(--surface); border-top: 1px solid var(--rule);
+  padding: 4px 12px calc(4px + env(safe-area-inset-bottom));
+}
+/* ปุ่มเองยังใช้ padding ของ <button> ฐาน (10px 13px) ซึ่งหนาเกินไปสำหรับแถบตรึงบาง ๆ นี้
+   บีบเฉพาะที่นี่ ไม่ไปแตะ <button> ฐานที่ใช้ทั่วแอป */
+.queue > .paging button { padding: 5px 11px; font-size: 11px; border-radius: 6px }
