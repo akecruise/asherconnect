@@ -72,7 +72,7 @@ const iso = ms => new Date(ms ?? Date.now()).toISOString()
  *
  * ชนิดที่คืนได้
  *   message        ลูกค้าพิมพ์ / ส่งสื่อ           (is_standby=true ถ้าเพจไม่ใช่เจ้าของ thread)
- *   echo           เพจเป็นคนส่ง — คนตอบจาก Business Suite หรือบอทของเราเอง (ดู app_id)
+ *   echo           เพจเป็นคนส่ง — คนตอบจาก Business Suite หรือบอทของเราเอง (ฐานเป็นคนแยก)
  *   postback       ลูกค้ากดปุ่ม
  *   referral       ลูกค้ามาจากโฆษณา โดยยังไม่พิมพ์อะไร
  *   follow         เพิ่มเพื่อน (LINE)
@@ -176,8 +176,12 @@ function messengerEvents(body, config) {
 
       if (e.message?.is_echo) {
         // เพจเป็นคนส่ง — ปลายทางคือ "ลูกค้า" จึงอยู่ที่ recipient ไม่ใช่ sender
-        // app_id บอกว่าใครส่ง: ของบอทเราเอง หรือคนกดส่งจาก Business Suite
-        // (ไม่มี app_id = ส่งจากหน้า Page Inbox โดยตรง)
+        // ★ ที่นี่ส่งต่อ app_id ดิบอย่างเดียว ไม่ตัดสินว่าใครส่ง — ฐานเป็นคนตัดสิน
+        //   (connect_private.receive_event ตั้งแต่ sql/036_echo_source_from_queue.sql)
+        // ★ app_id เชื่อได้ไม่หมด — สองข้อเท็จจริงจากของจริง 2026-09-14..15:
+        //   1. echo ของข้อความที่ "เราส่งเอง" 8 ก้อน มาด้วย app_id สองค่า ไม่ใช่ค่าเดียว
+        //   2. Page Inbox ส่ง app_id ของ Business Suite มาด้วย ไม่ใช่ค่าว่าง
+        //   ฐานจึงผูก mid กับคิวขาออกก่อน แล้วค่อยดู app_id เป็นตัวรอง
         if (!e.recipient?.id || !e.message.mid) continue
         out.push({ ...base, event_type: 'echo', external_id: e.recipient.id, event_id: e.message.mid,
           app_id: e.message.app_id != null ? String(e.message.app_id) : null,
