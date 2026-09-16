@@ -201,7 +201,11 @@ begin
   select (p_data->>'conversation_id')::uuid,
          nullif(p_data->>'message_id','')::uuid,
          -- แฮชของผู้ติดต่อ ไม่ใช่ตัว id — ตารางนี้ไว้ดูภาพรวม ไม่ควรชี้กลับไปหาคนได้ง่าย ๆ
-         encode(digest(coalesce(p_data->>'external_id','') || coalesce(p_data->>'salt','asher'), 'sha256'), 'hex'),
+         -- ★ ต้องเขียน extensions.digest ให้เต็ม: pgcrypto อยู่ schema extensions
+         --   แต่ search_path ของฟังก์ชันนี้มีแค่ pg_catalog, public (ตั้งไว้แคบโดยตั้งใจ
+         --   เพราะเป็น security definer) จะเรียก digest() ลอย ๆ ไม่เจอ
+         --   อาการเดิม: 404 function digest(text, unknown) does not exist → classify ล้มทุกงาน
+         encode(extensions.digest(coalesce(p_data->>'external_id','') || coalesce(p_data->>'salt','asher'), 'sha256'), 'hex'),
          i.channel, p_data->>'project',
          p_data->>'primary_topic', nullif(p_data->>'primary_l2',''),
          coalesce((select array_agg(value #>> '{}') from jsonb_array_elements(coalesce(p_data->'secondary_topics','[]'::jsonb))), '{}'),
@@ -359,6 +363,9 @@ begin
 
  elsif p_action='store_intent' then
  return connect_private.store_intent(p_data);
+
+ elsif p_action='reset_test' then
+ return connect_private.reset_test_conversation(p_data);
 
  elsif p_action='health' then
  return jsonb_build_object(

@@ -89,7 +89,7 @@ begin
            -- channel มากับ reply_episodes อยู่แล้ว ไม่ต้องหยิบซ้ำ (ชื่อจะชนกันทันที)
            c.inbox_id, p.code as project
       from eps e
-      join inbox.conversation c on c.id = e.conversation_id
+      join inbox.conversation c on c.id = e.conversation_id and not c.is_test
       join inbox.inbox i on i.id = c.inbox_id
       left join core.project p on p.id = i.project_id
   ),

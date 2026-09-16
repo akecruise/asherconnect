@@ -509,6 +509,9 @@ begin
               'reason', v_notify->>'reason', 'queued', v_action = 'queue',
               'text', left(v_text, 200), 'event_type', v_event_type,
               'is_new_chat', v_is_new, 'verbatim_repeat', v_repeat,
+              -- ★ แชททดสอบ: ให้ข้อความแจ้งติด [TEST] นำหน้า (sql/031)
+              --   ยังแจ้งตามปกติ เพราะทีมต้องเห็นว่าการทดสอบเดินถึงไหน
+              'is_test', coalesce(v_convo.is_test, false),
               'phone', v_phone, 'line_id', v_line, 'topic', v_topic,
               'ad_title', v_convo.ad_title,
               'reply_go', (v_reply->>'go')::boolean, 'reply_reason', v_reply->>'reason',

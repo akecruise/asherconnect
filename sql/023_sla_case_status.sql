@@ -126,10 +126,14 @@ select
     else 'new'
   end                                             as case_status,
   case
+    -- ★ แชททดสอบไม่นับ SLA — แต่ยังต้องโผล่บนหน้าจอพร้อมแท็ก "ทดสอบ" (sql/031)
+    --   จึงตัดที่การนับ ไม่ใช่ตัดแถวทิ้งจาก view
+    when c.is_test then null
     when c.status = 'resolved' or w.waiting_since is null then null
     else inbox.sla_elapsed_minutes(w.waiting_since, now())
   end                                             as waiting_minutes,
-  inbox.setting_int('sla_minutes', 10)            as sla_minutes
+  inbox.setting_int('sla_minutes', 10)            as sla_minutes,
+  c.is_test                                       as is_test
 from inbox.conversation c
 left join lateral (
   select min(m.created_at) as waiting_since

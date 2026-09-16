@@ -8,8 +8,8 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node tests/http.integration.mjs",
-    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js",
+    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/testcmd.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node tests/http.integration.mjs",
+    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js && node sql/run.mjs check",
     "test:live": "node test-webhook.mjs",
     "sync:names": "node sync-contact-names.mjs",
     "test:stats": "node tests/stats/run.mjs",
@@ -17,6 +17,11 @@
     "test:decide": "node --test tests/decide.test.mjs",
     "test:bots": "node --test tests/bots.test.mjs",
     "test:report": "node --test tests/report.test.mjs",
-    "test:outcomes": "node --test tests/outcomes.test.mjs"
+    "test:outcomes": "node --test tests/outcomes.test.mjs",
+    "sql:check": "node sql/run.mjs check",
+    "sql:plan": "node sql/run.mjs plan",
+    "sql:apply": "node sql/run.mjs apply",
+    "test:testcmd": "node --test tests/testcmd.test.mjs",
+    "test:testreset": "node --test tests/testreset.db.test.mjs"
   }
 }

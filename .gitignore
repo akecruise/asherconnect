@@ -14,3 +14,6 @@ channels.json.*
 test-results/
 node_modules/
 start-error.txt
+
+# ช่องส่งมอบงานระหว่าง agent — เป็นของชั่วคราวของเครื่องที่รันอยู่ ไม่ใช่ของโปรเจกต์
+.handoff/

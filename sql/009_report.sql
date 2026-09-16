@@ -107,7 +107,7 @@ patched as (
          (a.answered_at is null and c.last_human_reply_at > a.asked_at) as fallback,
          i.channel, ct.display_name
     from answered a
-    join inbox.conversation c on c.id = a.conversation_id
+    join inbox.conversation c on c.id = a.conversation_id and not c.is_test
     join inbox.inbox i on i.id = c.inbox_id
     join core.contact ct on ct.id = c.contact_id
 )

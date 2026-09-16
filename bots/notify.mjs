@@ -10,11 +10,45 @@
 const bangkok = (at = new Date()) =>
   at.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' })
 
+export const TEST_PREFIX = '[TEST] '
+
+/**
+ * ★ ต้องบอกชัดว่า "ใช่" เท่านั้นจึงนับเป็นแชททดสอบ — ห้ามใช้ truthy ลอย ๆ
+ *
+ * ปกติฐานส่ง JSON boolean จริง (คอลัมน์ boolean → jsonb_build_object → true/false)
+ * แต่ความเสียหายของสองทางไม่เท่ากัน จึงออกแบบให้เอียงไปทางปลอดภัย:
+ *
+ *   ติดป้ายผิดให้ลูกค้าจริง → ทีมเห็น [TEST] แล้วมองข้าม = เสียลูกค้า
+ *   ไม่ติดป้ายให้แชททดสอบ  → ทีมเผลอตอบแชททดสอบ = เสียเวลาไม่กี่นาที
+ *
+ * กับดักที่ทำให้ truthy ใช้ไม่ได้: สตริง "false" เป็น truthy ใน JS
+ * ถ้าวันไหนมีใคร stringify payload ระหว่างทาง แชทลูกค้าทุกคนจะติด [TEST] ทันที
+ *
+ * จึงรับเฉพาะสามค่านี้: true (ปกติ) · 1 (เผื่อ driver คืน boolean เป็นเลข) · "true"
+ */
+const isTestFlag = (v) => v === true || v === 1 || v === 'true'
+
+/**
+ * ติด [TEST] ให้แชททดสอบ — ทีมจะได้ไม่วิ่งไปตอบเคสที่เราสร้างขึ้นเอง
+ *
+ * ★ ติดซ้ำไม่ได้ — ถ้าข้อความขึ้นต้นด้วย [TEST] อยู่แล้วให้คืนตามเดิม
+ *   ไม่งั้นวันที่มีใครเรียกซ้อนกันจะได้ "[TEST] [TEST] 🟡 มีคนทัก"
+ *   ซึ่งดูเหมือนบั๊กของระบบแจ้งเตือน ทั้งที่เป็นแค่การต่อสตริงสองรอบ
+ */
+export const withTestPrefix = (text, isTest) => {
+  // ★ แปลงเป็นสตริงก่อนเสมอ — เคยได้ "[TEST] undefined" เพราะต่อสตริงกับ undefined ตรง ๆ
+  const s = String(text ?? '')
+  // ไม่มีข้อความก็ไม่ต้องติดป้าย — "[TEST] " เปล่า ๆ บอกอะไรไม่ได้เลย
+  if (!s || !isTestFlag(isTest) || s.startsWith(TEST_PREFIX)) return s
+  return TEST_PREFIX + s
+}
+
 /** สีของหัวข้อบอกความเร่งด่วนตั้งแต่บรรทัดแรก ไม่ต้องอ่านจบถึงจะรู้ */
 function headline(p) {
-  if (p.kind === 'watchdog') return `🟠 ค้างตอบ ${p.min_since_msg ?? '?'} นาที (${bangkok()} น.)`
-  const urgent = p.phone || p.line_id || p.verbatim_repeat
-  return `${urgent ? '🔴' : p.reply_go ? '🟡' : '🟠'} มีคนทัก${p.channel_label ?? ''} (${bangkok()} น.)`
+  const line = p.kind === 'watchdog'
+    ? `🟠 ค้างตอบ ${p.min_since_msg ?? '?'} นาที (${bangkok()} น.)`
+    : `${p.phone || p.line_id || p.verbatim_repeat ? '🔴' : p.reply_go ? '🟡' : '🟠'} มีคนทัก${p.channel_label ?? ''} (${bangkok()} น.)`
+  return withTestPrefix(line, p.is_test)
 }
 
 function botLine(p) {

@@ -26,6 +26,7 @@ import { fetchProfile } from './lib/profile.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
+import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
@@ -188,6 +189,11 @@ const sessions = createSessions({ authCall, rpc, origin, log, sessionDir })
 // ทะเบียน RPC ที่หน้าสถิติเรียกได้ — ชื่อต้องตรงกับ inbox.stats_* ใน sql/018
 const STATS_ACTIONS = new Set(['stats_overview', 'stats_agents', 'stats_timeline', 'stats_open_windows'])
 
+// ทะเบียน RPC ที่หน้า log เรียกได้ — ชื่อต้องตรงกับ inbox.logs_* ใน sql/029
+// ★ ด่านสิทธิ์ (admin เท่านั้น) อยู่ที่ inbox.stats_scope('admin') ในฐาน ไม่ใช่ที่นี่
+//   ที่นี่ทำแค่กันไม่ให้เรียกฟังก์ชันนอกทะเบียน เหมือน STATS_ACTIONS
+const LOG_ACTIONS = new Set(['logs_timeline', 'logs_summary'])
+
 const rpcDirect = (token, fn, body = {}) =>
   callSupabase(DATA, `/rest/v1/rpc/${fn}`, {
     token, method: 'POST', body,
@@ -324,7 +330,12 @@ function channelStates() {
 
 const WORKER_BATCH = 20
 const BOT_KINDS = ['generate', 'classify']
-const SEND_KINDS = ['notify', 'typing']
+// ★ แจ้งทีม ≠ ส่งหาลูกค้า
+//   โหมดเงามีไว้กันข้อความหลุดไปถึงลูกค้า ไม่ใช่กันทีมรับรู้ว่ามีคนทัก
+//   ระหว่างช่วงเทียบผลกับ cloud ทีมต้องเห็นว่าระบบใหม่ "จะแจ้งอะไรบ้าง" — นั่นคือข้อมูลที่ใช้เทียบ
+//   ก่อนหน้านี้ notify ถูกรวมอยู่ใน SEND_KINDS จึงถูกโหมดเงาบล็อกไปด้วย และทีมไม่ได้รับอะไรเลย
+const TEAM_KINDS = ['notify']
+const SEND_KINDS = ['typing']
 
 let workerRunning = false, workerLastSuccess = null
 // ภาพคิวล่าสุด อ่านนาทีละครั้งพอ — /health ต้องเบาและต้องไม่พังเพราะฐานช้า
@@ -388,7 +399,8 @@ async function worker() {
 }
 
 async function nextJob() {
-  const kinds = shadow ? BOT_KINDS : [...BOT_KINDS, ...SEND_KINDS]
+  // งานแจ้งทีมเดินได้ทั้งสองโหมด · งานที่ถึงลูกค้าจริงเดินเฉพาะตอนไม่ใช่โหมดเงา
+  const kinds = shadow ? [...BOT_KINDS, ...TEAM_KINDS] : [...BOT_KINDS, ...TEAM_KINDS, ...SEND_KINDS]
   const job = await rpc(service, 'claim_job',
     { kinds, inbox_ids: activeChannels.map(c => c.inbox_id) }, true)
   if (job) return { ...job, source: 'job' }
@@ -821,10 +833,55 @@ async function handleWebhook(req, res, url) {
     throw webhookFail(400, 'invalid_webhook', key, { เหตุ: 'wrong_destination', ปลายทางที่ตั้งไว้: config.account_id })
   }
 
+  // ★ คำสั่ง "test" ของบัญชีทดสอบ — ถอดออกก่อนเข้าคิวขาเข้า
+  //   ต้องอยู่หลัง verify signature (ไม่งั้นใครก็ยิงคำสั่งนี้ได้) แต่ก่อน log
+  //   เพราะข้อความนี้ไม่ใช่ข้อความลูกค้า ไม่ควรเปิดเคสหรือนับเป็นงาน
+  //
+  //   ★ ถอด "เฉพาะ event ที่เป็นคำสั่ง" ไม่ใช่ตัดทั้งก้อน — ก้อนเดียวอาจมี
+  //     ข้อความลูกค้าจริงคนอื่นปนมาด้วย ตัดทั้งก้อนแล้วข้อความนั้นจะหายเงียบ ๆ
+  const { hits, rest, remaining } = splitTestEvents(config.channel, body, TEST_USER_IDS)
+  if (hits.length) await runTestResets(hits, config, key)
+  if (hits.length && remaining === 0) {
+    return json(res, 200, { accepted: true, test_reset: hits.length })
+  }
+
   const logged = await rpc(service, 'log',
-    { channel_key: key, channel: config.channel, inbox_id: config.inbox_id, payload: body }, true)
-  log.info('webhook_accepted', { channel: key, log_id: logged.log_id })
+    { channel_key: key, channel: config.channel, inbox_id: config.inbox_id,
+      payload: hits.length ? rest : body }, true)
+  log.info('webhook_accepted', { channel: key, log_id: logged.log_id,
+                                 ...(hits.length ? { test_reset: hits.length } : {}) })
   return json(res, 200, { accepted: true, log_id: logged.log_id })
+}
+
+// ───────────────────────────────────────────── คำสั่งทดสอบ
+//
+// ทีมต้องทดสอบบอทบ่อย แต่แชทที่เคยถูกตั้ง mode='human' จะเงียบถาวร
+// พิมพ์ "test" จากบัญชีในรายชื่อ = ล้างสถานะแชทนั้นให้กลับไปเริ่มใหม่
+//
+// ★ รายชื่อบัญชีทดสอบอยู่ใน env ไม่ได้อยู่ในฐาน (เหมือน token ทุกตัวในระบบนี้)
+//   ฐานไม่ต้องรู้ว่าใครเป็นบัญชีทดสอบ รู้แค่ว่าถูกสั่งให้รีเซ็ตแชทไหน
+//
+// ★ ต้องตรงทั้งข้อความเท่านั้น — "test ระบบ" เป็นข้อความลูกค้าปกติ
+//   ถ้าจับแบบขึ้นต้นด้วย test ลูกค้าจริงที่พิมพ์คำนี้จะโดนรีเซ็ตแชทตัวเอง
+const TEST_USER_IDS = testUserIds()
+
+async function runTestResets(hits, config, key) {
+  for (const hit of hits) {
+    try {
+      const r = await rpc(service, 'reset_test', {
+        inbox_id: config.inbox_id, channel: config.channel, external_id: hit.userId,
+      }, true)
+      log.warn('test_reset', { channel: key, conversation: r.conversation_id,
+                               previous_mode: r.previous_mode, cancelled_jobs: r.cancelled_jobs })
+      await deliver({
+        kind: 'send', channel: config.channel, inbox_id: config.inbox_id, target: hit.userId,
+        payload: { type: 'text', text: '🧪 รีเซ็ตแล้ว — บอทพร้อมตอบ เริ่มทดสอบได้เลย' },
+      }, { ...config, reply_token: hit.replyToken })
+    } catch (e) {
+      // รีเซ็ตไม่สำเร็จก็ยังต้องกินข้อความนี้ทิ้ง ไม่ปล่อยให้ไหลไปเป็นข้อความลูกค้า
+      log.error('test_reset_failed', { channel: key, reason: e.message })
+    }
+  }
 }
 
 async function handleCommand(req, res) {
@@ -849,6 +906,13 @@ async function handleCommand(req, res) {
   //   ด้วย action stats_agents ก็จะไปตายที่ฐานด้วย 42501 ตามที่ควรเป็น
   //   การซ่อนปุ่มบนหน้าเว็บเป็นเรื่องความสะอาดตาเท่านั้น ไม่นับเป็นการป้องกัน
   if (STATS_ACTIONS.has(input.action)) {
+    return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
+  }
+
+  // ★ หน้า log — ทางเดียวกับหน้าสถิติ ยิงด้วย token ของคนที่ล็อกอิน
+  //   ด่านสิทธิ์ (admin เท่านั้น) อยู่ที่ inbox.stats_scope('admin') ในฐาน
+  //   log มีข้อความลูกค้าดิบ จึงแคบกว่าหน้าสถิติที่เปิดถึง manager
+  if (LOG_ACTIONS.has(input.action)) {
     return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
   }
 
@@ -886,7 +950,8 @@ async function handleCommand(req, res) {
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
 const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
   '/sla.mjs': 'sla.mjs',
-  '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css' }
+  '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
+  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css' }
 
 async function handleStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw fail(405, 'method_not_allowed')
