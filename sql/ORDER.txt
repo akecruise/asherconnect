@@ -32,7 +32,12 @@ _ledger.sql
 # ── ชุดที่ทำหลังจากนั้น ──
 015_bot_switch_admin_only.sql
 
-# ── ชั้น stats + capture (ยังไม่ได้ลง VPS ณ 2026-09-15) ──
+# ── ชั้น stats + capture ──
+# ★ ยังไม่ได้ลงโปรดักชัน ณ 2026-09-16 — ตรวจจากวัตถุจริงบนฐาน ไม่ได้เชื่อชื่อไฟล์:
+#     016/017 ไม่มี inbox.abandon_stale_windows · 018 ไม่มี inbox.stats_agent_detail
+#     019 เป็นไฟล์ตั้ง cron ของ 016-018 จึงลงไม่ได้ก่อน · 020 ไม่มี inbox.extract_referral
+#     021 ลงไปบางส่วน: inbox.emit มีแล้ว แต่ inbox.emit_from_message ยังไม่มี
+#   ★ 021 ที่ลงครึ่งเดียวคือสภาพที่อันตรายที่สุดในรายการนี้ — ต้องรันทั้งไฟล์ให้จบ
 016_stats_schema.sql
 017_stats_functions.sql
 018_stats_api.sql
@@ -64,6 +69,7 @@ _ledger.sql
 #   โดยตั้งใจ — เป็นการยกด่านสิทธิ์เป็น manager และเพิ่มตัวกรอง/คะแนน
 #   run.mjs จะขึ้นว่า [ทับเฉย ๆ] ซึ่งถูกแล้ว ไม่ต้อง drop ก่อนเพราะลายเซ็นเท่าเดิม
 #   ★ ต้องอยู่หลัง 023 เสมอ — อ่าน inbox.settings / setting_int / setting_time / sla_elapsed_minutes จาก 023
+# ★ ยังไม่ได้ลงโปรดักชัน ณ 2026-09-16 — ฐานไม่มี inbox.stats_overview
 027_stats_v2.sql
 
 # ★ 028 เปลี่ยนพฤติกรรมของระบบที่รันอยู่ (ตั้ง pg_cron 3 งาน)
@@ -94,7 +100,7 @@ _ledger.sql
 #   และ reset_test ที่ไฟล์ของ asher-web ทำหายไปแล้วตั้งแต่ 2026-09-15
 032_worker_resync.sql
 
-# ★ 033 ยังไม่ได้ลงโปรดักชัน (รออนุมัติ) — กู้อีกสองชิ้นที่ 002 พาย้อนรุ่นไปด้วย
+# ★ 033 ลงโปรดักชันแล้ว 2026-09-16 05:18Z — กู้อีกสองชิ้นที่ 002 พาย้อนรุ่นไปด้วย
 #   connect_private.receive_event (กิ่ง group_command + reply_token + ad) จาก 006
 #   inbox.extract_phone (วงเล็บนอกสุดของ regex) จาก 014
 033_receive_event_resync.sql
