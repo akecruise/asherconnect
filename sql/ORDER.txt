@@ -36,8 +36,11 @@ _ledger.sql
 # ★ ยังไม่ได้ลงโปรดักชัน ณ 2026-09-16 — ตรวจจากวัตถุจริงบนฐาน ไม่ได้เชื่อชื่อไฟล์:
 #     016/017 ไม่มี inbox.abandon_stale_windows · 018 ไม่มี inbox.stats_agent_detail
 #     019 เป็นไฟล์ตั้ง cron ของ 016-018 จึงลงไม่ได้ก่อน · 020 ไม่มี inbox.extract_referral
-#     021 ลงไปบางส่วน: inbox.emit มีแล้ว แต่ inbox.emit_from_message ยังไม่มี
-#   ★ 021 ที่ลงครึ่งเดียวคือสภาพที่อันตรายที่สุดในรายการนี้ — ต้องรันทั้งไฟล์ให้จบ
+#     021 ยังไม่เคยลง ไม่มีอะไรเรียกใช้ — ตรวจแล้วไม่มีทั้ง inbox.emit,
+#     emit_from_message, emit_idle_events, purge_channel_events และไม่มีตาราง
+#     outbox/channel_event/retention_policy · ไม่มี trigger หรือฟังก์ชันใดอ้างถึง
+#   ★ รายงานเดิมที่ว่า "ลงครึ่งเดียว" ผิด — คิวรีค้น proname='emit' โดยไม่ระบุ
+#     schema จึงไปแมตช์ connect_private.emit ซึ่งเป็นคนละฟังก์ชัน
 016_stats_schema.sql
 017_stats_functions.sql
 018_stats_api.sql
