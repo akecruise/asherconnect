@@ -142,3 +142,9 @@
 - ยืนยันว่าไม่มีระบบ knowledge/answer/learning อยู่ก่อน (greenfield)
 - สร้างเอกสารชุด `docs/answer-hub/` (20 ไฟล์ + adr 5 ไฟล์)
 - ไม่มี code change, ไม่มี DB change
+## 2026-09-18 — Production rollout gate
+
+- Created and verified a fresh PostgreSQL production backup before migration work.
+- Reconciled production ledger/catalog read-only.
+- Stopped safely when the canonical source registry migration found missing `public.promotions` and `public.project_facts` dependencies; transaction rolled back.
+- No production deployment or data mutation completed.

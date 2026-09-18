@@ -33,6 +33,14 @@ ANSWER_HUB_DYNAMIC_DATA_ENABLED=false
 
 ## Deployment Log
 
+### MVP rollout gate — schema conflict (2026-09-18)
+
+- Fresh backup: `/opt/asher-inbox/backup-pre-answer-hub-20260918T174500Z.dump`, 1,825,337 bytes, SHA-256 `b650b978d8ff65acaf95ec782b4ec3c8fb37dec32b85a339e09b60749cac837e`, CUSTOM archive verified with PostgreSQL 17 `pg_restore`.
+- Release commit: `d793c7344c2cfbd0c42187d586ae5617235442ee`.
+- Migration attempt: `202609180530_source_registry.sql` only, canonical first release migration, transaction rolled back.
+- Blocker: production lacks `public.promotions` and `public.project_facts`, required by the migration. No guessed schema was created.
+- Result: NOT DEPLOYED; production remains on `97d1b6362cc4ab2db6225c7d3b5531b829fec992`.
+
 ### Phase 8 — Corrected Controlled Deploy (2026-09-18 09:00+07:00)
 - **Status**: COMPLETE within original controlled-deploy scope
 - **Deployed Commit**: `97d1b6362cc4ab2db6225c7d3b5531b829fec992`

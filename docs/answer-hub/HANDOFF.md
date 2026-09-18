@@ -574,3 +574,15 @@ Deployment is BLOCKED before migration/deploy. Read-only production checks show 
 Per `DEPLOYMENT.md`, do not apply migrations or deploy until an operator creates and verifies a fresh database backup and reconciles the production ledger/catalog with the release migration plan. No production data, flags, secrets, or containers were changed in this release attempt.
 
 Rollback point: production commit `97d1b6362cc4ab2db6225c7d3b5531b829fec992`; release commit remains available as `d793c7344c2cfbd0c42187d586ae5617235442ee`.
+
+## Production rollout attempt and schema blocker (2026-09-18)
+
+Fresh backup created before any migration: `/opt/asher-inbox/backup-pre-answer-hub-20260918T174500Z.dump` (1,825,337 bytes; SHA-256 `b650b978d8ff65acaf95ec782b4ec3c8fb37dec32b85a339e09b60749cac837e`; PostgreSQL CUSTOM archive, 1,756 TOC entries, readable by PostgreSQL 17 `pg_restore`).
+
+Forensic catalog classification found the foundation/item/version migrations ledgered; source registry, bindings, resolver, service expansion, answer edit, import, learning, review, quick answer, recommendation, usage, feedback, and health release migrations were not ledgered. Existing old `ah_*` functions are therefore not treated as proof that the newer migrations were applied.
+
+The first canonical release migration, `202609180530_source_registry.sql`, was executed once inside a transaction as `supabase_admin` and rolled back on dependency validation. It references `public.promotions` and `public.project_facts`; neither table exists in production. Post-rollback verification confirmed the source registry table and ledger row were not created. No production data, functions, flags, containers, or application code changed.
+
+Classification: `202609180530_source_registry.sql` = CONFLICTING; dependent release migrations remain NOT_APPLIED. Required action is an explicit schema decision/migration for the missing business tables or a reviewed source-registry compatibility migration. Do not create guessed placeholder tables and do not continue with dependent migrations.
+
+Deployment remains BLOCKED. Production stays on `97d1b6362cc4ab2db6225c7d3b5531b829fec992` and remains healthy.

@@ -48,3 +48,10 @@ The detailed phase table above predates the MVP execution pass. Canonical MVP re
 - Phases 13–25, 27–29: MVP READY
 - Phase 26: BLOCKED for production execution pending release artifact, production backup, migration ledger verification, and controlled deployment window
 - Phase 30: COMPLETE — MVP READY for local implementation and regression; production deployment remains explicitly NOT DEPLOYED
+## Production MVP rollout status (2026-09-18)
+
+- Local Phase 1–30 MVP: COMPLETE and regression-tested.
+- Production rollout: BLOCKED by schema conflict in `202609180530_source_registry.sql`.
+- Fresh backup verified before migration attempt; migration transaction rolled back cleanly.
+- Missing production dependencies: `public.promotions`, `public.project_facts`.
+- No production application, flags, data, or migration ledger changes were made.

@@ -42,4 +42,4 @@
 - `git diff --check`: PASS
 - Production read-only: container healthy, `/healthz` HTTP 200, deployed SHA `97d1b6362cc4ab2db6225c7d3b5531b829fec992`
 - Release SHA: `d793c7344c2cfbd0c42187d586ae5617235442ee`
-- Production: NOT DEPLOYED; fresh backup and migration-ledger/catalog reconciliation are required before any migration or code deploy.
+- Production: NOT DEPLOYED; fresh backup is verified, but rollout is blocked by missing production dependencies `public.promotions` and `public.project_facts` required by the first release migration.
