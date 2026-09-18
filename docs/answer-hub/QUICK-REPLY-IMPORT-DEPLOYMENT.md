@@ -22,3 +22,12 @@ Authenticated admin preview/apply was not run from this environment because no u
 - `/healthz`: HTTP 200; `/health`: HTTP 200; container healthy; database, workers, queue, LINE, and Messenger healthy.
 - The authenticated browser/computer-use capability is unavailable in this environment, so the required Admin preview/apply could not be performed without bypassing authentication.
 - Production data result: no Quick Reply rows changed. Asher Naii preview/apply remains pending an authenticated Admin session.
+
+## Manual Admin runbook
+
+1. Sign in at `https://inbox.apluscondo.com/` with the normal Admin account. The application stores the session in its existing HttpOnly cookie; do not copy or disclose it.
+2. Open `/quick-replies`, choose **Import file**, select `imports/asher-facebook-quick-replies-filled-naii.xlsx`, and click **ตรวจสอบข้อมูล**.
+3. Before applying, require: `total=32`, `valid=32`, `invalid=0`, and `create + update + skip = 32`. Review every UPDATE row for shortcut, category, Thai text, multiline content, URLs, and active state. Confirm `NAII_PRICE`, `NAII_PSM`, and `NAII_ROOM_PRICE` are inactive.
+4. If any count or UPDATE is unexpected, close the dialog and do not apply.
+5. If the gate passes, click **นำเข้า 32 รายการ**, wait for the result, and refresh the list. Confirm all 32 shortcuts, Thai/multiline/URL content, and inactive price rows.
+6. Confirm `/healthz` and `/health` remain HTTP 200 after the import. No schema or deployment change is required.
