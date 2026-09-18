@@ -20,6 +20,7 @@
 //   ANSWER_HUB_IMPORT_ENABLED        import (Phase 10+ — ยัง NOT_AVAILABLE_YET)
 
 import { renderFromResolve } from './render.mjs'
+import { parseImportFile, validateImportRows } from './import.mjs'
 
 // ── error model กลาง (client เห็นแค่ code พวกนี้ — ห้าม raw SQL/stack/secret) ──
 export const CODES = {
@@ -286,7 +287,74 @@ export function createAnswerHubService({ callRpc, flags, log = () => {} }) {
 
   const passthrough = (fn) => async (token, data) => rpc(token, fn, data)
 
+  async function preview(token, data = {}) {
+    // Always authorize through SQL, including static and new, unsaved previews.
+    const access = await rpc(token, 'ah_editor_options', {})
+    if (!access.ok) return access
+    if (typeof data.body_template !== 'string' || !data.body_template.trim()
+      || !['static', 'dynamic', 'hybrid'].includes(data.answer_type)
+      || !Array.isArray(data.bindings ?? [])) return disabled(CODES.ANSWER_INVALID)
+    let resolved = { values: {}, missing: [], sources: [], detail: [] }
+    if (data.answer_type !== 'static') {
+      if (!(await flags.isEnabled('dynamic'))) return disabled(CODES.FEATURE_DISABLED)
+      const result = await rpc(token, 'ah_preview_data', { bindings: data.bindings ?? [], context: data.context ?? {} })
+      if (!result.ok) return result
+      resolved = result.data
+    }
+    // Unknown template variables must remain visible, never silently disappear.
+    const variables = [...data.body_template.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)].map(m => m[1])
+    const missing = [...new Set([...(resolved.missing ?? []), ...variables.filter(v => !Object.hasOwn(resolved.values ?? {}, v))])]
+    const rendered = renderFromResolve(data.body_template, { ...resolved, missing })
+    return { ok: true, rendered_text: rendered.text, missing, requires_human_review: missing.length > 0,
+      sources_used: resolved.sources ?? [], warnings: (resolved.detail ?? []).filter(d => d.status !== 'ok'),
+      attachments: data.attachments ?? [] }
+  }
+
+  async function importPreview(token, data = {}) {
+    if (!(await flags.isEnabled('import'))) return disabled(CODES.FEATURE_DISABLED)
+    try {
+      const parsed = validateImportRows(parseImportFile(data))
+      if (parsed.invalid.length) return { ok: false, code: CODES.ANSWER_INVALID, invalid: parsed.invalid }
+      return rpc(token, 'ah_import_preview', { rows: parsed.rows })
+    } catch { return disabled(CODES.ANSWER_INVALID) }
+  }
+
   const handlers = {
+    ah_editor_options: passthrough('ah_editor_options'),
+    ah_editor_get: async (t, d) => {
+      const access = await rpc(t, 'ah_editor_options', {})
+      return access.ok ? rpc(t, 'ah_get', d) : access
+    },
+    ah_preview: preview,
+    ah_import_preview: importPreview,
+    ah_import_commit: async (t, d) => (await flags.isEnabled('import')) ? rpc(t, 'ah_import_commit', d) : disabled(CODES.FEATURE_DISABLED),
+    ah_learning_list: async (t, d) => (await flags.isEnabled('learning')) ? rpc(t, 'ah_learning_list', d) : disabled(CODES.FEATURE_DISABLED),
+    ah_learning_review: async (t, d) => (await flags.isEnabled('learning')) ? rpc(t, 'ah_learning_review', d) : disabled(CODES.FEATURE_DISABLED),
+    ah_quick_answer: async (t, d = {}) => {
+      const body = { ...d }
+      for (const key of FILTER_UUIDS) {
+        if (body[key] !== undefined && body[key] !== null && body[key] !== '') {
+          const value = asUuid(body[key])
+          if (!value) return disabled(CODES.ANSWER_INVALID)
+          body[key] = value
+        }
+      }
+      if (body.query !== undefined && (typeof body.query !== 'string' || body.query.trim().length > 200)) return disabled(CODES.ANSWER_INVALID)
+      return rpc(t, 'ah_quick_answer', body)
+    },
+    ah_recommend: async (t, d = {}) => {
+      const body = { ...d }
+      if (body.project_id !== undefined && body.project_id !== null && body.project_id !== '') {
+        const value = asUuid(body.project_id)
+        if (!value) return disabled(CODES.ANSWER_INVALID)
+        body.project_id = value
+      }
+      if (body.question !== undefined && (typeof body.question !== 'string' || body.question.trim().length > 500)) return disabled(CODES.ANSWER_INVALID)
+      return rpc(t, 'ah_recommend', body)
+    },
+    ah_usage_record: (t, d) => rpc(t, 'ah_usage_record', d),
+    ah_feedback: (t, d) => rpc(t, 'ah_feedback', d),
+    ah_health: (t, d) => rpc(t, 'ah_health', d),
     ah_list: (t, d) => listAnswers(t, d),
     ah_get: (t, d) => getAnswer(t, d?.id),
     ah_save: (t, d) => rpc(t, 'ah_save', d),
@@ -298,7 +366,7 @@ export function createAnswerHubService({ callRpc, flags, log = () => {} }) {
     ah_binding_list: passthrough('ah_binding_list'),
     ah_binding_save: passthrough('ah_binding_save'),
     ah_binding_delete: passthrough('ah_binding_delete'),
-    ah_resolve: (t, d) => resolveAnswer(t, d),
+    ah_resolve: (t, d) => resolveCore(t, d),
   }
 
   return {
@@ -344,8 +412,9 @@ export function createAnswerHubService({ callRpc, flags, log = () => {} }) {
     botResolve,
 
     // ── boundary ของ Phase ที่ยังไม่ถึง — คืน controlled state ห้ามแต่งผล ──
-    async recommendAnswers() {
-      return { ok: false, code: CODES.NOT_AVAILABLE_YET, phase: 14 }
+    async recommendAnswers(token, data = {}) {
+      if (!(await flags.isEnabled('master'))) return disabled(CODES.HUB_DISABLED)
+      return handlers.ah_recommend(token, data)
     },
     async recordUsage() {
       return { ok: false, code: CODES.NOT_AVAILABLE_YET, phase: 16 }
@@ -353,8 +422,10 @@ export function createAnswerHubService({ callRpc, flags, log = () => {} }) {
     async submitFeedback() {
       return { ok: false, code: CODES.NOT_AVAILABLE_YET, phase: 17 }
     },
-    async learningReview() {
-      return { ok: false, code: CODES.NOT_AVAILABLE_YET, phase: 11 }
+    async learningReview(token, data = {}) {
+      if (!(await flags.isEnabled('master'))) return disabled(CODES.HUB_DISABLED)
+      if (!(await flags.isEnabled('learning'))) return disabled(CODES.FEATURE_DISABLED)
+      return rpc(token, 'ah_learning_review', data)
     },
   }
 }

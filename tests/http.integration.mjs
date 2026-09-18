@@ -63,6 +63,11 @@ async function sql(text) {
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 8 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(line => line.split('|'))
 }
+async function sqlAdmin(text) {
+  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'supabase_admin', '-d', 'postgres',
+    '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 8 << 20 })
+  return stdout.trim().split('\n').filter(Boolean).map(line => line.split('|'))
+}
 const one = async text => (await sql(text))[0]?.[0] ?? null
 
 // connect_private.worker ดูสิทธิ์จาก request.jwt.claims ที่ PostgREST เป็นคนใส่ให้
@@ -109,27 +114,43 @@ async function setup() {
 }
 
 async function teardown(scene) {
-  if (!scene) return
   // ลบจากปลายทางกลับมาต้นทาง ไม่งั้นติด foreign key
   await sql(`
     begin;
+    create temp table _i on commit drop as
+      select id from inbox.inbox where name like '%${TAG}%';
     create temp table _c on commit drop as
-      select c.id from inbox.conversation c join inbox.inbox i on i.id=c.inbox_id where i.name like '%${TAG}%';
+      select c.id from inbox.conversation c where c.inbox_id in (select id from _i);
     create temp table _ct on commit drop as
       select distinct contact_id as id from core.contact_identity where external_id like '%${TAG}%';
     create temp table _l on commit drop as
       select id from crm.lead where extra->>'connect_conversation_id' in (select id::text from _c);
     delete from connect_private.delivery d using inbox.message m
       where d.message_id=m.id and m.conversation_id in (select id from _c);
+    delete from bot.reply_sample where message_id in (select id from inbox.message where conversation_id in (select id from _c))
+      or conversation_id in (select id from _c) or inbox_id in (select id from _i);
+    delete from connect_private.inbound_event where message_id in (select id from inbox.message where conversation_id in (select id from _c))
+      or inbox_id in (select id from _i);
+    delete from inbox.bot_decisions where message_id in (select id from inbox.message where conversation_id in (select id from _c))
+      or conversation_id in (select id from _c);
+    delete from inbox.message_intents where message_id in (select id from inbox.message where conversation_id in (select id from _c))
+      or conversation_id in (select id from _c);
+    delete from connect_private.job where message_id in (select id from inbox.message where conversation_id in (select id from _c))
+      or conversation_id in (select id from _c) or inbox_id in (select id from _i);
+    delete from inbox.quick_reply_usage where message_id in (select id from inbox.message where conversation_id in (select id from _c))
+      or conversation_id in (select id from _c);
     delete from connect_private.command where conversation_id in (select id from _c);
     delete from connect_private.audit where conversation_id in (select id from _c);
     delete from connect_private.case_state where conversation_id in (select id from _c);
+    delete from bot.pending_draft where conversation_id in (select id from _c);
+    delete from inbox.human_reply_events where conversation_id in (select id from _c);
+    delete from inbox.conversation_outcomes where conversation_id in (select id from _c) or inbox_id in (select id from _i);
     delete from crm.activity where conversation_id in (select id from _c) or lead_id in (select id from _l);
     delete from core.event_log where entity_id in (select id from _c) or entity_id in (select id from _l);
     delete from inbox.message where conversation_id in (select id from _c);
     delete from inbox.conversation where id in (select id from _c);
     delete from crm.lead where id in (select id from _l);
-    delete from core.contact_identity where external_id like '%${TAG}%';
+    delete from core.contact_identity where contact_id in (select id from _ct);
     delete from crm.lead where contact_id in (select id from _ct);
     delete from core.contact where display_name like '%${TAG}%' or id in (select id from _ct);
     delete from inbox.inbox where name like '%${TAG}%';
@@ -137,6 +158,9 @@ async function teardown(scene) {
     delete from inbox.sales_staff_identity where external_id like '%${TAG}%';
     delete from inbox.sales_staff where name like '%${TAG}%';
     commit;`)
+  // Answer Hub tables are owned by supabase_admin locally. This makes a prior
+  // interrupted HTTP run recoverable without broad or customer-data cleanup.
+  await sqlAdmin(`delete from answer_hub.answer_item where title like '[__httptest__]%'`)
 }
 
 // ────────────────────────────────── ยกเซิร์ฟเวอร์จากซอร์ส
@@ -216,6 +240,9 @@ async function main() {
   let scene, server
   const extraServers = []
   try {
+    // A killed test process may not reach finally. Clear only this suite's
+    // explicit fixture tag before allocating its fixed inbox names.
+    await teardown({})
     scene = await setup()
     server = await startServer(scene, cfg)
 
@@ -1111,6 +1138,94 @@ async function main() {
       ck(72, 'admin บันทึกกฎผ่านเซสชันเดิม รีเฟรชแล้วค่าคงอยู่ และคืนค่าเดิมได้',
         r1.status === 200 && persisted && back.status === 200 && Number(after) === Number(before),
         `บันทึก ${r1.status} · คงอยู่ ${persisted} · คืนค่า ${after}→${before}`)
+    }
+    // Phase 9: real authenticated command path, gates, and editor lifecycle.
+    {
+      const shell = await fetch(BASE + '/answer-hub')
+      const html = await shell.text()
+      ck(73, 'Answer Hub uses existing login shell', shell.status === 200 && html.includes('id="login-panel"') && html.includes('id="app-nav"'))
+      const denied = await command('ah_preview', { answer_type: 'static', body_template: 'x' })
+      ck(74, 'Anonymous editor command rejected', denied.status === 401)
+      const admin = await testUser('admin.test@')
+      const session = await login(BASE, admin)
+      const disabled = await commandAs(session.cookie, 'ah_editor_options', {})
+      ck(75, 'Answer Hub remains disabled by default', JSON.parse(disabled.body).code === 'HUB_DISABLED')
+      const enabled = await startServer(scene, cfg, { ANSWER_HUB_ENABLED: 'true', ANSWER_HUB_DYNAMIC_DATA_ENABLED: 'true' }, PORT + 8)
+      extraServers.push(enabled)
+      const a = await login(enabled.base, admin)
+      const manager = await login(enabled.base, await testUser('manager.test@'))
+      const sales = await login(enabled.base, user)
+      const hub = async (cookie, action, data = {}) => {
+        const r = await fetch(enabled.base + '/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', origin: enabled.base, cookie }, body: JSON.stringify({ action, data }) })
+        return r.json()
+      }
+      const blocked = await hub(sales.cookie, 'ah_editor_options')
+      ck(76, 'Sales cannot open editor RPC', blocked.code === 'ANSWER_NOT_ALLOWED')
+      let id
+      try {
+        const draft = await hub(manager.cookie, 'ah_save', { answer_key: 'httptest_' + randomUUID(), title: '[__httptest__] Phase 9', body_template: 'Hello', bindings: [] })
+        id = draft.data?.id
+        const review = await hub(manager.cookie, 'ah_save', { id, submit: true })
+        const forbidden = await hub(manager.cookie, 'ah_approve', { id })
+        const approved = await hub(a.cookie, 'ah_approve', { id })
+        const edited = await hub(manager.cookie, 'ah_save', { id, body_template: 'Changed', change_reason: 'HTTP test' })
+        const loaded = await hub(manager.cookie, 'ah_editor_get', { id })
+        ck(77, 'Editor create / submit / approve / edit / history through real RPC',
+          draft.data?.status === 'draft' && review.data?.status === 'review' && forbidden.code === 'ANSWER_NOT_ALLOWED' && approved.data?.status === 'approved' && edited.data?.status === 'review' && loaded.data?.versions?.length === 1)
+        const preview = await hub(manager.cookie, 'ah_preview', { answer_type: 'static', body_template: 'Unsaved {{missing}}', bindings: [] })
+        ck(78, 'Unsaved preview uses shared renderer without changing saved answer', preview.rendered_text === 'Unsaved {{missing}}' && preview.requires_human_review && loaded.data?.item.body_template === 'Changed')
+        const retired = await hub(a.cookie, 'ah_retire', { id })
+        const rejected = await hub(manager.cookie, 'ah_save', { id, body_template: 'No' })
+        ck(79, 'Retired answer cannot be edited', retired.data?.status === 'retired' && rejected.code === 'ANSWER_NOT_ALLOWED')
+      } finally {
+        if (id) await sqlAdmin(`delete from answer_hub.answer_item where id='${id}'::uuid and title='[__httptest__] Phase 9'`)
+      }
+      // Phase 10: Node parsing, preview/read-only semantics, admin-only atomic apply and audit.
+      const importing = await startServer(scene, cfg, { ANSWER_HUB_ENABLED: 'true', ANSWER_HUB_IMPORT_ENABLED: 'true' }, PORT + 9)
+      extraServers.push(importing)
+      const ia = await login(importing.base, admin)
+      const im = await login(importing.base, await testUser('manager.test@'))
+      const importCall = async (cookie, action, data) => (await fetch(importing.base + '/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', origin: importing.base, cookie }, body: JSON.stringify({ action, data }) })).json()
+      const csv = 'category,title,answer\nprice_promo,[__httptest__] Imported,Imported body'
+      const preview = await importCall(ia.cookie, 'ah_import_preview', { filename: 'answers.csv', content: csv })
+      const deniedImport = await importCall(im.cookie, 'ah_import_preview', { filename: 'answers.csv', content: csv })
+      const appliedImport = await importCall(ia.cookie, 'ah_import_commit', { rows: preview.data?.rows })
+      ck(80, 'Import preview is admin-only and apply creates an audited answer batch', preview.data?.new === 1 && deniedImport.code === 'ANSWER_NOT_ALLOWED' && appliedImport.data?.count === 1 && Boolean(appliedImport.data?.batch_id))
+      await sqlAdmin("delete from answer_hub.answer_item where title='[__httptest__] Imported'; delete from answer_hub.import_batch where result::text like '%[__httptest__] Imported%'")
+      // Phase 11: worker-only capture feeds a manager queue; review remains unavailable to sales.
+      await sql(`insert into inbox.message(conversation_id,sender_type,content) values('${scene.conv}','agent','[__httptest__] learning answer')`)
+      await sql(asService(`select inbox.ah_learning_create(jsonb_build_object('conversation_id','${scene.conv}'::uuid));`))
+      const learning = await startServer(scene, cfg, { ANSWER_HUB_ENABLED: 'true', ANSWER_HUB_LEARNING_ENABLED: 'true' }, PORT + 10)
+      extraServers.push(learning)
+      const la = await login(learning.base, admin)
+      const lm = await login(learning.base, await testUser('manager.test@'))
+      const ls = await login(learning.base, user)
+      const learningCall = async (cookie, action, data = {}) => (await fetch(learning.base + '/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', origin: learning.base, cookie }, body: JSON.stringify({ action, data }) })).json()
+      const queue = await learningCall(lm.cookie, 'ah_learning_list', { status: 'pending' })
+      const candidate = queue.data?.rows?.find(x => x.conversation_id === scene.conv)
+      const deniedLearning = await learningCall(ls.cookie, 'ah_learning_list', {})
+      const approvedLearning = candidate && await learningCall(la.cookie, 'ah_learning_review', { id: candidate.id, decision: 'approve', answer: { title: '[__httptest__] Learned', body_template: 'Human reviewed answer' } })
+      const learnedId = approvedLearning?.data?.answer_id
+      const learned = learnedId && await sqlAdmin(`select status,bot_auto_answer from answer_hub.answer_item where id='${learnedId}'::uuid`)
+      ck(81, 'Learning capture is worker-only; manager queue and admin review are authorized',
+        Boolean(candidate) && deniedLearning.code === 'ANSWER_NOT_ALLOWED' && approvedLearning?.data?.candidate?.status === 'approved'
+          && learned?.[0]?.[0] === 'review' && learned?.[0]?.[1] === 'f')
+      if (learnedId) await sqlAdmin(`delete from answer_hub.answer_item where id='${learnedId}'::uuid`)
+      await sqlAdmin(`delete from answer_hub.learning_candidate where conversation_id='${scene.conv}'::uuid`)
+      // Phase 13: sales picker is read-only and must never expose bot-only answers.
+      const quickId = (await sqlAdmin(`insert into answer_hub.answer_item(category_id,title,body_template,status,audience,show_in_quick_answer,bot_auto_answer)
+        select id,'[__httptest__] Quick human','Use this editable draft','approved','human',true,false from answer_hub.answer_category order by sort_order limit 1 returning id`))[0]?.[0]
+      await sqlAdmin(`insert into answer_hub.answer_item(category_id,title,body_template,status,audience,show_in_quick_answer,bot_auto_answer)
+        select id,'[__httptest__] Quick bot','Must remain hidden','approved','bot',true,true from answer_hub.answer_category order by sort_order limit 1`)
+      const quick = await startServer(scene, cfg, { ANSWER_HUB_ENABLED: 'true' }, PORT + 11)
+      extraServers.push(quick)
+      const qs = await login(quick.base, user)
+      const quickCall = async data => (await fetch(quick.base + '/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', origin: quick.base, cookie: qs.cookie }, body: JSON.stringify({ action: 'ah_quick_answer', data }) })).json()
+      const quickRows = await quickCall({ query: '[__httptest__] Quick' })
+      const quickInvalid = await quickCall({ project_id: 'not-a-uuid' })
+      ck(82, 'Quick Answer exposes approved human answers only and rejects malformed filters',
+        quickRows.data?.rows?.some(x => x.id === quickId) && !quickRows.data?.rows?.some(x => x.title === '[__httptest__] Quick bot') && quickInvalid.code === 'ANSWER_INVALID')
+      await sqlAdmin("delete from answer_hub.answer_item where title like '[__httptest__] Quick%'")
     }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }

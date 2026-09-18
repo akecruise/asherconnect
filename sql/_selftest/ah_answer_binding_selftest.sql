@@ -143,6 +143,10 @@ begin
     if sqlerrm <> 'ah_not_found' then raise notice 'ได้ %', sqlerrm; v_fail := v_fail + 1; end if;
   end;
 
+  -- Phase 9: binding changes invalidate approval; approve the completed fixture.
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_admin)::text, true);
+  perform inbox.ah_approve(jsonb_build_object('id', v_item));
+
   -- 5. T09+T10 — sales resolve ของ approved: values ครบจากฐานจริง · ของที่ไม่มีอยู่ใน missing ไม่เดา
   perform set_config('request.jwt.claims', jsonb_build_object('sub', v_sales)::text, true);
   r := inbox.ah_resolve(jsonb_build_object('answer_id', v_item,
@@ -213,7 +217,7 @@ begin
 
   -- 8. ah_get คืน {item, versions, bindings} ครบ
   r := inbox.ah_get(jsonb_build_object('id', v_item));
-  if r->'item'->>'id' is null or jsonb_array_length(r->'versions') <> 0
+  if r->'item'->>'id' is null or jsonb_array_length(r->'versions') <> 2
      or jsonb_array_length(r->'bindings') <> 7 then
     raise notice 'ah_get รูปทรงใหม่ไม่ครบ: item=% versions=% bindings=%',
       r->'item'->>'id', jsonb_array_length(r->'versions'), jsonb_array_length(r->'bindings');

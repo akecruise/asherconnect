@@ -8,6 +8,60 @@ import { createAnswerHubService, buildFlags, CODES } from '../services/answer-hu
 const U1 = '11111111-1111-1111-1111-111111111111'
 const U2 = '22222222-2222-2222-2222-222222222222'
 
+test('Phase 9 preview is gated by master before any RPC', async () => {
+  const { service, calls } = makeService()
+  assert.equal((await service.handle('ah_preview', 'tok', {})).code, 'HUB_DISABLED')
+  assert.equal(calls.length, 0)
+})
+test('Phase 9 static preview authorizes and never saves', async () => {
+  const { service, calls } = makeService({ env: { ANSWER_HUB_ENABLED: '1' } })
+  const r = await service.handle('ah_preview', 'tok', { answer_type: 'static', body_template: '<script>x</script> {{unknown}}' })
+  assert.equal(r.rendered_text, '<script>x</script> {{unknown}}')
+  assert.deepEqual(r.missing, ['unknown'])
+  assert.equal(r.requires_human_review, true)
+  assert.deepEqual(calls.map(c => c.fn), ['ah_editor_options'])
+})
+test('Phase 9 denies static preview and editor reads for non-editor roles', async () => {
+  const { service, calls } = makeService({ env: { ANSWER_HUB_ENABLED: '1' }, rpc: () => throwCode('ah_not_allowed') })
+  for (const action of ['ah_preview', 'ah_editor_get']) assert.equal((await service.handle(action, 'sales', { id: U1, body_template: 'text', answer_type: 'static' })).code, 'ANSWER_NOT_ALLOWED')
+  assert.deepEqual(calls.map(c => c.fn), ['ah_editor_options', 'ah_editor_options'])
+})
+test('Phase 9 dynamic preview respects flag and renders unsaved values with the shared renderer', async () => {
+  const env = { ANSWER_HUB_ENABLED: '1' }
+  const { service, calls } = makeService({ env, rpc: fn => fn === 'ah_preview_data'
+    ? { values: { name: 'ERP value' }, missing: ['price'], sources: ['PROJECT_PROFILE'], detail: [{ status: 'missing', variable: 'price' }] } : {} })
+  const input = { answer_type: 'dynamic', body_template: '{{name}} {{price}}', bindings: [], context: { project_id: U1 } }
+  assert.equal((await service.handle('ah_preview', 'tok', input)).code, 'FEATURE_DISABLED')
+  env.ANSWER_HUB_DYNAMIC_DATA_ENABLED = '1'
+  const r = await service.handle('ah_preview', 'tok', input)
+  assert.equal(r.rendered_text, 'ERP value {{price}}')
+  assert.deepEqual(r.missing, ['price'])
+  assert.deepEqual(r.sources_used, ['PROJECT_PROFILE'])
+  assert.equal(r.warnings.length, 1)
+  assert.deepEqual(calls.at(-1).body.context, input.context)
+  assert.ok(!calls.some(c => c.fn === 'ah_save'))
+})
+test('Phase 9 editor can load expired answers for correction', async () => {
+  const { service } = makeService({ env: { ANSWER_HUB_ENABLED: '1' }, rpc: fn => fn === 'ah_get' ? approvedDynamic({ valid_to: '2000-01-01' }) : {} })
+  const r = await service.handle('ah_editor_get', 'tok', { id: U1 })
+  assert.equal(r.ok, true)
+  assert.equal(r.data.item.valid_to, '2000-01-01')
+})
+test('Phase 9 resolve command dispatch reaches renderer', async () => {
+  const { service } = makeService({ env: { ANSWER_HUB_ENABLED: '1' }, rpc: () => approvedDynamic({ answer_type: 'static', body_template: 'hello' }) })
+  assert.equal((await service.handle('ah_resolve', 'tok', { answer_id: U1 })).rendered_text, 'hello')
+})
+
+test('Phase 11 learning queue and review are independently flag-gated and use RPC', async () => {
+  const { service, calls } = makeService({ env: { ANSWER_HUB_ENABLED: '1' } })
+  assert.equal((await service.handle('ah_learning_list', 'tok', {})).code, CODES.FEATURE_DISABLED)
+  const enabled = makeService({ env: { ANSWER_HUB_ENABLED: '1', ANSWER_HUB_LEARNING_ENABLED: 'true' }, rpc: (fn) => fn === 'ah_learning_list' ? { rows: [] } : { candidate: { status: 'rejected' } } })
+  assert.deepEqual((await enabled.service.handle('ah_learning_list', 'tok', { status: 'pending' })).data.rows, [])
+  assert.equal((await enabled.service.learningReview('tok', { id: U1, decision: 'reject' })).data.candidate.status, 'rejected')
+  assert.equal(calls.length, 0)
+  assert.deepEqual(enabled.calls.map(c => c.fn), ['ah_learning_list', 'ah_learning_review'])
+})
+
 function makeService({ rpc = () => ({}), env = {}, logs = [] } = {}) {
   const calls = []
   const service = createAnswerHubService({
@@ -300,9 +354,8 @@ test('S09 searchAnswers → รูปทรง normalized + score null (คะ�
   assert.equal(empty.code, CODES.ANSWER_INVALID)
 })
 
-test('boundary ของ Phase ที่ยังไม่ถึง → NOT_AVAILABLE_YET ไม่แต่งผล', async () => {
+test('boundary ของ Phase ที่ยังไม่ถึง → usage/feedback คืน NOT_AVAILABLE_YET ไม่แต่งผล', async () => {
   const { service } = makeService({ env: { ANSWER_HUB_ENABLED: '1' } })
-  assert.equal((await service.recommendAnswers()).code, CODES.NOT_AVAILABLE_YET)
   assert.equal((await service.recordUsage()).phase, 16)
   assert.equal((await service.submitFeedback()).phase, 17)
 })
@@ -322,4 +375,18 @@ test('buildFlags — env เปิด/override ชนะ env/override พัง�
     loadOverrides: async () => { throw new Error('settings ยังไม่มี') },
   })
   assert.equal(await broken.isEnabled('bot'), true)
+})
+
+test('Phase 13 quick answer validates client filters before RPC and preserves server filtering', async () => {
+  const { service, calls } = makeService({
+    env: { ANSWER_HUB_ENABLED: '1' },
+    rpc: (fn, body) => (fn === 'ah_quick_answer' ? { rows: [], categories: [], received: body } : {}),
+  })
+  const invalid = await service.handle('ah_quick_answer', 'tok', { project_id: 'not-a-uuid' })
+  assert.equal(invalid.code, CODES.ANSWER_INVALID)
+  assert.equal(calls.length, 0)
+  const valid = await service.handle('ah_quick_answer', 'tok', { project_id: U1, category_id: U2, query: 'price' })
+  assert.equal(valid.ok, true)
+  assert.equal(calls.at(-1).fn, 'ah_quick_answer')
+  assert.deepEqual(calls.at(-1).body, { project_id: U1, category_id: U2, query: 'price' })
 })

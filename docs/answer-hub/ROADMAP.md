@@ -143,24 +143,24 @@ Status: NOT STARTED
 - Dependencies: Phase 6
 
 ## Phase 9 — Add/Edit Answer Form
-Status: NOT STARTED
+Status: **COMPLETE** (2026-09-18)
 - Objective: form ครบ field ตาม Master Command + preview resolve + save draft/submit/approve/retire + bindings editor
 - Dependencies: Phase 8
 
 ## Phase 10 — Import System
-Status: NOT STARTED
+Status: **COMPLETE** (2026-09-18)
 - Objective: parse xlsx/csv ฝั่ง Node (lib ใน repo, CSP-safe) → validate → preview → confirm → transaction import
 - Tests: T12 valid, T13 invalid, T14 duplicate
 - Dependencies: Phase 9
 
 ## Phase 11 — Learning System
-Status: NOT STARTED
+Status: **COMPLETE** (2026-09-18)
 - Objective: `learning_candidate` + hook fire-and-forget ที่ human reply + dedupe/score
-- Tests: T15 create candidate; hook พังไม่พัง inbound (T30)
+- Tests: T15 create candidate/dedupe, worker-only capture, queue authorization, and non-blocking post-send hook.
 - Dependencies: Phase 2; flag ANSWER_HUB_LEARNING_ENABLED
 
 ## Phase 12 — Learning Review UI
-Status: NOT STARTED
+Status: **COMPLETE** (2026-09-18)
 - Objective: Learning Queue + approve/edit_approve/merge/reject → สร้าง answer_item (bot_auto_answer=false เสมอ)
 - Tests: T16 approve, T17 merge
 - Dependencies: Phase 11
@@ -267,3 +267,7 @@ Status: NOT STARTED
 
 ## Blockers ปัจจุบัน
 - (ไม่มีที่ block การเขียนโค้ด) ตัวที่ต้องมีคน/บัญชีจริง: apply migration บน VPS ต้องใช้ connection string จากผู้ดูแล (`sql:apply --db …`) — บันทึกไว้ใน HANDOFF ตอนถึง Phase 26
+
+## Canonical MVP checkpoint override — 2026-09-18
+
+Phase 30 local MVP acceptance is complete. See `FINAL-ACCEPTANCE-MATRIX.md` and the latest `HANDOFF.md`. Production deployment is not claimed: Phase 26 remains blocked until the DEPLOYMENT.md backup, release-artifact, migration-ledger, and controlled smoke-test prerequisites are satisfied.

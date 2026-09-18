@@ -218,7 +218,7 @@ const LOG_ACTIONS = new Set(['logs_timeline', 'logs_summary'])
 // ยึดแบบเดียวกับ STATS/LOG: ยิงด้วย token ของคนล็อกอิน ด่านสิทธิ์จริง (sales/manager/admin)
 // อยู่บรรทัดแรกของฟังก์ชันในฐาน (core.current_user_role) ที่นี่กันแค่เรียกนอกทะเบียน
 // ขยายทะเบียนเมื่อไฟล์ sql/ ถัดไปของ answer-hub เพิ่มฟังก์ชัน — แก้ที่เดียวเสมอ
-const AH_ACTIONS = new Set(['ah_list', 'ah_get', 'ah_save', 'ah_approve', 'ah_retire', 'ah_versions', 'ah_source_list', 'ah_source_save', 'ah_resolve', 'ah_binding_list', 'ah_binding_save', 'ah_binding_delete'])
+const AH_ACTIONS = new Set(['ah_editor_options', 'ah_editor_get', 'ah_preview', 'ah_import_preview', 'ah_import_commit', 'ah_learning_list', 'ah_learning_review', 'ah_quick_answer', 'ah_recommend', 'ah_usage_record', 'ah_feedback', 'ah_health', 'ah_list', 'ah_get', 'ah_save', 'ah_approve', 'ah_retire', 'ah_versions', 'ah_source_list', 'ah_source_save', 'ah_resolve', 'ah_binding_list', 'ah_binding_save', 'ah_binding_delete'])
 
 const rpcDirect = (token, fn, body = {}) =>
   callSupabase(DATA, `/rest/v1/rpc/${fn}`, {
@@ -229,7 +229,7 @@ const rpcDirect = (token, fn, body = {}) =>
 // ชั้นบริการคลังคำตอบ (Phase 6) — ประตูเดียวของทุก action ah_* ในตัวจัดการด้านล่าง
 // flags default ปิดหมด (ANSWER_HUB_ENABLED ฯลฯ) — เปิดทีละตัวทาง env / inbox.settings
 const answerHub = createAnswerHubService({
-  callRpc: (token, fn, body) => rpcDirect(token, fn, body),
+  callRpc: (token, fn, body) => rpcDirect(token, fn, { p_data: body }),
   flags: buildFlags({ env: process.env }),
   log: (event, fields) => log.info(event, fields),
 })
@@ -478,7 +478,9 @@ async function runJob(job) {
       flowHealth.log('reply_sent', { channel: config?.key ?? null, ref: result.message_id ?? job.message_id,
                                  ok: result.status === 'sent', detail: result.error ?? null })
       if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
-      return await rpc(service, 'finish', result, true)
+      const finished = await rpc(service, 'finish', result, true)
+      if (result.status === 'sent') { captureAnswerUsage(job, config?.key); if (job.message_id) captureLearning(job.conversation_id, job.message_id) }
+      return finished
     }
     if (job.kind === 'generate') return await runGenerate(job)
     if (job.kind === 'classify') return await runClassify(job)
@@ -493,6 +495,24 @@ async function runJob(job) {
 
 const finishJob = (job, body) =>
   rpc(service, 'finish_job', { job_id: job.id, lease_id: job.lease_id, ...body }, true)
+
+// Learning is deliberately best-effort and only begins after delivery has
+// succeeded. A capture outage must never retry, delay, or alter a human reply.
+const captureLearning = (conversationId, messageId) => {
+  const enabled = ['1', 'true'].includes(String(process.env.ANSWER_HUB_LEARNING_ENABLED ?? '').toLowerCase())
+  if (!enabled || !conversationId) return
+  void rpc(service, 'ah_learning_create', { conversation_id: conversationId, message_id: messageId }, true)
+    .then(result => log.info('learning_candidate_capture', { conversation_id: conversationId, created: Boolean(result?.created) }))
+    .catch(error => log.warn('learning_candidate_capture_failed', { conversation_id: conversationId, reason: error.message }))
+}
+
+// Best-effort usage telemetry; core delivery result is never affected.
+const captureAnswerUsage = (job, channel) => {
+  const answerId = job?.payload?.answer_id
+  if (!answerId) return
+  void rpc(service, 'ah_usage_record', { answer_id: answerId, conversation_id: job.conversation_id, channel }, true)
+    .catch(error => log.warn('answer_usage_record_failed', { reason: error.message }))
+}
 
 // ลูกค้าบล็อกบัญชีเราแล้ว — ติดธงไว้ที่ผู้ติดต่อ จะได้ไม่เสียโควตากับคนที่ไม่ได้ยินเราอีก
 // ล้มตรงนี้ไม่ควรทำให้งานที่เพิ่งส่งไม่สำเร็จกลายเป็นล้มซ้ำ จึงกลืนไว้แต่ต้องบันทึก
@@ -512,6 +532,22 @@ async function runGenerate(job) {
 
   const last = [...(context.history ?? [])].reverse().find(m => m.role === 'user')
   const text = last?.content ?? ''
+  // Phase 15 MVP: a Hub response is allowed only when SQL has already
+  // enforced approved/bot-or-both/bot_auto_answer. Dynamic answers remain on
+  // the human-review path until their bindings can be resolved safely.
+  if (['1', 'true'].includes(String(process.env.ANSWER_HUB_ENABLED ?? '').toLowerCase())
+    && ['1', 'true'].includes(String(process.env.ANSWER_HUB_BOT_ENABLED ?? '').toLowerCase()) && text) {
+    try {
+      const recommended = await rpc(service, 'ah_recommend', { question: text, project_id: context.project?.id, audience: 'bot' }, true)
+      const candidate = recommended?.rows?.find(item => item.answer_type === 'static' && typeof item.body_template === 'string' && item.body_template.trim())
+      if (candidate) {
+        const queued = await rpc(service, 'bot_reply', { conversation_id: job.conversation_id, text: candidate.body_template, offtopic: false }, true)
+        if (!shadow) flowHealth.log('reply_queued', { channel: activeChannels.find(c => c.inbox_id === job.inbox_id)?.key ?? null, ref: queued?.message_id })
+        log.info('answer_hub_bot_replied', { job_id: job.id, answer_id: candidate.id })
+        return finishJob(job, { status: 'done' })
+      }
+    } catch (e) { log.warn('answer_hub_bot_fallback', { job_id: job.id, reason: e.message }) }
+  }
   const known = [
     context.known_phone ? `Customer ALREADY gave phone number: ${context.known_phone}. Do NOT ask for phone again.` : '',
   ].filter(Boolean).join('\n')
@@ -570,7 +606,9 @@ async function runOutbound(job) {
     if (!target) return finishJob(job, { status: 'skipped', skip_reason: 'no_target' })
     const result = await deliver({ ...job, target, payload }, config)
     if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
-    return finishJob(job, result)
+    const finished = await finishJob(job, result)
+    if (result.status === 'sent') { captureAnswerUsage(job, inboxConfig.channel); if (job.message_id) captureLearning(job.conversation_id, job.message_id) }
+    return finished
   }
 
   const targets = notifyTargets(job.payload ?? {}, process.env)
@@ -1316,7 +1354,7 @@ async function handleCommand(req, res) {
 
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
-const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
+const staticFiles = { '/answer-hub': 'index.html', '/answer-hub.js': 'answer-hub.js', '/answer-hub.css': 'answer-hub.css', '/quick-answer.js': 'quick-answer.js', '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
   '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
   '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css',

@@ -74,20 +74,20 @@ begin
   if (r->>'total')::int <> 1 then raise notice 'S08 กรองโครงการ 2 ควรได้ 1 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
 
   -- 3. S09 — search ทั้ง title และ body
-  r := inbox.ah_list(jsonb_build_object('query', 'ราคาโปรโมชั่น'));
+  r := inbox.ah_list(jsonb_build_object('query', 'ราคาโปรโมชั่น', 'category_id', v_cat_a));
   if (r->>'total')::int <> 1 then raise notice 'S09 ค้น title ควรเจอ 1 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
-  r := inbox.ah_list(jsonb_build_object('query', 'คำค้นเฉพาะในเนื้อหา'));
+  r := inbox.ah_list(jsonb_build_object('query', 'คำค้นเฉพาะในเนื้อหา', 'category_id', v_cat_b));
   if (r->>'total')::int <> 1 or (r->'rows'->0->>'title') <> 'ห้องว่างวันนี้ [__selftest__]' then
     raise notice 'S09 ค้น body ต้องเจอห้องว่าง: %', r->>'total'; v_fail := v_fail + 1;
   end if;
 
   -- 4. S18 — pagination: total เป็นของทั้งชุด หน้าข้อมูลถูกตัดตาม page_size
-  r := inbox.ah_list(jsonb_build_object('page_size', 2, 'page', 1));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'page_size', 2, 'page', 1));
   if (r->>'total')::int <> 3 or jsonb_array_length(r->'rows') <> 2 then
     raise notice 'S18 หน้า 1 ต้อง 2 แถว total 3: total=% rows=%', r->>'total', jsonb_array_length(r->'rows');
     v_fail := v_fail + 1;
   end if;
-  r := inbox.ah_list(jsonb_build_object('page_size', 2, 'page', 2));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'page_size', 2, 'page', 2));
   if (r->>'total')::int <> 3 or jsonb_array_length(r->'rows') <> 1 then
     raise notice 'S18 หน้า 2 ต้อง 1 แถว total 3: total=% rows=%', r->>'total', jsonb_array_length(r->'rows');
     v_fail := v_fail + 1;
@@ -95,27 +95,27 @@ begin
 
   -- 5. filter ใหม่ทั้งชุด (audience / bot_auto_answer / answer_type / source_type /
   --    show_in_quick_answer / language)
-  r := inbox.ah_list(jsonb_build_object('audience', 'bot'));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'audience', 'bot'));
   if (r->>'total')::int <> 1 then raise notice 'กรอง audience=bot ควรได้ 1 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
-  r := inbox.ah_list(jsonb_build_object('bot_auto_answer', true));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'bot_auto_answer', true));
   if (r->>'total')::int <> 1 or (r->'rows'->0->>'bot_auto_answer') <> 'true' then
     raise notice 'กรอง bot_auto_answer ไม่ตรง: %', r->>'total'; v_fail := v_fail + 1;
   end if;
-  r := inbox.ah_list(jsonb_build_object('answer_type', 'dynamic'));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'answer_type', 'dynamic'));
   if (r->>'total')::int <> 1 then raise notice 'กรอง answer_type ควรได้ 1 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
-  r := inbox.ah_list(jsonb_build_object('source_type', 'imported'));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'source_type', 'imported'));
   if (r->>'total')::int <> 1 then raise notice 'กรอง source_type ควรได้ 1 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
-  r := inbox.ah_list(jsonb_build_object('show_in_quick_answer', false));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'show_in_quick_answer', false));
   if (r->>'total')::int <> 1 then raise notice 'กรอง show_in_quick_answer=false ควรได้ 1 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
-  r := inbox.ah_list(jsonb_build_object('language', 'th'));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'language', 'th'));
   if (r->>'total')::int <> 3 then raise notice 'กรอง language=th ควรได้ 3 ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
 
   -- 6. สิทธิ์เดิมคงเดิม — sales เห็นแค่ approved · ขอ draft ถูกบังคับกลับเป็น approved
   --    (พฤติกรรมดั้งเดิม Phase 2 ที่ selftest ตอนนั้นรับรอง — ไม่ใช่ของ Phase 6 เปลี่ยน)
   perform set_config('request.jwt.claims', jsonb_build_object('sub', v_sales)::text, true);
-  r := inbox.ah_list('{}'::jsonb);
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]'));
   if (r->>'total')::int <> 2 then raise notice 'sales ต้องเห็น approved 2 เท่านั้น ได้ %', r->>'total'; v_fail := v_fail + 1; end if;
-  r := inbox.ah_list(jsonb_build_object('status', 'draft'));
+  r := inbox.ah_list(jsonb_build_object('query', '[__selftest__]', 'status', 'draft'));
   if (r->>'total')::int <> 2
      or exists (select 1 from jsonb_array_elements(r->'rows') x where x->>'status' <> 'approved') then
     raise notice 'sales ขอ draft ต้องถูกบังคับเป็น approved 2: %', r->>'total'; v_fail := v_fail + 1;

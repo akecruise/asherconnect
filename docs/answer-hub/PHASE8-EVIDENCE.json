@@ -1,0 +1,146 @@
+{
+  "checkedAt": "2026-09-18T02:40:07.753Z",
+  "scope": "controlled deploy; read-only verification",
+  "commit": "97d1b6362cc4ab2db6225c7d3b5531b829fec992",
+  "commitMatches": true,
+  "configHashes": {
+    "env": "da2e57fe4756cf7d838732dbead59de3cd2f342d10148eaf2ca77171a3530b4d",
+    "channels": "a47299bc2b0783cfb746478ed1f86d72e921114115ec95898b017d9ce28e6ce8"
+  },
+  "container": {
+    "status": "running",
+    "health": "healthy",
+    "startedAt": "2026-09-18T01:49:05.491899329Z"
+  },
+  "migrations": [
+    {
+      "filename": "202609172025_health.sql",
+      "sha256": "4cb4ddf3c8899757c32bf1ce8a2e55aa6f4287e652815f66e9fa54a1bdd1862a",
+      "applied_at": "2026-09-17T23:41:53.734194+00:00",
+      "fileSha256": "4cb4ddf3c8899757c32bf1ce8a2e55aa6f4287e652815f66e9fa54a1bdd1862a",
+      "matches": true
+    },
+    {
+      "filename": "202609172100_answer_hub_foundation.sql",
+      "sha256": "aff4d8727625ff79a5258b6fb96873503e60d9ceeb0f8e419894a515d6ce0bbe",
+      "applied_at": "2026-09-17T23:43:13.053668+00:00",
+      "fileSha256": "aff4d8727625ff79a5258b6fb96873503e60d9ceeb0f8e419894a515d6ce0bbe",
+      "matches": true
+    },
+    {
+      "filename": "202609172130_system_status.sql",
+      "sha256": "4885a8ae66ff019d97bc25886915faa7c736454e7ba9f1ccf15a059578313d4d",
+      "applied_at": "2026-09-17T23:44:00.819034+00:00",
+      "fileSha256": "4885a8ae66ff019d97bc25886915faa7c736454e7ba9f1ccf15a059578313d4d",
+      "matches": true
+    },
+    {
+      "filename": "202609172145_answer_item.sql",
+      "sha256": "64f9decf9b439848b435a9b86f502a3898c5b888af4fae1211338e62437e88c8",
+      "applied_at": "2026-09-17T23:44:33.454119+00:00",
+      "fileSha256": "64f9decf9b439848b435a9b86f502a3898c5b888af4fae1211338e62437e88c8",
+      "matches": true
+    },
+    {
+      "filename": "202609180430_answer_version.sql",
+      "sha256": "8049eb0d8b8d54c085ba74c62b27827bbe12a6241236e99f3c82d25b9743ed0e",
+      "applied_at": "2026-09-17T23:45:00.616895+00:00",
+      "fileSha256": "8049eb0d8b8d54c085ba74c62b27827bbe12a6241236e99f3c82d25b9743ed0e",
+      "matches": true
+    }
+  ],
+  "latestSelftests": [
+    {
+      "at": "2026-09-18T02:38:16.75233+00:00",
+      "ok": false,
+      "detail": "ไม่ผ่าน: Telegram"
+    },
+    {
+      "at": "2026-09-18T02:36:06.16638+00:00",
+      "ok": false,
+      "detail": "ไม่ผ่าน: Telegram"
+    },
+    {
+      "at": "2026-09-18T01:22:24.203211+00:00",
+      "ok": false,
+      "detail": "ไม่ผ่าน: Telegram"
+    }
+  ],
+  "runtime": {
+    "flags": {
+      "master": false,
+      "dynamic": false,
+      "bot": false,
+      "learning": false,
+      "import": false
+    },
+    "telegramConfigured": {
+      "token": false,
+      "chatId": false
+    },
+    "http": [
+      {
+        "base": "http://127.0.0.1:3200",
+        "path": "/healthz",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "base": "http://127.0.0.1:3200",
+        "path": "/api/admin/system-health",
+        "status": 401,
+        "code": "session_expired"
+      },
+      {
+        "base": "http://127.0.0.1:3200",
+        "path": "/api/admin/system-health/test",
+        "status": 401,
+        "code": "session_expired"
+      },
+      {
+        "base": "http://127.0.0.1:3200",
+        "path": "/api/command",
+        "status": 401,
+        "code": "session_expired"
+      },
+      {
+        "base": "https://inbox.apluscondo.com",
+        "path": "/healthz",
+        "status": 200,
+        "ok": true
+      },
+      {
+        "base": "https://inbox.apluscondo.com",
+        "path": "/api/admin/system-health",
+        "status": 401,
+        "code": "session_expired"
+      },
+      {
+        "base": "https://inbox.apluscondo.com",
+        "path": "/api/admin/system-health/test",
+        "status": 401,
+        "code": "session_expired"
+      },
+      {
+        "base": "https://inbox.apluscondo.com",
+        "path": "/api/command",
+        "status": 401,
+        "code": "session_expired"
+      }
+    ],
+    "isolatedDisabledGate": {
+      "ok": false,
+      "code": "HUB_DISABLED"
+    },
+    "rpcCalls": 0
+  },
+  "fatalPatternLines": 0,
+  "logWindow": "15m",
+  "logEvents": {
+    "bot_replied": 1,
+    "webhook_accepted": 2,
+    "webhook_processed": 2,
+    "signed_in": 1
+  },
+  "requestFailureStatuses": {}
+}

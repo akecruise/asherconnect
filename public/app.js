@@ -9,6 +9,7 @@ let boot,items=[],selected=null,detail=null,filter='unassigned',offset=0,busy=fa
 // ── หน้าสถานะระบบ (/admin/health) ใช้เปลือกและเซสชันเดิมของแอป — ไม่มีล็อกอินแยกอีกต่อไป ──
 // anonymous เปิดมาเจอฟอร์มล็อกอินเดิมบน URL เดียวกัน ล็อกอินแล้วกลับมาหน้านี้เอง
 // ด่านสิทธิ์จริงอยู่ที่ health_can_view() ในฐาน (manager/admin ดูได้ · บันทึกกฎเป็นของ admin ตาม health_rule_save)
+const ANSWER_VIEW = location.pathname === '/answer-hub'
 const ADMIN_VIEW = location.pathname === '/admin/health'
 // Small bridge for the optional Quick Replies module; no credentials or service
 // role data are exposed, only the already-authorized bootstrap result.
@@ -426,7 +427,7 @@ $('bot-toggle').addEventListener('click',async()=>{
   await refreshBot();note(next?'เปิดบอทแล้ว ระบบจะเริ่มคิดคำตอบให้ลูกค้า':'ปิดบอทแล้ว ไม่มีการเรียก AI อีก')
  }catch(e){note(e.message,true);btn.disabled=false}
 })
-$('reply').addEventListener('submit',e=>{e.preventDefault();const value=$('message').value.trim();if(value)mutate('send',{text:value})})
+ $('reply').addEventListener('submit',e=>{e.preventDefault();const value=$('message').value.trim();if(value)mutate('send',{text:value,answer_id:$('message').dataset.answerHubId||undefined})})
 $('lead-form').addEventListener('input',()=>dirty=true)
 $('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,follow_up_at:utc($('followup').value)})})
 $('claim').addEventListener('click',()=>mutate('claim'))
@@ -664,6 +665,7 @@ function wireAppNav(role){
  // สถานะระบบ: แสดงเมนูให้ manager/admin — การซ่อนปุ่มคือความสะอาดตา
  // ด่านจริงอยู่ที่ health_can_view() ในฐาน (แตะ /api/admin/system-health ตรง ๆ ก็ตายที่นั่น)
  // การบันทึกกฎยังเป็นของ admin เท่านั้นตาม health_rule_save ในฐาน หน้าจอปิดช่องแก้ตาม can_edit
+ if(!$('nav-answer-hub')&&managerUp){const a=text('a','คลังคำตอบ','nav-item');a.id='nav-answer-hub';a.href='/answer-hub';$('app-nav').append(a)}
  if($('nav-admin-status'))$('nav-admin-status').hidden=!managerUp
  // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
  // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
@@ -838,9 +840,11 @@ async function runAdminSelfTest(){
 }
 async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);
 // หน้าสถานะระบบ: ยังใช้ header/nav/notice เดิมทุกอย่าง แค่สลับเนื้อหาตรงกลาง — ไม่โหลดของแชท
+if(ANSWER_VIEW){const { mountAnswerHub } = await import('./answer-hub.js');return mountAnswerHub({ api, role: boot.user.role })}
 if(ADMIN_VIEW){document.body.classList.add('admin-view');return initAdminHealth()}
+const { mountQuickAnswer } = await import('./quick-answer.js');mountQuickAnswer({api,getContext:()=>({conversation_id:selected,project_id:detail?.conversation?.project_id??detail?.lead?.project_id??null})})
 await refreshBot();renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
-setInterval(async()=>{if(!boot||busy||polling||document.hidden||ADMIN_VIEW)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
+setInterval(async()=>{if(!boot||busy||polling||document.hidden||ADMIN_VIEW||ANSWER_VIEW)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
  // ★ เตือนเมื่อ "คนอื่น" ตอบแทรกระหว่างที่เรากำลังพิมพ์ — คิวรวมแปลว่าสองคนหยิบเคสเดียวกันได้
  //   เตือนเฉพาะตอนที่ในช่องพิมพ์มีข้อความค้างอยู่ ไม่งั้นจะเด้งรบกวนทุกครั้งที่เพื่อนตอบ
  {const before=detail.last_agent_reply,after=next.last_agent_reply
@@ -850,6 +854,6 @@ setInterval(async()=>{if(!boot||busy||polling||document.hidden||ADMIN_VIEW)retur
  const wait=sla(next.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;permissions()}}catch(e){note(e.message,true)}finally{polling=false}},10000)
 window.addEventListener('beforeunload',e=>{if(dirty||$('message').value.trim()){e.preventDefault();e.returnValue=''}})
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();const btn=$('login-submit');btn.disabled=true;$('login-error').textContent='';try{await request('/api/login',{email:$('login-email').value,password:$('login-password').value});$('login-password').value='';// ★ ล็อกอินจากหน้าไหนกลับไปหน้านั้น — เข้า /admin/health ตอนยังไม่ล็อกอินจะได้ไม่ต้องพิมพ์ URL ซ้ำ
-location.replace(ADMIN_VIEW?'/admin/health':'/')}catch(e){$('login-error').textContent=e.message}finally{btn.disabled=false}})
+location.replace(ANSWER_VIEW?'/answer-hub':ADMIN_VIEW?'/admin/health':'/')}catch(e){$('login-error').textContent=e.message}finally{btn.disabled=false}})
 $('logout').addEventListener('click',async()=>{if((dirty||$('message').value.trim())&&!confirm('มีข้อความหรือข้อมูลที่ยังไม่ได้บันทึก ต้องการออกจากระบบหรือไม่?'))return;$('logout').disabled=true;try{await request('/api/logout',{});dirty=false;$('message').value='';location.replace('/')}catch(e){note(e.message,true);$('logout').disabled=false}})
 start().catch(e=>{$('workspace').hidden=true;$('login-panel').hidden=false;if(e.code!=='session_expired')$('login-error').textContent=e.message})

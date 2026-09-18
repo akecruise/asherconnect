@@ -1,0 +1,13 @@
+.answer-view #workspace main > :not(#answer-editor) { display: none !important; }
+.answer-view #workspace main { display: block; overflow: auto; }
+#answer-editor { max-width: 1100px; margin: auto; padding: 24px; }
+#answer-editor fieldset { border: 0; padding: 0; min-width: 0; }
+#answer-editor label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; font-weight: 500; }
+#answer-editor input, #answer-editor select, #answer-editor textarea { padding: 10px; border: 1px solid #aebcca; border-radius: 6px; font: inherit; width: 100%; box-sizing: border-box; }
+#answer-editor input[type=checkbox] { width: 20px; height: 20px; }
+#answer-editor textarea { min-height: 100px; }
+#answer-editor button { margin: 5px; padding: 9px 14px; }
+#answer-editor pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #eef3f8; padding: 16px; color: #16334d; }
+#answer-editor .ae-binding { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 12px; border: 1px solid #c5ced7; padding: 12px; margin: 12px 0; }
+#answer-editor details { padding: 10px 0; }
+#answer-editor [role=status] { padding: 12px; background: #eef3f8; }

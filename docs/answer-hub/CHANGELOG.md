@@ -1,6 +1,38 @@
 # CHANGELOG — Answer Knowledge Hub
 
+## 2026-09-18 — Phase 12 — Learning Review COMPLETE
+- Added manager/admin Learning Queue UI for approve, edit-approve, merge and reject.
+- Candidate decisions retain the established answer lifecycle by delegating all answer writes to `ah_save`.
+
+## 2026-09-18 — Phase 11 — Learning System COMPLETE
+- Added private `answer_hub.learning_candidate`, pending index, RLS/revokes and worker-only `ah_learning_create` with deduplication and occurrence counts.
+- Added a fire-and-forget capture after successful outbound delivery; it is feature-gated, only captures an agent message ID, and cannot affect delivery completion.
+- Added list/review RPC groundwork for Phase 12. Candidate approval delegates to `ah_save`, creating a normal review-state answer with bot auto-answer disabled.
+- Verification: migration catalog, SQL selftest, service unit tests, HTTP integration #81, browser fixture, and `npm run check` passed locally.
+
+## 2026-09-18 · Phase 10 — Import System COMPLETE
+- Added server-side CSV/XLSX parsing, early validation, atomic admin-only preview/apply workflow, batch audit and Answer Hub import UI.
+- The apply RPC reuses `ah_save`, preserving lifecycle, validation and version history.
+- Verification: SQL selftest PASS, parser tests 3/3, browser fixture PASS, HTTP 80/80 and check PASS.
+
+## 2026-09-18 · Phase 9 — Add/Edit Answer COMPLETE
+- Completed the additive editor migration, answer key validation, binding-aware version snapshots, server-authorized unsaved preview, and authenticated Answer Hub editor.
+- Verification: `npm run check` PASS; service 27/27; all local Answer Hub SQL selftests PASS; browser fixture PASS; HTTP integration 79/79.
+- Hardened HTTP fixture teardown to clean only `__httptest__` rows in dependency order after an interrupted test run.
+
 รูปแบบ: วันที่ · Phase · เปลี่ยนอะไร · ไฟล์
+
+## 2026-09-18 · Phase 8 — Controlled deploy COMPLETE
+- ปิด controlled deploy ตามขอบเขตเดิม: production healthy, migration hashes 5/5, regression 281/281 และ protected endpoints ผ่าน.
+- เลื่อน live-client Answer Hub RPC verification และ Phase 4+ RPC activation ไปงานถัดไปตามขอบเขตที่ผู้ใช้ยืนยัน; flags ยังคงปิด.
+- ไม่ deploy ซ้ำ, ไม่ apply migration เพิ่ม และไม่เริ่ม Phase 9.
+
+## 2026-09-18 · Controlled-deploy Phase 8 — verification and closeout review
+- Added PHASE8-CLOSEOUT.md and redacted PHASE8-EVIDENCE.json; updated HANDOFF/DEPLOYMENT/PHASE-STATUS.
+- Fresh check PASS; regression 281/281; production migration hashes 5/5, unauthenticated routes rejected, seeds 10/10.
+- Selftest evidence: only Telegram fails, expected unset configuration under original deployment scope.
+- Corrected scope: missing Phase 4+ RPCs are planned exclusions. Real-client RPC remains unverified; Phase 8 not silently marked complete.
+- Documentation only; no redeploy, migration, flag change, or Phase 9 work.
 
 ## 2026-09-18 · Phase 6 — Answer Service
 - สร้าง `services/answer-hub/service.mjs`: ชั้นบริการกลาง — ทุก action `ah_*` จาก server.mjs

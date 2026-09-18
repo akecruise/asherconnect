@@ -190,3 +190,16 @@ _ledger.sql
 #   selftest: sql/_selftest/ah_answer_service_selftest.sql
 202609180730_answer_service.sql
 202609180740_resolve_sources.sql
+
+# ── Answer Knowledge Hub — Phase 9 Add/Edit Answer (2026-09-18) ──
+# ★ additive answer_key + version snapshot support; ah_save/ah_versions updated
+#   no legacy table or Quick Reply mutation · apply once through reviewed migration plan
+202609180900_answer_edit.sql
+202609181000_answer_import.sql
+202609181100_learning.sql
+202609181110_learning_review.sql
+202609181300_quick_answer.sql
+202609181400_recommendation.sql
+202609181600_usage.sql
+202609181700_feedback.sql
+202609181800_health.sql
