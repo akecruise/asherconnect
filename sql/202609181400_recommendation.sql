@@ -1,4 +1,4 @@
-﻿-- Phase 14: SQL-first recommendation over the approved Answer Hub corpus.
+-- Phase 14: SQL-first recommendation over the approved Answer Hub corpus.
 create extension if not exists pg_trgm;
 create index if not exists answer_item_recommend_fts_idx on answer_hub.answer_item using gin (to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(body_template,'')));
 create index if not exists answer_item_recommend_trgm_idx on answer_hub.answer_item using gin (title gin_trgm_ops);
