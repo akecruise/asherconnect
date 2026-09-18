@@ -598,3 +598,25 @@ Deployed application commit: `6895b20bd327854a3a4934ec491c2fb78ac1af04`. Archive
 Production verification: container healthy, restart count 0, `/healthz` HTTP 200, `/health` HTTP 200 with database/channels/workers healthy, no error/fatal logs in the post-deploy window. Production SQL selftests: 13/13 PASS. Answer Hub feature flags remain unset (default-off), preserving legacy fallback behavior.
 
 Authenticated browser/API smoke could not be completed because the production login credential pair rejected with HTTP 403; no credentials were printed or changed. Read-only health and database verification passed. Rollback remains the previous image tag `app-asher-connect:rollback-6895b20`, previous SHA, and backup `/opt/asher-inbox/backup-pre-answer-hub-20260918T174500Z.dump`.
+
+## Saved Replies interaction deployment (2026-09-18)
+
+The Facebook-style Saved Replies interaction was deployed from commit `6743b45d37a8c1e55fccf3a73ec3d0fa1246a5df` after local verification. The previous production commit was `6667903298045c5f96b25dc2e9e7d4d42d009290`.
+
+Deployment safety evidence:
+
+- Fresh database backup: `/opt/asher-inbox/backup-pre-quick-replies-interaction-20260918T143521Z.dump` (2,070,325 bytes; SHA-256 `c636f163898aacafd8d6e7c9ddb577e45fe0e89ff2c7ae0e7fd4b8c421cbd177`; `pg_restore --list` PASS).
+- Application backup: `/opt/asher-inbox/app.bak-quick-replies-interaction-6667903298045c5f96b25dc2e9e7d4d42d009290-20260918T143600Z`.
+- Rollback image: `app-asher-connect:rollback-6667903298045c5f96b25dc2e9e7d4d42d009290`.
+- No migration, schema, environment, Quick Reply content, or activation-state change was made.
+
+Production verification:
+
+- `.deployed-commit` matches `6743b45d37a8c1e55fccf3a73ec3d0fa1246a5df`.
+- Container healthy; restart count 0; `/healthz` HTTP 200; `/health` HTTP 200.
+- Saved Replies asset served successfully and contains in-place category switching, combined search/category filtering, pressed/focus feedback, full-content composer insertion, and manual-send-only behavior.
+- `NAII_PRICE=false`, `NAII_PSM=false`, and `NAII_ROOM_PRICE=false` verified read-only after deployment.
+
+Local verification for this release: `npm run check` PASS; `npm test` 312/312 PASS; targeted Saved Replies tests 5/5 PASS; `git diff --check` PASS. The untracked `imports/` directory remains preserved and was excluded from the deployment archive.
+
+Safe next step: use the rollback image or application backup only if a future health/smoke gate fails; otherwise preserve the deployed release and do not alter Quick Reply activation state.
