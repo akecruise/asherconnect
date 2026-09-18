@@ -27,6 +27,8 @@ declare
   v_sales   uuid;
   v_proj    uuid;
   v_utype   uuid;
+  v_has_promotions boolean := to_regclass('public.promotions') is not null;
+  v_has_facts boolean := to_regclass('public.project_facts') is not null;
   r         jsonb;
   v         jsonb;
   v_n       int;
@@ -34,6 +36,10 @@ begin
   select user_id into v_admin   from core.profile where role = 'admin'   and is_active order by user_id limit 1;
   select user_id into v_manager from core.profile where role = 'manager' and is_active order by user_id limit 1;
   select user_id into v_sales   from core.profile where role = 'sales'   and is_active order by user_id limit 1;
+  if not v_has_promotions or not v_has_facts then
+    raise notice 'optional promotions/project_facts adapters absent; core source registry checks remain install-safe';
+    return;
+  end if;
 
   -- ─── ของชั่วคราว (rollback ลบทิ้ง) — โครงการ + ประเภทยูนิต + ยูนิต 5 ห้อง ───
   insert into core.project (code, name)
@@ -52,7 +58,8 @@ begin
     (v_proj, v_utype, '__ST4__-05', 'transferred', 4500000);
 
   -- โปรโมชั่น (project_id เป็น varchar ของจริง — เทียบแบบ text) + แถว project_id มั่ว
-  insert into public.promotions (promotion_id, project_id, name, offer, landing_page,
+  if v_has_promotions then
+    insert into public.promotions (promotion_id, project_id, name, offer, landing_page,
                                  start_date, end_date, status, created_at) values
     ('__ST4__1', v_proj::text, 'เปิดตัวเทสต์', 'ลด 5%', null,
      current_date - 10, current_date + 10, 'ACTIVE', now()),
@@ -62,15 +69,18 @@ begin
      current_date - 40, current_date - 1, 'ACTIVE', now()),
     ('__ST4__J', 'not-a-uuid-at-all', 'โปรเจกต์ไอดีมั่ว', 'ห้ามโผล่', null,
      current_date - 10, current_date + 10, 'ACTIVE', now());
+  end if;
 
   -- fact กึ่งสาธารณะ/ภายใน (ตารางว่างจริง — id ไม่มี default ต้องใส่เอง)
-  insert into public.project_facts (id, project_id, fact_key, value_text, is_public, verified_at) values
+  if v_has_facts then
+    insert into public.project_facts (id, project_id, fact_key, value_text, is_public, verified_at) values
     (1, v_proj::text, 'payment_terms', 'ดาวน์ 10% ถึงกองกลาง 10%', 1, localtimestamp),
     (2, v_proj::text, 'location', 'ข้อมูลภายใน — ห้ามออก', 0, localtimestamp);
 
   -- ─── T11 ส่วนทะเบียน (ยังเป็น postgres — อ่านตารางตรงได้) ───
 
   -- 1. seed ครบ 10 แหล่ง (code ไม่ซ้ำการันตีด้วย unique constraint)
+  end if;
   select count(*) into v_n from answer_hub.source_registry;
   if v_n <> 10 then raise notice 'T11 ทะเบียนควรมี 10 แหล่ง ได้ %', v_n; v_fail := v_fail + 1; end if;
 

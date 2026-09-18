@@ -147,9 +147,13 @@ begin
 end $$;
 
 create or replace function answer_hub.src_current_promotion(p_project_id uuid)
-returns jsonb language sql stable security definer set search_path = '' as $$
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  if to_regclass('public.promotions') is null then
+    return jsonb_build_object('status', 'missing', 'reason', 'source_unavailable');
+  end if;
   -- promotions.project_id เป็น varchar ของจริง — เทียบเป็น text กัน cast สะดุดค่าประหลาด
-  select coalesce(
+  return (select coalesce(
     (select jsonb_build_object('status', 'ok',
               'value', jsonb_agg(
                 jsonb_build_object('promotion_id', r.promotion_id,
@@ -165,14 +169,19 @@ returns jsonb language sql stable security definer set search_path = '' as $$
        and (r.end_date is null or r.end_date >= current_date)
      -- jsonb_agg บนแถวว่างยังคืน 1 แถว (value null) — ต้อง having กันไม่งั้น missing ไม่ขึ้น
      having count(*) > 0),
-    jsonb_build_object('status', 'missing', 'reason', 'no_active_promotion'))
+     jsonb_build_object('status', 'missing', 'reason', 'no_active_promotion')));
+end;
 $$;
 
 create or replace function answer_hub.src_project_fact(p_project_id uuid, p_fact_key text)
-returns jsonb language sql stable security definer set search_path = '' as $$
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  if to_regclass('public.project_facts') is null then
+    return jsonb_build_object('status', 'missing', 'reason', 'source_unavailable');
+  end if;
   -- อ่าน fact เดียวตาม fact_key (PAYMENT_TERMS/PROJECT_LOCATION/FACILITIES ชี้มาที่ตัวนี้)
   -- เอาแถว verify ล่าสุดที่ is_public เท่านั้น — ของภายในห้ามหลุดออกทางคำตอบ
-  select coalesce(
+  return (select coalesce(
     (select jsonb_build_object('status', 'ok',
               'value', jsonb_build_object('text', f.value_text, 'num', f.value_num,
                         'unit', f.unit, 'disclaimer', f.disclaimer,
@@ -184,7 +193,8 @@ returns jsonb language sql stable security definer set search_path = '' as $$
        and coalesce(f.is_public, 0) <> 0
      order by f.verified_at desc nulls last
      limit 1),
-    jsonb_build_object('status', 'missing', 'reason', 'fact_not_found'))
+    jsonb_build_object('status', 'missing', 'reason', 'fact_not_found')));
+end;
 $$;
 
 create or replace function answer_hub.src_appointment_slots(p_lead_id uuid)
