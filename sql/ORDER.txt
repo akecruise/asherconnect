@@ -131,3 +131,62 @@ _ledger.sql
 #   ★★ ตั้งใจ *ไม่มี* create or replace ของ connect_private.api ในไฟล์นี้ — server เติม
 #      media เข้าคำตอบของ action 'detail' เอง อ่านเหตุผลในหัวไฟล์ (api ถูกทับกันเองมาแล้ว 4 ไฟล์)
 037_media_pipeline.sql
+
+# ── ระบบเช็คสถานะ (2026-09-17) ──
+# ★ ตาราง event/กฎ/สถานะ + ฟังก์ชันของหน้า /admin/health — server.mjs เรียกผ่าน health/health.mjs
+#   รันซ้ำได้ (create or replace + on conflict do nothing ทั้งไฟล์) ไม่ผูกลำดับกับใคร วางท้ายสุดได้
+#   สิทธิ์: ตารางไม่มี policy (อ่าน/เขียนผ่าน security definer เท่านั้น) ด่าน manager/admin อยู่ที่ health_can_view()
+202609172025_health.sql
+
+
+# ── Answer Knowledge Hub (docs/answer-hub/) ──
+# ★ Phase 1 — โครงฐานของคลังคำตอบ: schema answer_hub + หมวด/intent/pattern + ของตั้งต้น
+#   ของใหม่ล้วน ไม่แตะตารางเดิม รันซ้ำได้ ไม่ผูกลำดับกับใคร (อ่านรายละเอียด docs/answer-hub/DATABASE.md)
+#   selftest: sql/_selftest/ah_foundation_selftest.sql
+202609172100_answer_hub_foundation.sql
+
+# ── Admin System Status (2026-09-17) ──
+# ★ ต่อยอด 202609172025_health.sql: กฎ worker_age (เกณฑ์ worker เงียบ แก้ได้จากหน้าเว็บ)
+#   + health_thresholds/health_queue (อ่านอย่างเดียว ให้ server.mjs คำนวณสถานะรวม)
+#   + health_snapshot รุ่นใหม่ (เพิ่ม last_err) + health_rule_save รุ่นใหม่ (ตรวจค่าก่อนเขียน)
+#   ★ ต้องอยู่หลัง 202609172025 เสมอ — อ้างตาราง/ฟังก์ชันที่ไฟล์นั้นสร้าง และตัวรันทีหลังชนะ
+202609172130_system_status.sql
+
+# ── Answer Knowledge Hub — Phase 2 answer core (2026-09-17) ──
+# ★ ตาราง answer_hub.answer_item + ประตู RPC inbox.ah_list/ah_get/ah_save/ah_approve/ah_retire
+#   (server.mjs เรียกผ่านทะเบียน AH_ACTIONS) ของใหม่ล้วน รันซ้ำได้ ไม่แตะของเดิม
+#   ต้องอยู่หลัง 202609172100 เสมอ — อ้าง schema answer_hub + touch_updated_at จาก Phase 1
+#   selftest: sql/_selftest/ah_answer_item_selftest.sql
+202609172145_answer_item.sql
+
+# ── Answer Knowledge Hub — Phase 3 version control (2026-09-18) ──
+# ★ ตาราง answer_hub.answer_version + _snapshot_version + ah_save/ah_retire รุ่นเก็บ
+#   ประวัติ (create or replace ทับของ 202609172145 ได้ — เป็นฟังก์ชันของ hub เอง)
+#   + ah_versions อ่านประวัติ (เพิ่มใน AH_ACTIONS ของ server.mjs ด้วย)
+#   ต้องอยู่หลัง 202609172145 เสมอ — ทับฟังก์ชันที่ไฟล์นั้นสร้าง
+#   selftest: sql/_selftest/ah_answer_version_selftest.sql
+202609180430_answer_version.sql
+
+# ── Answer Knowledge Hub — Phase 4 source registry (2026-09-18) ──
+# ★ ตาราง answer_hub.source_registry (10 แหล่ง seed) + ตัวอ่าน ERP จริง src_*
+#   + src_check_allowed (ด่าน bot_allowed/human_allowed/active) + ah_source_list/save
+#   (เพิ่ม 2 ชื่อใน AH_ACTIONS ของ server.mjs ด้วย)
+#   selftest: sql/_selftest/ah_source_registry_selftest.sql
+202609180530_source_registry.sql
+
+# ── Answer Knowledge Hub — Phase 5 data binding (2026-09-18) ──
+# ★ ตาราง answer_hub.answer_data_binding (unique (answer_item_id, variable_name))
+#   + src_resolve (dispatcher CASE ตายตัว — ทะเบียนเลือกทางเดินเท่านั้น)
+#   + ah_binding_save/list/delete + ah_resolve + ah_get คืน {item, versions, bindings}
+#   (เพิ่ม 4 ชื่อใน AH_ACTIONS ของ server.mjs ด้วย)
+#   selftest: sql/_selftest/ah_answer_binding_selftest.sql
+202609180630_answer_binding.sql
+
+# ── Answer Knowledge Hub — Phase 6 answer service (2026-09-18) ──
+# ★ ah_list ขยาย filter (audience/answer_type/source_type/language/show_in_quick_answer/
+#   bot_auto_answer) + search คลุม body — สิทธิ์เดิมคงเดิมทุกอย่าง
+#   + ah_resolve detail ใส่ source_code + รายการ sources (ให้ service ประกอบ sources_used)
+#   ชั้น service จริงอยู่ที่ services/answer-hub/service.mjs (Node)
+#   selftest: sql/_selftest/ah_answer_service_selftest.sql
+202609180730_answer_service.sql
+202609180740_resolve_sources.sql

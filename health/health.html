@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สถานะระบบ · ASHER Connect</title>
+<!-- สไตล์กับสคริปต์แยกไฟล์เพราะ CSP ของ server.mjs อนุญาตแค่ self (เหมือนหน้า stats/logs) -->
+<link rel="stylesheet" href="/fonts/plex.css">
+<link rel="stylesheet" href="/health.css">
+</head>
+<body>
+
+<div class="bar"><b>ASHER Connect</b><a href="/">กลับไป Inbox</a></div>
+
+<form class="login" id="login" hidden>
+  <h1 class="login-title">สถานะระบบ</h1>
+  <div class="sub">สำหรับ manager และ admin</div>
+  <label>อีเมล <input id="email" type="email" autocomplete="username" required></label>
+  <label>รหัสผ่าน <input id="password" type="password" autocomplete="current-password" required></label>
+  <div class="err" id="loginErr" role="alert"></div>
+  <button class="btn primary" type="submit">เข้าสู่ระบบ</button>
+</form>
+
+<main id="app" hidden>
+  <div class="head">
+    <div>
+      <h1>Data flow</h1>
+      <div class="sub">เส้นทางข้อความจากลูกค้าถึงทีมขาย กล่องแรกที่ตัวเลขหยุดเดินคือจุดที่มีปัญหา</div>
+    </div>
+    <div class="tools">
+      <span class="tag big idle" id="overall">กำลังโหลด</span>
+      <span class="sub num" id="sysmeta"></span>
+      <span class="sub num" id="updated"></span>
+      <button class="btn" id="refreshBtn" type="button" title="โหลดข้อมูลใหม่โดยไม่รีโหลดหน้า">รีเฟรช</button>
+      <button class="btn primary" id="testBtn" type="button">ตรวจทุกขั้นตอนนี้</button>
+    </div>
+  </div>
+
+  <div class="err" id="pageErr" role="alert"></div>
+  <div class="test" id="test" hidden></div>
+  <div class="flow" id="flow"></div>
+  <div class="flow ops" id="ops"></div>
+
+  <div class="panels">
+    <section class="panel"><h2>กฎการเตือน</h2><div id="rules"></div></section>
+    <section class="panel"><h2>เหตุการณ์ล่าสุด</h2><div id="events"></div></section>
+  </div>
+</main>
+
+<script src="/health.js"></script>
+</body>
+</html>

@@ -6,6 +6,13 @@ const channelState={ok:'รับข้อความอยู่',idle:'เง
 const stageNames={follow_up:'ติดตาม',qualified:'Qualified',appointment:'นัดชม',walk_in:'Walk-in',booking:'Booking',sale:'Sale',lost:'ปิดแล้ว'}
 const errors={invalid_credentials:'อีเมลหรือรหัสผ่านไม่ถูกต้อง',too_many_attempts:'ลองเข้าสู่ระบบหลายครั้งเกินไป กรุณารอ 15 นาที',not_allowed:'บัญชีของระบบไม่มีสิทธิ์ใช้งาน กรุณาติดต่อผู้ดูแล',session_expired:'เชื่อมต่อระบบหลังบ้านไม่ได้ กรุณารีเฟรชหน้า',channel_not_configured:'ยังไม่ได้เชื่อมบัญชีช่องทางนี้ กรุณาติดต่อผู้ดูแล',already_assigned:'มีผู้รับเคสนี้แล้ว กรุณารีเฟรช',claim_required:'กรุณารับเคสก่อนทำรายการ',version_conflict:'ข้อมูลถูกแก้ไขจากอีกหน้าจอ กรุณาเลือกเคสใหม่แล้วตรวจข้อมูล',stage_transition_not_allowed:'กรุณาดำเนินการตามลำดับสถานะ',future_appointment_required:'กรุณาเลือกวันเวลานัดในอนาคต',unit_unavailable:'ห้องนี้ไม่พร้อมจอง',booking_required:'ต้องมีใบจองก่อนบันทึก Sale',case_closed:'เคสนี้ปิดแล้ว',service_unavailable:'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่',request_rejected:'บันทึกไม่สำเร็จ กรุณาตรวจข้อมูลและลำดับสถานะ',invalid_origin:'กรุณาเปิดผ่าน URL ที่ผู้ดูแลกำหนด',shadow_mode:'ตอนนี้ระบบอยู่ในโหมดเก็บข้อมูล ยังไม่เปิดให้ส่งข้อความหาลูกค้า'}
 let boot,items=[],selected=null,detail=null,filter='unassigned',offset=0,busy=false,dirty=false,sequence=0,listSequence=0,polling=false
+// ── หน้าสถานะระบบ (/admin/health) ใช้เปลือกและเซสชันเดิมของแอป — ไม่มีล็อกอินแยกอีกต่อไป ──
+// anonymous เปิดมาเจอฟอร์มล็อกอินเดิมบน URL เดียวกัน ล็อกอินแล้วกลับมาหน้านี้เอง
+// ด่านสิทธิ์จริงอยู่ที่ health_can_view() ในฐาน (manager/admin ดูได้ · บันทึกกฎเป็นของ admin ตาม health_rule_save)
+const ADMIN_VIEW = location.pathname === '/admin/health'
+// Small bridge for the optional Quick Replies module; no credentials or service
+// role data are exposed, only the already-authorized bootstrap result.
+window.asherQuickReplies = () => boot?.quick_replies?.length ? boot.quick_replies : (boot?.canned ?? [])
 const drafts=new Map(),pendingCommands=new Map()
 const text=(tag,value,cls)=>{const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
 function note(value,error=false){$('notice').hidden=!value;$('notice').textContent=value;$('notice').className='notice'+(error?' error':'')}
@@ -654,6 +661,10 @@ function relocateRefreshButton(){
 function wireAppNav(role){
  const managerUp=['manager','admin'].includes(role)
  $('nav-stats').hidden=!managerUp
+ // สถานะระบบ: แสดงเมนูให้ manager/admin — การซ่อนปุ่มคือความสะอาดตา
+ // ด่านจริงอยู่ที่ health_can_view() ในฐาน (แตะ /api/admin/system-health ตรง ๆ ก็ตายที่นั่น)
+ // การบันทึกกฎยังเป็นของ admin เท่านั้นตาม health_rule_save ในฐาน หน้าจอปิดช่องแก้ตาม can_edit
+ if($('nav-admin-status'))$('nav-admin-status').hidden=!managerUp
  // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
  // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
  $('nav-settings').addEventListener('click',()=>{
@@ -668,8 +679,168 @@ function wireAppNav(role){
   if(document.body.classList.contains('chat-open'))setChatOpen(false)
  })
 }
-async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
-setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
+// ═══════════════════════ หน้าสถานะระบบ (/admin/health) ═══════════════════════
+// ข้อมูลจาก /api/admin/system-health (เซสชันคุกกี้เดิม) — เลิกใช้ password grant แยกของหน้า standalone
+// ★ overall คำนวณที่ backend จุดเดียว (server.mjs) หน้านี้แปลงเป็นคำกับสีเท่านั้น ห้ามสรุปเอง
+const AH_OVERALL={healthy:['good','HEALTHY'],degraded:['warn','DEGRADED'],down:['critical','DOWN'],unknown:['gray','UNKNOWN']}
+const AH_STATE={healthy:['good','ปกติ'],degraded:['warn','ต้องดู'],down:['critical','ล่ม'],warn:['warn','ต้องดู'],unknown:['gray','ยังไม่มีข้อมูล'],disabled:['gray','ปิดอยู่']}
+// พารามิเตอร์หลักที่แก้ได้ต่อชนิดกฎ — ต้องตรงกับที่ health_rule_save ตรวจใน SQL
+const AH_MAIN_PARAM={silence:['minutes','นาที'],fail_count:['threshold','ครั้ง'],pending_age:['minutes','นาที'],tls_days:['days','วัน'],worker_age:['minutes','นาที']}
+let ahDom=null,ahBusyTest=false
+async function ahFetch(path,body){
+ const res=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined})
+ if(res.status===401){location.replace('/admin/health');throw new Error('กรุณาเข้าสู่ระบบใหม่')}
+ if(res.status===403)throw new Error('หน้านี้สำหรับ manager และ admin')
+ const data=await res.json().catch(()=>({}))
+ if(!res.ok)throw new Error(errors[data.error]||data.error||'HTTP '+res.status)
+ return data
+}
+const ahAgo=iso=>{if(!iso)return 'ยังไม่มี';const m=Math.floor((Date.now()-new Date(iso))/60000);return m<1?'เมื่อสักครู่':m<60?m+' นาทีที่แล้ว':m<1440?Math.floor(m/60)+' ชม. ที่แล้ว':Math.floor(m/1440)+' วันที่แล้ว'}
+const ahUptime=s=>{const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d} วัน ${h} ชม.`:h?`${h} ชม. ${m} นาที`:`${m} นาที`}
+function ahPill(status){const [tone,label]=AH_STATE[status]??AH_STATE.unknown;return text('span',label,'pill '+tone)}
+function ahRow(k,v,bad){const row=text('div','','ah-row');row.append(text('span',k),text('span',String(v??'—'),bad?'ah-bad-text':''));return row}
+function ahCard(title,status,rows){const card=text('div','','ah-card'+(status==='down'?' ah-bad':''))
+ const head=text('header');head.append(text('h3',title),ahPill(status));card.append(head)
+ for(const r of rows)card.append(ahRow(r[0],r[1],r[2]))
+ return card}
+function ahChannelCard(label,c){if(!c)return ahCard(label,'disabled',[['ช่องทาง','ยังไม่มีในระบบ']])
+ const rows=[['ช่องทาง',c.name||label],['ข้อความล่าสุด',ahAgo(c.lastWebhookAt)]]
+ if(c.detail)rows.push(['เหตุผล',c.detail,c.reachable===false])
+ return ahCard(label,c.status,rows)}
+function buildAdminHealth(){
+ const sec=text('section');sec.id='admin-health'
+ const head=text('div','','ah-head')
+ head.append(text('h1','สถานะระบบ'))
+ const overall=text('span','…','pill gray');overall.id='ah-overall';head.append(overall)
+ const refresh=text('button','รีเฟรช');refresh.id='ah-refresh';refresh.type='button';refresh.className='subtle'
+ refresh.addEventListener('click',()=>{refresh.disabled=true;refreshAdminHealth().catch(e=>ahError(e.message)).finally(()=>refresh.disabled=false)})
+ head.append(refresh);sec.append(head)
+ const meta=text('p','','ah-meta');meta.id='ah-meta';sec.append(meta)
+ const err=text('div','','notice error');err.id='ah-error';err.hidden=true;sec.append(err)
+ sec.append(text('h2','ภาพรวมระบบ','ah-section'))
+ const cards=text('div','','ah-grid');cards.id='ah-cards';sec.append(cards)
+ sec.append(text('h2','ตรวจระบบ','ah-section'))
+ const testBtn=text('button','ตรวจทุกขั้น','primary');testBtn.id='ah-test';testBtn.type='button'
+ testBtn.addEventListener('click',runAdminSelfTest);sec.append(testBtn)
+ const steps=text('div');steps.id='ah-steps';steps.hidden=true;sec.append(steps)
+ sec.append(text('h2','กฎแจ้งเตือน','ah-section'))
+ const rules=text('div');rules.id='ah-rules';sec.append(rules)
+ rules.addEventListener('change',onAdminRuleChange)
+ const note=text('p','','muted');note.id='ah-rule-note';sec.append(note)
+ ahDom={overall,meta,err,cards,steps,testBtn,rules,note,canEdit:false}
+ return sec
+}
+function ahError(msg){const box=ahDom?.err;if(!box)return;box.hidden=!msg;box.textContent=msg||''}
+async function initAdminHealth(){
+ const main=document.querySelector('#workspace main')||document.body
+ main.append(buildAdminHealth())
+ await refreshAdminHealth().catch(e=>ahError(e.message))
+}
+async function refreshAdminHealth(){const sys=await ahFetch('/api/admin/system-health');ahError('');renderAdminHealth(sys)}
+function renderAdminHealth(sys){
+ const [tone,label]=AH_OVERALL[sys.overall]??AH_OVERALL.unknown
+ ahDom.overall.className='pill '+tone;ahDom.overall.textContent=label
+ ahDom.meta.textContent=`ทำงานมา ${ahUptime(sys.uptimeSec??0)} · เวอร์ชัน ${sys.version||'—'} · เช็คล่าสุด ${sys.checkedAt?new Date(sys.checkedAt).toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok'}):'—'} · โหมดเงา ${sys.shadowMode?'ON — รับเข้าอย่างเดียว':'OFF — ส่งจริง'}`
+ const cards=ahDom.cards;cards.replaceChildren()
+ const db=sys.database??{}
+ cards.append(ahCard('ฐานข้อมูล',db.status??'unknown',[
+  ['ตอบกลับใน',db.latencyMs!=null?db.latencyMs+' ms':'ไม่ตอบ',db.latencyMs==null],
+  ['สำเร็จล่าสุด',ahAgo(db.lastSuccessAt)]]))
+ const ch=sys.channels??{}
+ cards.append(ahChannelCard('LINE',ch.line))
+ cards.append(ahChannelCard('Messenger',ch.messenger))
+ const w=sys.workers??{},wi=w.inbound??{},wo=w.outbound??{}
+ cards.append(ahCard('Worker ขาเข้า',wi.status??'unknown',[
+  ['สำเร็จล่าสุด',ahAgo(wi.lastSuccessAt)],
+  ['อายุ',wi.ageMin!=null?wi.ageMin+' นาที':'—'],
+  ['เกณฑ์เตือน/วิกฤต',(wi.warnMin??'—')+' / '+(wi.critMin??'—')+' นาที']]))
+ cards.append(ahCard('Worker ขาออก',wo.status??'unknown',[
+  ['โหมด',wo.shadow?'เงา — ตั้งใจไม่ส่ง จึงไม่นับว่าเงียบ':'ส่งจริง'],
+  ['สำเร็จล่าสุด',ahAgo(wo.lastSuccessAt)],
+  ['เกณฑ์เตือน/วิกฤต',(wo.warnMin??'—')+' / '+(wo.critMin??'—')+' นาที']]))
+ const q=sys.queue??{}
+ cards.append(ahCard('คิวงาน',q.status??'unknown',[
+  ['Pending',q.pending??'—'],['Processing',q.processing??'—'],
+  ['Failed',q.failed??'—',Number(q.failed)>0],
+  ['เก่าสุด',q.oldest_min!=null?q.oldest_min+' นาที':'—']]))
+ renderAdminRules(sys)
+}
+function renderAdminRules(sys){
+ ahDom.rules.replaceChildren()
+ ahDom.canEdit=sys.can_edit===true
+ ahDom.note.textContent=ahDom.canEdit?'เปลี่ยนกฎแล้วมีผลทันทีกับการเตือนบนระบบจริง — ทุกการบันทึกจะถามยืนยันก่อน':'เฉพาะ admin แก้กฎได้ (บัญชีนี้ดูได้อย่างเดียว)'
+ for(const r of sys.rules??[]){
+  const [pk,unit]=AH_MAIN_PARAM[r.kind]??[null,null]
+  const row=text('div','','ah-rule'+(r.enabled?'':' off'));row.dataset.id=r.id;row.dataset.name=r.name
+  const tog=document.createElement('label');tog.className='ah-toggle'
+  const cb=document.createElement('input');cb.type='checkbox';cb.dataset.f='enabled';cb.checked=!!r.enabled;cb.disabled=!ahDom.canEdit;cb.setAttribute('aria-label','เปิดใช้กฎ '+r.name)
+  tog.append(cb);row.append(tog)
+  row.append(text('span',r.name,'ah-name'))
+  const firing=r.enabled&&r.firing
+  const [ftone,flabel]=firing?(AH_STATE[r.level]??AH_STATE.unknown):['gray',r.value||'ปกติ']
+  row.append(text('span',flabel,'pill '+ftone))
+  const ctl=text('div','','ah-ctl')
+  if(pk){
+   const pl=document.createElement('label');pl.className='ah-field'
+   pl.append(document.createTextNode('เกิน '))
+   const num=document.createElement('input');num.type='number';num.min='1';num.dataset.f='param';num.dataset.k=pk;num.value=r.params?.[pk]??'';num.disabled=!ahDom.canEdit
+   pl.append(num,document.createTextNode(' '+unit+(r.kind==='fail_count'?` ใน ${r.params?.minutes??'—'} นาที`:'')))
+   ctl.append(pl)
+  }
+  const ll=document.createElement('label');ll.className='ah-field';ll.append(document.createTextNode('ระดับ '))
+  const sel=document.createElement('select');sel.dataset.f='level';sel.disabled=!ahDom.canEdit
+  for(const [v,lab] of [['warn','ต้องดู'],['urgent','ด่วน']]){const o=document.createElement('option');o.value=v;o.textContent=lab;if(r.level===v)o.selected=true;sel.append(o)}
+  ll.append(sel);ctl.append(ll)
+  const nl=document.createElement('label');nl.className='ah-field'
+  const nb=document.createElement('input');nb.type='checkbox';nb.dataset.f='notify';nb.checked=!!r.notify;nb.disabled=!ahDom.canEdit
+  nl.append(nb,document.createTextNode(' แจ้ง Telegram'));ctl.append(nl)
+  ctl.append(text('span',String(r.hour_from).padStart(2,'0')+':00–'+String(r.hour_to).padStart(2,'0')+':00','muted'))
+  row.append(ctl);ahDom.rules.append(row)
+ }
+}
+async function onAdminRuleChange(e){
+ const el=e.target,rule=el.closest('.ah-rule')
+ if(!rule||!ahDom||!ahDom.canEdit)return
+ const body={id:rule.dataset.id}
+ if(el.dataset.f==='enabled')body.enabled=el.checked
+ else if(el.dataset.f==='notify')body.notify=el.checked
+ else if(el.dataset.f==='level')body.level=el.value
+ else if(el.dataset.f==='param'){
+  const n=parseInt(el.value,10)
+  if(!(n>=1)){ahError('ค่าต้องเป็นตัวเลขตั้งแต่ 1 ขึ้นไป');return}
+  ahError('');body.params={[el.dataset.k]:n}
+ }
+ // กฎเปลี่ยนแล้วกระทบการเตือนบนระบบจริงทันที จึงถามยืนยันทุกครั้งก่อนบันทึก — กดไม่ตกลง = หน้าจอคืนค่าจากฐาน
+ if(!confirm(`บันทึกการเปลี่ยนแปลงกฎ "${rule.dataset.name}" บนระบบจริงหรือไม่?`)){refreshAdminHealth().catch(()=>{});return}
+ try{await ahFetch('/api/admin/health-rule',body);await refreshAdminHealth()}
+ catch(err){ahError('บันทึกกฎไม่สำเร็จ: '+err.message);await refreshAdminHealth().catch(()=>{})}
+}
+async function runAdminSelfTest(){
+ if(ahBusyTest)return;ahBusyTest=true
+ const btn=ahDom.testBtn;btn.disabled=true;btn.textContent='กำลังตรวจ…'
+ try{
+  const data=await ahFetch('/api/admin/system-health/test',{})
+  // contract เดิม: tests มาจาก flowHealth.selftest() ที่ backend — steps เป็น array เสมอ
+  const steps=Array.isArray(data.tests)?data.tests:[]
+  ahDom.steps.hidden=false;ahDom.steps.replaceChildren()
+  for(const s of steps){
+   const pass=s.result==='PASS',skip=!pass&&/ข้าม/.test(s.detail??'')
+   const row=text('div','','ah-step')
+   row.append(text('span',pass?'✅ ผ่าน':skip?'⚠️ ข้าม':'❌ ผิดพลาด','ah-step-icon '+(pass?'ah-ok':skip?'ah-skip':'ah-fail')))
+   const name=text('span',s.name);if(!pass&&s.detail)name.title=s.detail
+   row.append(name,text('span',(s.ms??0)+' ms','ah-ms'))
+   ahDom.steps.append(row)
+  }
+  ahDom.steps.append(text('div',`ผ่าน ${data.passed??0}/${steps.length}`+(data.ok?' · ปกติทั้งหมด':' · มีข้อที่ต้องดู'),'ah-sum'))
+  await refreshAdminHealth().catch(()=>{})
+ }catch(err){ahError('ตรวจไม่สำเร็จ: '+err.message)}
+ finally{ahBusyTest=false;btn.disabled=false;btn.textContent='ตรวจทุกขั้น'}
+}
+async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);
+// หน้าสถานะระบบ: ยังใช้ header/nav/notice เดิมทุกอย่าง แค่สลับเนื้อหาตรงกลาง — ไม่โหลดของแชท
+if(ADMIN_VIEW){document.body.classList.add('admin-view');return initAdminHealth()}
+await refreshBot();renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
+setInterval(async()=>{if(!boot||busy||polling||document.hidden||ADMIN_VIEW)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
  // ★ เตือนเมื่อ "คนอื่น" ตอบแทรกระหว่างที่เรากำลังพิมพ์ — คิวรวมแปลว่าสองคนหยิบเคสเดียวกันได้
  //   เตือนเฉพาะตอนที่ในช่องพิมพ์มีข้อความค้างอยู่ ไม่งั้นจะเด้งรบกวนทุกครั้งที่เพื่อนตอบ
  {const before=detail.last_agent_reply,after=next.last_agent_reply
@@ -678,6 +849,7 @@ setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=tr
   detail.last_agent_reply=after}
  const wait=sla(next.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;permissions()}}catch(e){note(e.message,true)}finally{polling=false}},10000)
 window.addEventListener('beforeunload',e=>{if(dirty||$('message').value.trim()){e.preventDefault();e.returnValue=''}})
-$('login-form').addEventListener('submit',async e=>{e.preventDefault();const btn=$('login-submit');btn.disabled=true;$('login-error').textContent='';try{await request('/api/login',{email:$('login-email').value,password:$('login-password').value});$('login-password').value='';location.replace('/')}catch(e){$('login-error').textContent=e.message}finally{btn.disabled=false}})
+$('login-form').addEventListener('submit',async e=>{e.preventDefault();const btn=$('login-submit');btn.disabled=true;$('login-error').textContent='';try{await request('/api/login',{email:$('login-email').value,password:$('login-password').value});$('login-password').value='';// ★ ล็อกอินจากหน้าไหนกลับไปหน้านั้น — เข้า /admin/health ตอนยังไม่ล็อกอินจะได้ไม่ต้องพิมพ์ URL ซ้ำ
+location.replace(ADMIN_VIEW?'/admin/health':'/')}catch(e){$('login-error').textContent=e.message}finally{btn.disabled=false}})
 $('logout').addEventListener('click',async()=>{if((dirty||$('message').value.trim())&&!confirm('มีข้อความหรือข้อมูลที่ยังไม่ได้บันทึก ต้องการออกจากระบบหรือไม่?'))return;$('logout').disabled=true;try{await request('/api/logout',{});dirty=false;$('message').value='';location.replace('/')}catch(e){note(e.message,true);$('logout').disabled=false}})
 start().catch(e=>{$('workspace').hidden=true;$('login-panel').hidden=false;if(e.code!=='session_expired')$('login-error').textContent=e.message})

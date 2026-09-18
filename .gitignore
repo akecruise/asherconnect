@@ -17,4 +17,8 @@ start-error.txt
 
 # ช่องส่งมอบงานระหว่าง agent — เป็นของชั่วคราวของเครื่องที่รันอยู่ ไม่ใช่ของโปรเจกต์
 .handoff/
+.health-audit/
+deploy-*.tar.gz
+deploy-files.txt
+deploy-sha-local.txt
 channels_*.json

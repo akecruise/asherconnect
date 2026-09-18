@@ -30,6 +30,8 @@ import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
 import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
+import { createHealth } from './health/health.mjs'
+import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -101,7 +103,7 @@ const log = {
 
 const fail = (status, code) => Object.assign(new Error(code), { status })
 
-const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked'])
+const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked','ah_not_allowed','ah_not_found','ah_invalid','ah_state_not_allowed','ah_duplicate','ah_missing_required_data'])
 
 /**
  * ปฏิเสธ webhook พร้อมบอกเหตุผลลง log
@@ -129,14 +131,29 @@ const webhookFail = (status, code, channel, extra = {}) => {
 const AUTH = 'auth', DATA = 'data'
 
 async function callSupabase(layer, path, { token = anon, method = 'GET', body, headers = {} } = {}) {
-  const response = await fetch(`${upstream}${path}`, {
-    method,
-    headers: { apikey: anon, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
-  })
+  let response
+  try {
+    response = await fetch(`${upstream}${path}`, {
+      method,
+      headers: { apikey: anon, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+    })
+  } catch (e) {
+    // ต่อ Supabase ไม่ถึงเลย (ล่ม/คอขาด) ต่างจาก "ตอบกลับมาว่าผิด" คนละอาการ จึงต้องบันทึกแยก
+    // ผลที่ผู้เรียกเห็นเท่าเดิมคือ 503 service_unavailable ส่วนเหตุผลจริงอยู่ใน log กับ flow_event
+    log.warn('upstream_failed', { layer, path, status: 0, reason: e.message })
+    flowHealth.log('rpc', { ok: false, detail: `${path} ${e.message}` })
+    throw fail(503, 'service_unavailable')
+  }
   const data = await response.json().catch(() => ({}))
-  if (response.ok) return data
+  if (response.ok) {
+    if (Date.now() - rpcOkLoggedAt > 60000) {
+      rpcOkLoggedAt = Date.now()
+      flowHealth.log('rpc', { ok: true })
+    }
+    return data
+  }
 
   const reason = data.message ?? data.msg ?? ''
   // เหตุที่เราออกแบบไว้แล้ว ส่งต่อให้หน้าเว็บได้ตรง ๆ ไม่ต้อง log เพราะไม่ใช่ความผิดปกติ
@@ -144,6 +161,7 @@ async function callSupabase(layer, path, { token = anon, method = 'GET', body, h
 
   // ที่เหลือคือของที่ไม่ได้ออกแบบไว้ ต้องเก็บหลักฐานก่อนยุบเป็น code กลาง ๆ
   log.warn('upstream_failed', { layer, path, status: response.status, reason: reason || null })
+  flowHealth.log('rpc', { ok: false, detail: `${path} → ${response.status}` })
   if (layer === AUTH || response.status === 401) throw fail(401, 'session_expired')
   throw fail(response.status === 403 ? 403 : 400, 'request_rejected')
 }
@@ -196,11 +214,50 @@ const STATS_ACTIONS = new Set(['stats_overview', 'stats_agents', 'stats_timeline
 //   ที่นี่ทำแค่กันไม่ให้เรียกฟังก์ชันนอกทะเบียน เหมือน STATS_ACTIONS
 const LOG_ACTIONS = new Set(['logs_timeline', 'logs_summary'])
 
+// ทะเบียน RPC ของคลังคำตอบ (Answer Knowledge Hub — docs/answer-hub/) — ชื่อตรงกับ inbox.ah_* ใน sql/
+// ยึดแบบเดียวกับ STATS/LOG: ยิงด้วย token ของคนล็อกอิน ด่านสิทธิ์จริง (sales/manager/admin)
+// อยู่บรรทัดแรกของฟังก์ชันในฐาน (core.current_user_role) ที่นี่กันแค่เรียกนอกทะเบียน
+// ขยายทะเบียนเมื่อไฟล์ sql/ ถัดไปของ answer-hub เพิ่มฟังก์ชัน — แก้ที่เดียวเสมอ
+const AH_ACTIONS = new Set(['ah_list', 'ah_get', 'ah_save', 'ah_approve', 'ah_retire', 'ah_versions', 'ah_source_list', 'ah_source_save', 'ah_resolve', 'ah_binding_list', 'ah_binding_save', 'ah_binding_delete'])
+
 const rpcDirect = (token, fn, body = {}) =>
   callSupabase(DATA, `/rest/v1/rpc/${fn}`, {
     token, method: 'POST', body,
     headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
   })
+
+// ชั้นบริการคลังคำตอบ (Phase 6) — ประตูเดียวของทุก action ah_* ในตัวจัดการด้านล่าง
+// flags default ปิดหมด (ANSWER_HUB_ENABLED ฯลฯ) — เปิดทีละตัวทาง env / inbox.settings
+const answerHub = createAnswerHubService({
+  callRpc: (token, fn, body) => rpcDirect(token, fn, body),
+  flags: buildFlags({ env: process.env }),
+  log: (event, fields) => log.info(event, fields),
+})
+
+// ───────────────────────────────────────────── ระบบเช็คสถานะ (health/)
+//
+// channelStates() ด้านบนตอบว่า "ช่องทางยังทักได้ไหม" ส่วน health/ ตอบว่า "ท่อทั้งเส้นยังเดินไหม"
+// ตั้งแต่ DNS/TLS ของ Caddy ยันคิวขาออก — เห็นทั้งหมดบน /admin/health (ด่าน manager/admin อยู่ใน SQL)
+// ทุกจุดวิ่งด้วย health.log ซึ่งยิงทิ้ง ไม่ throw ไม่รอ — พังแล้วของเดิมต้องยังเดินต่อ
+// ★ ตั้งชื่อ flowHealth ไม่ใช่ health — ชื่อ health ถูก function health() ด้านล่าง (จุด healthcheck
+//   ของ docker) ใช้อยู่แล้ว สองอย่างนี้ตอบคนละคำถาม: ตัวนี้คือ "ท่อทั้งเส้น" ส่วนอีกตัวคือ "คิวของโพรเซสนี้"
+const flowHealth = createHealth({
+  // ประตูที่ตัวเช็คยิงเข้าหาตัวเอง (ผ่าน Caddy กลับมา) — โดเมนจริงถ้ามี ไม่งั้นคือ origin ที่ตั้งไว้
+  publicUrl: process.env.PUBLIC_URL ?? origin,
+  getChannels: async () => activeChannels.map(c => ({
+    key: c.key,
+    type: c.channel === 'line' ? 'line' : 'messenger',
+    accessToken: c.access_token,
+  })),
+  // สถานะรวมของโพรเซส (overall/database/workers/queue) — snapshot แนบไปกับคำตอบของหน้า admin
+  getSystemStatus: () => refreshSystemStatus(),
+  // ข้อทดสอบเพิ่มของชั้นโพรเซส ต่อท้าย self-test: worker สองคิว · คิวงาน · โหมดเงา · ตัวแปรที่จำเป็น
+  extraSelfTests: () => systemExtraTests(),
+})
+
+// stage 'rpc' บันทึกความสำเร็จแบบ heartbeat นาทีละครั้งพอ — ทุก claim_job ล่ะครั้งจะกลายเป็น
+// event วันละหมื่นกว่าแถวเปล่า ๆ ส่วนความล้มเหลวบันทึกทุกครั้ง เพราะกฎนับว่า "ล้มกี่ครั้งใน 10 นาที"
+let rpcOkLoggedAt = 0
 
 // ───────────────────────────────────────────── ไฟสถานะของช่องทาง
 //
@@ -417,6 +474,9 @@ async function runJob(job) {
     if (job.source === 'delivery') {
       const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
       const result = await deliver(job, config)
+      // ทางส่งหาลูกค้ามีทางเดียวทั้งระบบ (บอทกับเซลส์เข้าคิวเดียวกัน) — จุดเดียวที่บอกได้ว่า "ถึงมือลูกค้าหรือยัง"
+      flowHealth.log('reply_sent', { channel: config?.key ?? null, ref: result.message_id ?? job.message_id,
+                                 ok: result.status === 'sent', detail: result.error ?? null })
       if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
       return await rpc(service, 'finish', result, true)
     }
@@ -462,8 +522,13 @@ async function runGenerate(job) {
     ctx: { is_new_chat: context.is_new_chat },
   })
 
-  await rpc(service, 'bot_reply',
+  const queued = await rpc(service, 'bot_reply',
     { conversation_id: job.conversation_id, text: reply, offtopic: offTopic }, true)
+  // จับคู่กับ reply_sent ด้วย message_id เพื่อหา "คิวค้าง" — ในโหมดเงาคิวขาออกไม่เดินโดยตั้งใจ
+  // จึงไม่บันทึก ไม่งั้นกฎคิวค้างจะยิงเตือนทุกข้อความของบอททั้งที่เป็นพฤติกรรมปกติของโหมดนั้น
+  if (!shadow) flowHealth.log('reply_queued', {
+    channel: activeChannels.find(c => c.inbox_id === job.inbox_id)?.key ?? null,
+    ref: queued?.message_id })
   await rpc(service, 'store_intent', intentRow(intent, {
     conversation_id: job.conversation_id, message_id: job.message_id, external_id: job.target,
     project: context.project, ad_id: context.ad_id, ad_title: context.ad_title,
@@ -517,6 +582,11 @@ async function runOutbound(job) {
   const text = formatNotify({ ...job.payload, channel_label: channelLabel(job) }, { inboxUrl: inboxUrlFor(job) })
   const results = await Promise.all(targets.map(t =>
     deliver({ ...job, kind: 'notify', channel: t.channel, target: t.target, payload: { type: 'text', text } }, t.config)))
+
+  // ทาง telegram ของการแจ้งทีมคือท่อเดียวกับที่ระบบเช็คใช้ยิงเตือน มันตายเมื่อไหร่ทั้งระบบจึงต้องรู้ตัว
+  for (const [i, r] of results.entries()) {
+    if (targets[i].channel === 'telegram') flowHealth.log('telegram', { ok: r.status === 'sent', detail: r.error ?? null })
+  }
 
   const sent = results.filter(r => r.status === 'sent')
   if (sent.length) return finishJob(job, { status: 'done', provider_id: sent[0].provider_id ?? null })
@@ -817,7 +887,15 @@ function health() {
   const idleFor = idle(workerLastSuccess), inboundIdleFor = idle(inboundLastSuccess)
   const outboundOk = shadow || !activeChannels.length || idleFor <= WORKER_STALE_MS
   const inboundOk = !activeChannels.length || inboundIdleFor <= WORKER_STALE_MS
-  return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, shadowDefault, authentication: 'individual',
+  // สถานะรวมใช้ของที่คำนวณไว้แล้วเท่านั้น (refreshSystemStatus เดินเป็นรอบของตัวเอง)
+  // /health ต้องเบาและห้ามรอใคร — ครั้งแรกก่อนรอบแรกจะยังไม่มีคำตอบ จึงรายงาน unknown ไปก่อนได้
+  const sys = sysCache
+  return { ok: outboundOk && inboundOk, status: sys?.overall ?? 'unknown',
+           service: 'asher-connect', shadow, shadowDefault, authentication: 'individual',
+           checkedAt: sys?.checkedAt ?? null, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+           version: APP_VERSION, environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+           database: sys?.database ?? null, channels: sys?.channels ?? null,
+           workers: sys?.workers ?? null, queue: sys?.queue ?? null, shadowMode: shadow,
            workerLastSuccess, idleFor, inboundLastSuccess, inboundIdleFor,
            activeChannels: activeChannels.length, edgeFunctions, projects,
            // หน่วยเป็น MB เพราะไบต์ดิบไม่มีใครอ่านออกตอนตีสาม
@@ -826,6 +904,154 @@ function health() {
            // สวิตช์ของบอทต้องมองเห็นจากข้างนอกเสมอ
            // ไม่งั้น "บอทไม่ตอบ" กับ "บอทถูกปิดไว้" จะแยกกันไม่ออกตอนมีคนถามว่าทำไมเงียบ
            bot: jobQueue }
+}
+
+// ───────────────────────────────────────────── สถานะรวมของระบบ (Admin System Status)
+//
+// คำตอบเดียวของทั้งระบบว่า HEALTHY / DEGRADED / DOWN — คำนวณ "ที่นี่" เท่านั้น
+// หน้าเว็บห้ามสรุปเอง (หลักการเดียวกับด่านสิทธิ์: การซ่อนปุ่มคือความสะอาดตา ตัวเลขจริงต้องมาจาก backend)
+//
+//   DOWN     ฐานข้อมูลใช้ไม่ได้ หรือ inbound worker เงียบเกินเกณฑ์ critical — ข้อความลูกค้าหายแน่ ๆ
+//   DEGRADED บางส่วนผิดปกติแต่ยังให้บริการได้ (ช่องทางตาย, worker ขาออกเงียบ, คิวค้างเกินเกณฑ์)
+//   HEALTHY  ทุกชิ้นส่วนที่สำคัญยังเดิน
+//
+// เกณฑ์นาทีอ่านจากกฎ worker_age/pending-* ใน inbox.monitor_rule (admin แก้จากหน้าเว็บ มีผลทันที)
+// ช่องทางเงียบ "ไม่ใช่" ความเสียหาย — แยก enabled/reachable/recent activity ให้ชัดตามจริง
+const APP_VERSION = process.env.APP_VERSION ?? null
+const SYS_TTL = 15000
+let sysCache = null, sysAt = 0, sysPending = null
+
+function workerState(idleForMs, thresholds, enabled) {
+  const ageMin = idleForMs / 60000
+  const base = { lastSuccessAt: null, ageMin: Math.round(ageMin * 10) / 10, warnMin: thresholds.warn, critMin: thresholds.crit }
+  if (!enabled) return { ...base, status: 'disabled' }
+  if (ageMin >= thresholds.crit) return { ...base, status: 'down' }
+  if (ageMin >= thresholds.warn) return { ...base, status: 'degraded' }
+  return { ...base, status: 'healthy' }
+}
+
+async function computeSystemStatus() {
+  const checkedAt = new Date().toISOString()
+
+  // ฐานข้อมูล: ยิง health_ping จริง (ตรวจว่าตอบ ไม่ใช่ดูว่าพอร์ตเปิด)
+  const t0 = Date.now()
+  let dbErr = null
+  try { await rpcDirect(service, 'health_ping') } catch (e) { dbErr = e.message }
+  const database = { status: dbErr ? 'down' : 'healthy', latencyMs: dbErr ? null : Date.now() - t0,
+                     lastSuccessAt: dbErr ? null : new Date().toISOString(), error: dbErr }
+
+  // เกณฑ์นาทีจากตารางกฎ — อ่านไม่ได้ก็ใช้ค่าตั้งต้นเดิมของระบบ ไม่พาทั้งหน้าล้ม
+  let th = { inbound_worker: { warn: 1, crit: 5 }, outbound_worker: { warn: 1, crit: 5 }, queue_age: { warn: 3, crit: 10 } }
+  try { th = { ...th, ...(await rpcDirect(service, 'health_thresholds')) } } catch (e) {
+    log.warn('health_thresholds_unreadable', { reason: e.message })
+  }
+
+  // worker: อายุความสำเร็จล่าสุดของสองคิว — โหมดเงากับหน้างานไม่มีช่องทาง ขาออกเงียบคือเรื่องปกติ
+  const h = health()
+  const workers = {
+    inbound: { ...workerState(h.inboundIdleFor, th.inbound_worker, activeChannels.length > 0),
+               lastSuccessAt: inboundLastSuccess },
+    outbound: { ...workerState(h.idleFor, th.outbound_worker, activeChannels.length > 0 && !shadow),
+                lastSuccessAt: workerLastSuccess, shadow: shadow },
+  }
+
+  // ช่องทาง: สถานะจริงจาก channelStates (token + ข้อความล่าสุด) — เงียบ ≠ เสีย จึงแยกเกณฑ์ไว้คนละชั้น
+  let channels = {}
+  try {
+    for (const c of await channelStates()) {
+      channels[c.channel === 'line' ? 'line' : 'messenger'] = {
+        name: c.name, enabled: c.enabled, reachable: c.enabled && c.state !== 'off',
+        status: !c.enabled ? 'disabled' : c.state === 'ok' || c.state === 'idle' ? 'healthy'
+              : c.state === 'down' ? 'down' : 'unknown',
+        lastWebhookAt: c.last_message_at ?? null, detail: c.reason ?? null,
+      }
+    }
+  } catch (e) {
+    log.warn('system_channels_failed', { reason: e.message })
+  }
+
+  // คิว: ตัวเลขจาก connect_private.job ที่มีอยู่แล้ว — คิวค้างนานเกินเกณฑ์ถือว่าเสื่อม ไม่ใช่ล่ม
+  let queue = { pending: null, processing: null, failed: null, oldest_min: null, status: 'unknown' }
+  try {
+    const q = await rpcDirect(service, 'health_queue')
+    const age = q.oldest_min ?? 0
+    queue = { ...q, status: age >= th.queue_age.crit ? 'degraded' : age >= th.queue_age.warn ? 'warn' : 'healthy' }
+  } catch (e) {
+    log.warn('health_queue_unreadable', { reason: e.message })
+  }
+
+  const channelDown = Object.values(channels).some(c => c.status === 'down')
+  const overall =
+    database.status === 'down' || workers.inbound.status === 'down' ? 'down'
+    : channelDown || workers.outbound.status !== 'healthy' || workers.inbound.status !== 'healthy'
+      || queue.status !== 'healthy' ? 'degraded'
+    : 'healthy'
+
+  return { overall, checkedAt, uptimeSec: Math.round((Date.now() - startedAt) / 1000), version: APP_VERSION,
+           environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+           database, channels, workers, queue, shadowMode: shadow, shadowDefault }
+}
+
+// รอบคำนวณของตัวเอง (15 วินาที) — คำขอไหนมาถี่กว่านั้นใช้ของเดิม ใครมาตอนกำลังคำนวณรอผลตัวแรก
+// คำนวณไม่สำเร็จไม่เป็นไร รอบหน้าลองใหม่ ของเก่ายังตอบได้
+function refreshSystemStatus() {
+  if (sysPending) return sysPending
+  if (Date.now() - sysAt < SYS_TTL) return Promise.resolve(sysCache)
+  sysPending = computeSystemStatus()
+    .then(r => { sysCache = r; sysAt = Date.now(); return r })
+    .catch(e => log.warn('system_status_failed', { reason: e.message }))
+    .finally(() => { sysPending = null })
+  return sysPending
+}
+
+// คำตอบเต็มสำหรับหน้า admin — สถานะสด (บังคับคำนวณใหม่) บวกกฎ/เหตุการณ์จาก snapshot ของฐาน
+async function fullSystemStatus(userToken) {
+  const system = await refreshSystemStatus()
+  let snapshot = null
+  try { snapshot = await rpcDirect(userToken, 'health_snapshot') } catch (e) {
+    log.warn('system_snapshot_failed', { reason: e.message })
+  }
+  return { ...system, rules: snapshot?.rules ?? [], stats: snapshot?.stats ?? [],
+           events: snapshot?.events ?? [], pending: snapshot?.pending ?? null,
+           workspace: snapshot?.workspace ?? null, can_edit: snapshot?.can_edit ?? false,
+           tls_days: snapshot?.tls_days ?? null }
+}
+
+// ข้อทดสอบฝั่งโพรเซสสำหรับปุ่ม Run Self-Test — รายงานแค่ configured/missing/healthy/stale
+// ★ ห้ามมีค่าตัวแปรออกไปเป็นไม้ตาย ไม่ว่าจะ secret หรือ URL ภายใน
+async function systemExtraTests() {
+  const t0 = Date.now()
+  const tests = []
+  const h = health()
+
+  let th = { inbound_worker: { warn: 1, crit: 5 }, outbound_worker: { warn: 1, crit: 5 }, queue_age: { warn: 3, crit: 10 } }
+  try { th = { ...th, ...(await rpcDirect(service, 'health_thresholds')) } } catch { /* ใช้ค่าตั้งต้น */ }
+
+  const ageOf = ms => Math.round(ms / 6000) / 10
+  tests.push({ name: 'Inbound Worker', ok: h.inboundIdleFor <= WORKER_STALE_MS, ms: 0,
+               detail: !activeChannels.length ? 'ไม่มีช่องทางเปิดใช้'
+                     : `สำเร็จล่าสุด ${ageOf(h.inboundIdleFor)} นาทีที่แล้ว (เกณฑ์ ${th.inbound_worker.warn}/${th.inbound_worker.crit} นาที)` })
+  tests.push({ name: 'Outbound Worker', ok: h.idleFor <= WORKER_STALE_MS, ms: 0,
+               detail: shadow ? 'โหมดเงา: ตั้งใจไม่ส่งออก จึงไม่นับว่าเงียบ'
+                     : !activeChannels.length ? 'ไม่มีช่องทางเปิดใช้'
+                     : `สำเร็จล่าสุด ${ageOf(h.idleFor)} นาทีที่แล้ว (เกณฑ์ ${th.outbound_worker.warn}/${th.outbound_worker.crit} นาที)` })
+  try {
+    const q = await rpcDirect(service, 'health_queue')
+    tests.push({ name: 'Queue', ok: true, ms: 0,
+                 detail: `pending ${q.pending} · processing ${q.processing} · failed ${q.failed}` +
+                         (q.oldest_min != null ? ` · เก่าสุด ${q.oldest_min} นาที` : '') })
+  } catch (e) {
+    tests.push({ name: 'Queue', ok: false, ms: 0, detail: 'อ่านตัวเลขคิวไม่ได้' })
+  }
+  tests.push({ name: 'Shadow Mode', ok: true, ms: 0,
+               detail: shadow ? 'ON — รับเข้าอย่างเดียว ไม่ส่งออกหาลูกค้า' : 'OFF — ส่งจริง' })
+  // ตัวแปรที่จำเป็น: รายงานแค่ชื่อว่า configured/missing — ไม่มีค่า
+  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']
+  const missing = required.filter(k => !process.env[k])
+  if (!channels.length && !process.env.CONNECT_CHANNELS_FILE) missing.push('CONNECT_CHANNELS_FILE')
+  tests.push({ name: 'Environment', ok: missing.length === 0, ms: 0,
+               detail: missing.length ? `missing: ${missing.join(', ')}` : `configured ครบ ${required.length} รายการ` })
+  return tests.map(t => ({ ...t, ms: t.ms || Date.now() - t0 }))
 }
 
 // ───────────────────────────────────────────────────────── ตัวช่วย HTTP
@@ -910,6 +1136,7 @@ async function handleWebhook(req, res, url) {
                 reason: 'invalid_signature', bytes: raw.length,
                 ua: req.headers['user-agent'] ?? null, shape: เค้าโครง },
     }).catch(e => log.warn('webhook_reject_log_failed', { channel: key, reason: e.message }))
+    flowHealth.log('signature_fail', { channel: key, ok: false })
 
     throw webhookFail(401, 'invalid_signature', key, {
       ส่งลายเซ็นมาด้วย: Boolean(signature),
@@ -949,6 +1176,8 @@ async function handleWebhook(req, res, url) {
       payload: hits.length ? rest : body }, true)
   log.info('webhook_accepted', { channel: key, log_id: logged.log_id,
                                  ...(hits.length ? { test_reset: hits.length } : {}) })
+  // จุดหมายของกฎ "ไม่มีข้อความเข้า" — ช่องทางไหนเงียบผิดปกติ ตัวเลขบน /admin/health จะหยุดก่อนใครจะรู้ตัว
+  flowHealth.log('webhook', { channel: key, ref: logged.log_id })
   return json(res, 200, { accepted: true, log_id: logged.log_id })
 }
 
@@ -1015,6 +1244,30 @@ async function handleCommand(req, res) {
     return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
   }
 
+  // ★ คลังคำตอบ (Phase 6) — เดินผ่าน Answer Service เป็นชั้นกลางเท่านั้น
+  //   ด่านสิทธิ์จริงอยู่ในฟังก์ชัน inbox.ah_* ของฐาน (sales อ่าน approved · manager แก้ ·
+  //   admin อนุมัติ/ปลดใช้) · service เพิ่ม: flags (default ปิด), error model ANSWER_*,
+  //   validity/bot rules, orchestrate resolve+render — รายละเอียด services/answer-hub/service.mjs
+  if (AH_ACTIONS.has(input.action)) {
+    return json(res, 200, await answerHub.handle(input.action, accessToken, input.data ?? {}))
+  }
+
+  // Quick Reply management uses dedicated security-definer RPCs. The browser
+  // only sends the user's session token; role checks remain in Supabase.
+  if (input.action === 'quick_replies_list') {
+    return json(res, 200, await rpcDirect(accessToken, 'qr_list', { p_project: null, p_query: input.data.query || null, p_category: input.data.category || null }))
+  }
+  if (input.action === 'quick_reply_upsert') {
+    const who = await rpc(accessToken, 'bootstrap')
+    if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
+    return json(res, 200, await rpcDirect(accessToken, 'qr_upsert', { p_data: input.data }))
+  }
+  if (input.action === 'quick_reply_toggle') {
+    const who = await rpc(accessToken, 'bootstrap')
+    if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
+    return json(res, 200, await rpcDirect(accessToken, 'qr_toggle', { p_id: input.data.id, p_active: input.data.active, p_bot_enabled: null }))
+  }
+
   if (input.action.startsWith('fn:')) {
     const name = input.action.slice(3)
     if (!edgeFunctions.includes(name)) throw fail(404, 'function_not_registered')
@@ -1046,6 +1299,15 @@ async function handleCommand(req, res) {
 
   if (input.action === 'bootstrap') {
     data.channels = await channelStates()
+    // Quick replies are team-shared templates.  Loading them server-side keeps
+    // the service role key out of the browser and lets the existing canned
+    // response fallback continue working if this optional RPC is unavailable.
+    try {
+      data.quick_replies = await rpcDirect(accessToken, 'qr_list', { p_project: null, p_query: null, p_category: null })
+    } catch (e) {
+      log.warn('quick_replies_unavailable', { reason: e.message })
+      data.quick_replies = []
+    }
   }
   // ตัวเลขมาจากฐาน ถ้อยคำมาจากที่นี่ — คนละหน้าที่กัน และแยกกันไว้ตั้งแต่แรก
   if (input.action === 'report_preview' && data?.report) data.text = buildDailyDigest(data.report)
@@ -1055,9 +1317,11 @@ async function handleCommand(req, res) {
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
 const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
-  '/sla.mjs': 'sla.mjs',
+  '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
-  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css' }
+  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css',
+  // แผ่นสไตล์กับสคริปต์ของหน้า /admin/health — ตัวหน้าเองเสิร์ฟโดย health.handle
+  '/health.css': 'health.css', '/health.js': 'health.js' }
 
 async function handleStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw fail(405, 'method_not_allowed')
@@ -1090,6 +1354,13 @@ const handleMedia = createMediaHandler({
 })
 
 async function route(req, res, url) {
+  // หน้า /admin/health ใช้เปลือกเดียวกับแอปหลัก (header/sidebar/เซสชันคุกกี้เดิม — ไม่มีล็อกอินแยกอีกแล้ว)
+  // เสิร์ฟ index.html เหมือน "/" ล็อกอินเป็นหน้าที่ของ app.js (bootstrap ไม่ผ่าน → ฟอร์มเดิม → กลับมาหน้าเดิม)
+  // ★ ต้องตัดมาก่อน flowHealth.handle ไม่งั้นหน้า standalone (health.html + password grant แยก) ชิงไปเสิร์ฟ
+  if (url.pathname === '/admin/health' && req.method === 'GET') return handleStatic(req, res, new URL('/', origin))
+  // ประตูของระบบเช็ค: /healthz สำหรับ monitor ภายนอก · /api/health/* (เส้นเก่าของตัวเช็ค ยังใช้กับเทสต์ SQL)
+  // ด่านสิทธิ์ของหน้านี้อยู่ใน SQL (health_can_view) ไม่ได้พึ่งการซ่อนทางเข้า
+  if (await flowHealth.handle(req, res)) return
   if (url.pathname === '/health' && req.method === 'GET') {
     const state = health()
     return json(res, state.ok ? 200 : 503, state)
@@ -1097,6 +1368,38 @@ async function route(req, res, url) {
   if (url.pathname.startsWith('/webhooks/')) return handleWebhook(req, res, url)
 
   if (url.pathname.startsWith('/api/')) {
+    // ── Admin System Status: ด่านสิทธิ์อยู่ที่ health_can_view() ในฐาน (manager ขึ้นไป)
+    //    ที่นี่ด่านเดียวคือเซสชันต้องถูกต้อง — ใครยิงตรง ๆ โดยไม่ล็อกอินตายที่ sessions.access
+    if (url.pathname === '/api/admin/system-health' && req.method === 'GET') {
+      const token = await sessions.access(req)
+      if (!(await rpcDirect(token, 'health_can_view'))) throw fail(403, 'not_allowed')
+      return json(res, 200, await fullSystemStatus(token))
+    }
+    if (url.pathname === '/api/admin/system-health/test' && req.method === 'POST') {
+      checkOrigin(req)
+      const token = await sessions.access(req)
+      if (!(await rpcDirect(token, 'health_can_view'))) throw fail(403, 'not_allowed')
+      const steps = await flowHealth.selftest()
+      const passed = steps.filter(s => s.ok).length
+      return json(res, 200, { ok: passed === steps.length, passed, failed: steps.length - passed,
+        tests: steps.map(s => ({ name: s.name, result: s.ok ? 'PASS' : 'FAIL', ms: s.ms ?? 0, detail: s.detail ?? null })) })
+    }
+    // บันทึกกฎแจ้งเตือนผ่านเซสชันเดิมของหน้าจอ (เดิมหน้า standalone ใช้ token Supabase แยก)
+    // ด่าน "ดู" อยู่ที่ health_can_view — ด่าน "แก้" อยู่ใน health_rule_save เอง (admin เท่านั้น ตรวจค่าใน SQL ต่อ)
+    if (url.pathname === '/api/admin/health-rule' && req.method === 'POST') {
+      checkOrigin(req)
+      const token = await sessions.access(req)
+      if (!(await rpcDirect(token, 'health_can_view'))) throw fail(403, 'not_allowed')
+      const b = JSON.parse((await readBody(req)).toString('utf8'))
+      await rpcDirect(token, 'health_rule_save', {
+        p_id: b.id, p_enabled: b.enabled ?? null, p_params: b.params ?? null, p_level: b.level ?? null,
+        p_notify: b.notify ?? null, p_hour_from: b.hour_from ?? null, p_hour_to: b.hour_to ?? null,
+      })
+      // ประเมินกฎทันทีแทนรอ tick รอบหน้า — health_tick เป็น service_only จึงต้องยิงด้วย service key
+      // (health.mjs ก็เรียกแบบไม่ใส่ token ผู้ใช้ด้วยเหตุผลเดียวกัน)
+      await rpcDirect(service, 'health_tick')
+      return json(res, 200, { ok: true })
+    }
     if (req.method !== 'POST') throw fail(405, 'method_not_allowed')
     checkOrigin(req)
     if (url.pathname === '/api/login') return json(res, 200, await sessions.login(req, res, JSON.parse((await readBody(req, 4096)).toString('utf8'))))
@@ -1151,6 +1454,15 @@ const sessionTimer = setInterval(() => {
     .catch(e => log.warn('session_sweep_failed', { reason: e.message }))
 }, 600000); sessionTimer.unref()
 
+// ตัวเช็ควิ่งเป็นรอบเอง (ทุกนาที: ประตู+ฐาน · ทุกชั่วโมง: TLS+token · ประเมินกฎแล้วยิง Telegram)
+// ปิดได้ด้วย CONNECT_HEALTH=off เช่นตอนรันชุดทดสอบ — ไม่งั้นมาจะยิงออกนอกเครื่องเอง
+if (process.env.CONNECT_HEALTH !== 'off') flowHealth.start()
+
+// สถานะรวมคำนวณเป็นรอบของตัวเอง — /health กับหน้า admin หยิบของที่คำนวณไว้เสมอ ไม่มีใครไปบล็อกใคร
+// รอบแรกหลังบูต 1.5 วินาที กัน status ค้าง unknown จนครบ 15 วินาทีแรก
+setTimeout(refreshSystemStatus, 1500).unref()
+const sysTimer = setInterval(refreshSystemStatus, SYS_TTL); sysTimer.unref()
+
 server.listen(port, '0.0.0.0', () => console.log(`ASHER Connect listening on ${port}; ${activeChannels.length} active channel(s)${shadow ? ' · โหมดเงา: รับเข้าอย่างเดียว ไม่ส่งออก' : ''} · ล็อกอินรายบุคคล`))
 
 process.on('SIGTERM', () => {
@@ -1158,6 +1470,8 @@ process.on('SIGTERM', () => {
   clearInterval(inboundTimer)
   clearInterval(sweepTimer)
   clearInterval(sessionTimer)
+  clearInterval(sysTimer)
+  flowHealth.stop()
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 20000).unref()
 })

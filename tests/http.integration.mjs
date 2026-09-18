@@ -163,6 +163,9 @@ async function startServer(scene, cfg, extraEnv = {}, port = PORT) {
       CONNECT_ACCOUNT_PASSWORD: account.password,
       // ทะเบียน Edge Function ที่หน้าจอเรียกได้ — ใช้ของจริงที่รันอยู่ในสแตก
       CONNECT_EDGE_FUNCTIONS: 'webhook-receiver',
+      // ระบบเช็คสถานะวิ่งเป็นรอบเองและยิงออกนอกเครื่อง (gateway probe ไปที่โดเมนจริง)
+      // ชุดทดสอบต้องคุยกับฐานทดสอบเท่านั้น จึงปิดมันตั้งแต่บูต
+      CONNECT_HEALTH: 'off',
       // จากบนโฮสต์ต้องเข้าทาง envoy ที่ map ออกมา ไม่ใช่ชื่อภายใน docker
       SUPABASE_URL: process.env.HTTP_TEST_SUPABASE_URL || 'http://127.0.0.1:8055',
       SUPABASE_ANON_KEY: cfg.SUPABASE_ANON_KEY,
@@ -191,6 +194,20 @@ const post = async (path, raw, headers = {}) => {
   return { status: r.status, body: await r.text(), headers: r.headers }
 }
 const command = (action, data) => post('/api/command', JSON.stringify({ action, data }), { origin: BASE })
+
+// ล็อกอินรายบุคคล: /api/login คืนคุกกี้ asher_session — สั่งงานทุกอย่างในนามบัญชีนั้นด้วยคุกกี้ใบนี้
+// ต่างจากยุค "ไม่มีล็อกอิน" ที่คำสั่งใช้ได้เลย ตอนนี้ทุกคำสั่งต้องมีเซสชันก่อนเสมอ
+const login = async (base, creds) => {
+  const r = await fetch(base + '/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', origin: base },
+    body: JSON.stringify({ email: creds.email, password: creds.password }),
+  })
+  const cookie = /asher_session=[a-f0-9]{64}/.exec(r.headers.get('set-cookie') || '')?.[0] ?? ''
+  return { status: r.status, cookie }
+}
+const commandAs = (cookie, action, data) =>
+  post('/api/command', JSON.stringify({ action, data }), { origin: BASE, cookie })
 
 async function main() {
   const cfg = await env()
@@ -269,20 +286,26 @@ async function main() {
       ck(9, 'ช่องทางที่ไม่ได้ตั้งค่าไว้ไม่รับของ', r.status === 503, `HTTP ${r.status}`)
     }
 
-    // ── 10-18 ประตูของหน้าจอ หลังถอดชั้นล็อกอินออก
-    //    ด่านที่เหลือไม่ใช่ "คุณเป็นใคร" แล้ว แต่เป็น "คำขอนี้มาจากหน้าเว็บของเราจริงไหม"
+    // ── 10-18 ประตูของหน้าจอ ยุคล็อกอินรายบุคคล
+    //    ทุกคำสั่งต้องมีเซสชันของคนที่ล็อกอินก่อน และคำขอที่เปลี่ยนข้อมูลต้องมาจากหน้าเว็บของเราจริง
+    let ses = null
     {
       const r = await command('bootstrap', {})
-      ck(10, 'ไม่มีล็อกอิน: เปิดมาก็เรียกคำสั่งได้ทันที', r.status === 200, `HTTP ${r.status} ${r.body.slice(0, 80)}`)
+      ck(10, 'ยังไม่ล็อกอิน เรียกคำสั่งไม่ได้ — ตายที่ session_expired',
+        r.status === 401 && r.body.includes('session_expired'), `HTTP ${r.status} ${r.body.slice(0, 80)}`)
     }
     {
-      const r = await post('/api/login', JSON.stringify(user), { origin: BASE })
-      ck(11, 'ทางเข้า /api/login ถูกถอดออกแล้ว', r.status === 404, `HTTP ${r.status}`)
+      const bad = await post('/api/login', JSON.stringify({ email: user.email, password: 'รหัสผ่านผิด' }), { origin: BASE })
+      const r = await login(BASE, user)
+      ck(11, 'ล็อกอิน: รหัสผิดถูกปฏิเสธ รหัสถูกได้คุกกี้เซสชันกลับมา',
+        bad.status === 401 && r.status === 200 && r.cookie.includes('asher_session='),
+        `รหัสผิด ${bad.status} · รหัสถูก ${r.status} · คุกกี้ ${r.cookie ? 'มี' : 'ไม่มี'}`)
+      ses = r
     }
     {
-      // ไม่มีเซสชันรายคนแล้ว จึงต้องไม่มีคุกกี้อะไรติดกลับไปให้เบราว์เซอร์เก็บ
+      // คำขอที่ตกด่านไม่มีคุกกี้อะไรติดกลับไปให้เบราว์เซอร์เก็บ
       const r = await command('bootstrap', {})
-      ck(12, 'ไม่มีคุกกี้เซสชันติดกลับไปอีกต่อไป', !r.headers.get('set-cookie'),
+      ck(12, 'คำขอที่ยังไม่ล็อกอิน ไม่มีคุกกี้ติดกลับไป', !r.headers.get('set-cookie'),
         'ได้ ' + (r.headers.get('set-cookie') || '(ไม่มี)'))
     }
     {
@@ -292,33 +315,38 @@ async function main() {
       ck(13, 'คำสั่งจากเว็บอื่นถูกปฏิเสธ', r.status === 403, `HTTP ${r.status} ${r.body}`)
     }
     {
-      const r = await command('bootstrap', {})
+      const r = await commandAs(ses.cookie, 'bootstrap', {})
       const body = JSON.parse(r.body || '{}')
-      ck(14, 'bootstrap คืนตัวตนของบัญชีที่บริการใช้ และรายการช่องทาง',
+      ck(14, 'bootstrap ด้วยเซสชัน คืนตัวตนของคนล็อกอิน และรายการช่องทาง',
         r.status === 200 && body.user?.email === user.email && Array.isArray(body.channels) && body.channels.length === 2,
         `HTTP ${r.status}`)
     }
     {
-      const r = await command('ทำลายโลก', { id: scene.conv })
+      const r = await commandAs(ses.cookie, 'ทำลายโลก', { id: scene.conv })
       ck(15, 'คำสั่งที่ไม่มีอยู่จริงถูกปฏิเสธ', r.status >= 400 && !r.body.includes('unknown_action'),
         `HTTP ${r.status} ${r.body} (ห้ามหลุดรายละเอียดภายในออกมา)`)
     }
     {
       // สวิตช์ปิดฉุกเฉิน: ปิดช่องทางในฐานแล้วต้องส่งอะไรไม่ได้ทันที ทั้งที่ session ยังอยู่
       await sql(`update inbox.inbox set is_active=false where id='${scene.lineInbox}'`)
-      const r = await command('send', { id: scene.conv, request_id: randomUUID(), text: 'ทดสอบหลังปิดช่องทาง' })
+      const r = await commandAs(ses.cookie, 'send', { id: scene.conv, request_id: randomUUID(), text: 'ทดสอบหลังปิดช่องทาง' })
       await sql(`update inbox.inbox set is_active=true where id='${scene.lineInbox}'`)
       ck(16, 'ปิดช่องทางในฐานแล้วส่งข้อความไม่ได้ทันที (สวิตช์ฉุกเฉิน)',
         r.status >= 400 && r.body.includes('channel_disabled'), `HTTP ${r.status} ${r.body}`)
     }
     {
       const r = await post('/api/command', JSON.stringify({ action: 'bootstrap', data: { ขยะ: 'x'.repeat(300_000) } }),
-        { origin: BASE })
+        { origin: BASE, cookie: ses.cookie })
       ck(17, 'คำสั่งที่ใหญ่เกิน 256KB ถูกตัด', r.status === 413 || r.status === 400, `HTTP ${r.status}`)
     }
     {
-      const r = await post('/api/logout', '{}', { origin: BASE })
-      ck(18, 'ทางออก /api/logout ถูกถอดออกแล้ว', r.status === 404, `HTTP ${r.status}`)
+      // ออกจากระบบด้วยเซสชันที่สอง (ไม่แตะของหลัก) — ออกแล้วคุกกี้ใบนั้นใช้ซ้ำไม่ได้จริง
+      const r2 = await login(BASE, user)
+      const out = await post('/api/logout', '{}', { origin: BASE, cookie: r2.cookie })
+      const after = await post('/api/command', JSON.stringify({ action: 'bootstrap', data: {} }),
+        { origin: BASE, cookie: r2.cookie })
+      ck(18, 'ออกจากระบบ: ได้ 200 และเซสชันใบนั้นใช้ซ้ำไม่ได้อีก',
+        out.status === 200 && after.status === 401, `ออก ${out.status} · คำสั่งหลังออก ${after.status}`)
     }
 
     // ── 19-20 worker สองตัวแย่งงานกัน
@@ -349,9 +377,10 @@ async function main() {
     {
       const s2 = await startServer(scene, cfg, { CONNECT_SHADOW_MODE: 'true' }, PORT + 1)
       extraServers.push(s2)
+      const s2ses = await login(s2.base, user)
 
       const sent = await fetch(s2.base + '/api/command', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s2.base },
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s2.base, cookie: s2ses.cookie },
         body: JSON.stringify({ action: 'send', data: { id: '00000000-0000-0000-0000-000000000000', text: 'ทดสอบ' } }) })
       const sentBody = await sent.text()
       ck(21, 'โหมดเงา: กดส่งถูกปฏิเสธด้วย shadow_mode ไม่ใช่หมดเซสชัน',
@@ -419,8 +448,9 @@ async function main() {
         method: 'POST',
         headers: { apikey: cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: user.email, password: user.password }) })
-      const r = await command('bootstrap', {})
-      ck(28, 'ล็อกอินบัญชีเดียวกันจากที่อื่น แล้วหน้าจอยังใช้งานต่อได้',
+      // เซสชันของเราอยู่บนคุกกี้ฝั่งเซิร์ฟเวอร์ ไม่ผูกกับ token ของ gotrue ที่ถูกล็อกอินทับที่อื่น
+      const r = await commandAs(ses.cookie, 'bootstrap', {})
+      ck(28, 'ล็อกอินบัญชีเดียวกันจากที่อื่น แล้วเซสชันเดิมยังใช้งานต่อได้',
         again.status === 200 && r.status === 200, `ล็อกอินซ้ำ ${again.status} · คำสั่งถัดมา ${r.status}`)
     }
 
@@ -429,52 +459,58 @@ async function main() {
     {
       const s5 = await startServer(scene, cfg, {}, PORT + 3)
       extraServers.push(s5)
+      // ล็อกอินครั้งเดียวแล้วยิงหกคำขอพร้อมกันด้วยคุกกี้ใบเดียวกัน — ถ้าหมุน token ต่างคนต่างหมุน
+      // ใบที่ทำร้ายจะตอบ 400 แล้วทุกหน้าจอหลุดพร้อมกัน
+      const s5ses = await login(s5.base, user)
       const shoot = () => fetch(s5.base + '/api/command', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s5.base },
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s5.base, cookie: s5ses.cookie },
         body: JSON.stringify({ action: 'bootstrap', data: {} }) }).then(r => r.status).catch(() => 0)
       const many = await Promise.all([1, 2, 3, 4, 5, 6].map(shoot))
-      ck(29, 'ยิงพร้อมกันตอนเพิ่งบูต ไม่กดทับกันเอง', many.every(v => v === 200), 'ได้ ' + many.join(' '))
+      ck(29, 'ยิงพร้อมกันหกคำขอด้วยเซสชันเดียว ไม่กดทับกันเอง', many.every(v => v === 200), 'ได้ ' + many.join(' '))
     }
 
     // ── 30 หน้าเว็บกับเซิร์ฟเวอร์ต้องเล่าเรื่องเดียวกัน
-    //    ถ้าหน้าจอยังมีฟอร์มล็อกอินค้างอยู่ทั้งที่ฝั่งเซิร์ฟเวอร์ถอดออกแล้ว คนใช้จะเจอฟอร์มที่กดแล้วไม่มีอะไรเกิดขึ้น
+    //    ฝั่งเซิร์ฟเวอร์มี /api/login จริง และหน้าเว็บก็มีฟอร์มจริง — ไม่มีฝั่งใดสวมของยุคเก่า
     {
       const page = await (await fetch(BASE + '/')).text()
       const app = await (await fetch(BASE + '/app.js')).text()
-      ck(30, 'หน้าเว็บไม่มีร่องรอยหน้าล็อกอินหลงเหลือ',
-        !page.includes('id="login"') && !page.includes('id="logout"') && !app.includes('/api/login'),
-        'ยังเจอใน ' + [page.includes('id="login"') && 'index.html:login',
-                       page.includes('id="logout"') && 'index.html:logout',
-                       app.includes('/api/login') && 'app.js'].filter(Boolean).join(' · '))
+      const serverHasLogin = (await post('/api/login', '{}', { origin: BASE })).status !== 404
+      ck(30, 'หน้าเว็บกับเซิร์ฟเวอร์มีระบบล็อกอินคู่กันทั้งสองฝั่ง',
+        serverHasLogin && page.includes('id="login-panel"') && app.includes('/api/login'),
+        'เซิร์ฟเวอร์ ' + (serverHasLogin ? 'มี' : 'ไม่มี') + ' · หน้าเว็บ ' +
+        (page.includes('id="login-panel"') ? 'มีฟอร์ม' : 'ไม่มีฟอร์ม') + ' · app.js ' +
+        (app.includes('/api/login') ? 'ยิงจริง' : 'ไม่ยิง'))
     }
 
     // ── 31-33 ทางไป Edge Function
     //    โปรแกรมจะทยอยย้ายลงมาทีละตัว ทางนี้จึงต้องรับของใหม่ได้โดยไม่ต้องแก้โค้ด
     //    และต้องไม่กลายเป็นประตูหลังที่ยิงถึงทุกฟังก์ชันในโปรเจกต์
     {
-      const r = await command('fn:ยังไม่ได้ลงทะเบียน', {})
+      const r = await commandAs(ses.cookie, 'fn:ยังไม่ได้ลงทะเบียน', {})
       ck(31, 'Edge Function ที่ไม่อยู่ในทะเบียน เรียกไม่ได้',
         r.status === 404 && r.body.includes('function_not_registered'), `HTTP ${r.status} ${r.body}`)
     }
     {
       // ยิงถึงฟังก์ชันจริงที่รันอยู่ ไม่ใช่ของปลอม — ไม่มีลายเซ็นจึงต้องถูกฟังก์ชันปฏิเสธเอง
-      const r = await command('fn:webhook-receiver', { hello: 'จากเทสต์' })
+      const r = await commandAs(ses.cookie, 'fn:webhook-receiver', { hello: 'จากเทสต์' })
       ck(32, 'Edge Function ในทะเบียน ถูกเรียกถึงจริง',
         r.status >= 400 && r.status < 500 && r.body.includes('error'), `HTTP ${r.status} ${r.body.slice(0, 120)}`)
     }
     {
       // คำตอบของโปรแกรมต้องมาถึงหน้าจอทั้งอย่างนั้น ไม่ถูกยุบเป็น request_rejected ของชั้นนี้
-      const r = await command('fn:webhook-receiver', {})
+      const r = await commandAs(ses.cookie, 'fn:webhook-receiver', {})
       ck(33, 'คำตอบของ Edge Function ไม่ถูกชั้นนี้ตีความใหม่',
         !r.body.includes('request_rejected') && !r.body.includes('service_unavailable'), r.body.slice(0, 120))
     }
 
-    // ── 34 /health บอกได้ว่าตอนนี้รับโปรแกรมอะไรลงมาแล้วบ้าง
+    // ── 34 /health บอกได้ว่าตอนนี้รับโปรแกรมอะไรลงมาแล้วบ้าง และมีสถานะรวมให้ด้วย
     {
       const h = await (await fetch(BASE + '/health')).json()
-      ck(34, '/health บอกทะเบียน Edge Function และบัญชีที่ใช้ทำงาน',
-        Array.isArray(h.edgeFunctions) && h.edgeFunctions.includes('webhook-receiver') && h.account === user.email,
-        JSON.stringify(h))
+      ck(34, '/health บอกทะเบียน Edge Function และสถานะรวมของระบบ',
+        Array.isArray(h.edgeFunctions) && h.edgeFunctions.includes('webhook-receiver')
+          && ['healthy', 'degraded', 'down', 'unknown'].includes(h.status)
+          && h.database && typeof h.database.latencyMs === 'number',
+        JSON.stringify({ status: h.status, database: h.database, edgeFunctions: h.edgeFunctions }))
     }
 
     // ── 35-41 ของเข้ามาแล้วเกิดอะไรขึ้นต่อ: บันทึกดิบ · คิว · event_type · กันซ้ำที่ฐาน · payload ขาออก
@@ -707,8 +743,9 @@ async function main() {
       const s6 = await startServer(scene, cfg,
         { CONNECT_ACCOUNT_EMAIL: manager.email, CONNECT_ACCOUNT_PASSWORD: manager.password }, PORT + 4)
       extraServers.push(s6)
+      const s6ses = await login(s6.base, manager)
       const flip = await fetch(s6.base + '/api/command', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s6.base },
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: s6.base, cookie: s6ses.cookie },
         body: JSON.stringify({ action: 'bot_switch', data: { switch: 'generate', enabled: true, inbox_id: ib } }) })
       const whileOn = await claim()
       ck(48, 'ผู้จัดการกดเปิดจากหน้าจอแล้วงานเดินต่อจากของที่ค้างไว้ ไม่ได้หายไป',
@@ -884,7 +921,7 @@ async function main() {
                                  join core.contact_identity ci on ci.contact_id=c.contact_id
                                 where ci.external_id='${CUSTOMER}' limit 1`)
       await sql(`update inbox.conversation set last_human_reply_at=null where id='${convId}'`)
-      const r = await command('human_reply', { channel: 'line', external_id: CUSTOMER, note: 'ตอบจาก chat.line.biz' })
+      const r = await commandAs(ses.cookie, 'human_reply', { channel: 'line', external_id: CUSTOMER, note: 'ตอบจาก chat.line.biz' })
       const row = await sql(`select (c.last_human_reply_at is not null)::text,
                                     (select e.source from inbox.human_reply_events e
                                       where e.conversation_id=c.id order by e.id desc limit 1)
@@ -927,6 +964,153 @@ async function main() {
       ck(61, 'เซลส์กดส่งจากหน้าจอ: นับเป็นคนตอบทันทีที่ถึงลูกค้า และบอทหยุดจ่อ',
         humanAt === 'true' && source === 'workspace' && jobStatus === 'skipped',
         `เวลาคนตอบ ${humanAt} · ที่มา ${source} · งานที่บอทจ่อ ${jobStatus}`)
+    }
+
+    // ── 62-64 Admin System Status: ด่านสิทธิ์ + ข้อมูลจริงจาก backend
+    {
+      const r = await fetch(BASE + '/api/admin/system-health')
+      ck(62, 'ยังไม่ล็อกอิน เข้าถึง system-health ไม่ได้', r.status === 401, 'ได้ ' + r.status)
+    }
+    {
+      const r = await fetch(BASE + '/api/admin/system-health', { headers: { cookie: ses.cookie } })
+      ck(63, 'เซลส์ทั่วไปเข้า system-health ไม่ได้ (ด่านอยู่ในฐาน)', r.status === 403, 'ได้ ' + r.status)
+    }
+    {
+      const admin = await testUser('admin.test@')
+      const a = await login(BASE, admin)
+      const r = await fetch(BASE + '/api/admin/system-health', { headers: { cookie: a.cookie } })
+      const body = await r.json().catch(() => ({}))
+      const ok = r.status === 200
+        && ['healthy', 'degraded', 'down', 'unknown'].includes(body.overall)
+        && body.database?.status !== undefined && typeof body.database?.latencyMs === 'number'
+        && body.workers?.inbound && body.workers?.outbound
+        && body.queue?.pending !== undefined
+        && typeof body.shadowMode === 'boolean'
+        && Array.isArray(body.rules) && body.rules.length >= 11
+        && typeof body.checkedAt === 'string' && typeof body.uptimeSec === 'number'
+        && body.environment !== undefined
+        // ห้ามมีความลับหลุดมาในคำตอบเด็ดขาด
+        && !JSON.stringify(body).includes(cfg.SUPABASE_SERVICE_ROLE_KEY.slice(0, 20))
+      ck(64, 'admin เปิด system-health ได้ ครบทุกส่วน และไม่มี secret หลุด', ok,
+        `HTTP ${r.status} · overall ${body.overall} · db ${body.database?.status} · กฎ ${body.rules?.length}`)
+    }
+
+    // ── 65 /health contract: ของใหม่เพิ่มเข้ามา ของเดิมต้องอยู่ครบ (ไม่ breaking change)
+    {
+      const h = await (await fetch(BASE + '/health')).json()
+      const kept = 'ok' in h && 'workerLastSuccess' in h && h.memory && Array.isArray(h.edgeFunctions) && 'bot' in h
+      const added = typeof h.uptimeSec === 'number' && 'checkedAt' in h && 'version' in h
+        && h.database && h.channels && h.workers && h.queue && typeof h.shadowMode === 'boolean'
+        && ['healthy', 'degraded', 'down', 'unknown'].includes(h.status)
+      ck(65, '/health คง field เดิมครบ และเพิ่มสถานะรวม/ฐานข้อมูล/worker/คิวให้ด้วย',
+        kept && added, `ของเดิม ${kept ? 'ครบ' : 'ขาด'} · ของเพิ่ม ${added ? 'ครบ' : 'ขาด'}`)
+    }
+
+    // ── 66 ฐานล่ม → สถานะรวมต้องลงเป็น down และ /health ตอบ 503 (ไม่ใช่ 200 หลอก ๆ)
+    {
+      const s7 = await startServer(scene, cfg, {
+        CONNECT_WORKER_STALE_MS: '3000',
+        SUPABASE_URL: 'http://127.0.0.1:9',
+      }, PORT + 5)
+      extraServers.push(s7)
+      await new Promise(r => setTimeout(r, 8000))
+      const r = await fetch(s7.base + '/health')
+      const h = await r.json().catch(() => ({}))
+      ck(66, 'ฐานข้อมูลใช้ไม่ได้: สถานะรวมเป็น down และ /health ตอบ 503',
+        r.status === 503 && h.status === 'down' && h.database?.status === 'down',
+        `HTTP ${r.status} · status ${h.status} · db ${h.database?.status}`)
+    }
+
+    // ── 67 Run Self-Test: admin กดได้ ผลรวมถูกต้อง และไม่มี secret หลุด
+    {
+      const admin = await testUser('admin.test@')
+      const a = await login(BASE, admin)
+      const sales = await fetch(BASE + '/api/admin/system-health/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: BASE, cookie: ses.cookie }, body: '{}' })
+      const r = await fetch(BASE + '/api/admin/system-health/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', origin: BASE, cookie: a.cookie }, body: '{}' })
+      const body = await r.json().catch(() => ({}))
+      const ok = sales.status === 403 && r.status === 200
+        && typeof body.ok === 'boolean' && Array.isArray(body.tests) && body.tests.length >= 5
+        && body.passed + body.failed === body.tests.length
+        && body.tests.every(t => ['PASS', 'WARN', 'FAIL'].includes(t.result) && typeof t.ms === 'number')
+        && !JSON.stringify(body).includes(cfg.SUPABASE_SERVICE_ROLE_KEY.slice(0, 20))
+      ck(67, 'Run Self-Test: เซลส์โดนปฏิเสธ admin ได้ผลครบ และไม่มี secret หลุด',
+        ok, `เซลส์ ${sales.status} · admin ${r.status} · ผ่าน ${body.passed}/${body.tests?.length}`)
+    }
+
+    // ── 68 Health Rules: ตรวจค่าก่อนเขียน — ค่าผิดถูกปฏิเสธ ค่าถูกบันทึกได้ แล้วคืนค่าเดิม
+    {
+      const admin = await testUser('admin.test@')
+      const SB = process.env.HTTP_TEST_SUPABASE_URL || 'http://127.0.0.1:8055'
+      const grant = await fetch(SB + '/auth/v1/token?grant_type=password', {
+        method: 'POST', headers: { apikey: cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: admin.email, password: admin.password }) })
+      const token = (await grant.json()).access_token
+      const save = (params) => fetch(BASE + '/api/health/rule', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ id: 'line-oa-silence', params }) })
+      const before = await one(`select params->>'minutes' from inbox.monitor_rule where id='line-oa-silence'`)
+      const bad = await save({ minutes: 0 })
+      const badHour = await fetch(BASE + '/api/health/rule', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ id: 'line-oa-silence', hour_from: 20, hour_to: 6 }) })
+      const good = await save({ minutes: 30 })
+      const stored = await one(`select params->>'minutes' from inbox.monitor_rule where id='line-oa-silence'`)
+      await save({ minutes: Number(before) })
+      ck(68, 'แก้กฎ: ค่า <1 กับช่วงเวลากลับด้านถูกปฏิเสธ ค่าถูกบันทึกและคืนค่าเดิมได้',
+        bad.status === 400 && badHour.status === 400 && good.status === 200
+          && stored === '30' && Number(before) > 0,
+        `ค่า 0 → ${bad.status} · ชั่วโมงกลับด้าน → ${badHour.status} · 30 นาที → ${good.status} · คืนค่า ${before}→${await one(`select params->>'minutes' from inbox.monitor_rule where id='line-oa-silence'`)}`)
+    }
+
+    // ── 69 /admin/health คือหน้าเดียวกับแอปหลัก — ไม่มีหน้าล็อกอินแยกของระบบเช็คอีกต่อไป
+    {
+      const r = await fetch(BASE + '/admin/health')
+      const html = await r.text()
+      const shell = r.status === 200 && html.includes('id="app-nav"') && html.includes('id="workspace"')
+      const noStandalone = !html.includes('health-token') && !html.includes('id="email"') && !html.includes('id="testBtn"')
+      ck(69, '/admin/health เสิร์ฟเปลือกแอปหลัก (nav/header เดิม) ไม่มีฟอร์มล็อกอินแยก',
+        shell && noStandalone, `HTTP ${r.status} · เปลือกหลัก ${shell} · standalone ${noStandalone ? 'หายไปแล้ว' : 'ยังอยู่'}`)
+    }
+    // ── 70 admin ล็อกอินแล้วเปิดหน้าเดิมได้ — เปลือกเดียวกับหน้าจอทีม
+    {
+      const admin = await testUser('admin.test@')
+      const a = await login(BASE, admin)
+      const r = await fetch(BASE + '/admin/health', { headers: { cookie: a.cookie } })
+      const html = await r.text()
+      ck(70, 'admin เข้า /admin/health ด้วยเซสชันเดิมและเห็นเปลือกแอปหลัก',
+        r.status === 200 && html.includes('id="app-nav"'), `HTTP ${r.status}`)
+    }
+    // ── 71 manager ดูสถานะระบบได้ แต่บันทึกกฎถูกปฏิเสธ (ด่านแก้อยู่ใน health_rule_save)
+    {
+      const mgr = await testUser('manager.test@')
+      const m = await login(BASE, mgr)
+      const view = await fetch(BASE + '/api/admin/system-health', { headers: { cookie: m.cookie } })
+      const save = await fetch(BASE + '/api/admin/health-rule', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: BASE, cookie: m.cookie },
+        body: JSON.stringify({ id: 'line-oa-silence', enabled: true }) })
+      ck(71, 'manager เปิดดูสถานะระบบได้ แต่บันทึกกฎโดนปฏิเสธ',
+        view.status === 200 && save.status >= 400 && save.status < 500,
+        `ดู ${view.status} · บันทึก ${save.status}`)
+    }
+    // ── 72 admin บันทึกกฎผ่านเซสชันเดิม อ่านใหม่ค่าคงอยู่ แล้วคืนค่าเดิม
+    {
+      const admin = await testUser('admin.test@')
+      const a = await login(BASE, admin)
+      const before = await one(`select params->>'minutes' from inbox.monitor_rule where id='line-oa-silence'`)
+      const save = (body) => fetch(BASE + '/api/admin/health-rule', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: BASE, cookie: a.cookie }, body: JSON.stringify(body) })
+      const r1 = await save({ id: 'line-oa-silence', params: { minutes: 45 } })
+      const view = await fetch(BASE + '/api/admin/system-health', { headers: { cookie: a.cookie } })
+      const body = await view.json().catch(() => ({}))
+      const rule = (body.rules ?? []).find(x => x.id === 'line-oa-silence')
+      const persisted = view.status === 200 && rule && Number(rule.params?.minutes) === 45
+      const back = await save({ id: 'line-oa-silence', params: { minutes: Number(before) } })
+      const after = await one(`select params->>'minutes' from inbox.monitor_rule where id='line-oa-silence'`)
+      ck(72, 'admin บันทึกกฎผ่านเซสชันเดิม รีเฟรชแล้วค่าคงอยู่ และคืนค่าเดิมได้',
+        r1.status === 200 && persisted && back.status === 200 && Number(after) === Number(before),
+        `บันทึก ${r1.status} · คงอยู่ ${persisted} · คืนค่า ${after}→${before}`)
     }
   } finally {
     for (const s of extraServers) { s.child.kill('SIGTERM'); await rm(s.dir, { recursive: true, force: true }).catch(() => {}) }

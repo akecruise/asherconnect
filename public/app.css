@@ -1189,3 +1189,64 @@ body.lead-open .lead-card { transform: none; visibility: visible }
 /* ปุ่มเองยังใช้ padding ของ <button> ฐาน (10px 13px) ซึ่งหนาเกินไปสำหรับแถบตรึงบาง ๆ นี้
    บีบเฉพาะที่นี่ ไม่ไปแตะ <button> ฐานที่ใช้ทั่วแอป */
 .queue > .paging button { padding: 5px 11px; font-size: 11px; border-radius: 6px }
+
+/* Quick Replies popup */
+.quick-replies-popover { width: min(500px, calc(100vw - 24px)); max-height: min(70vh, 520px); overflow: auto; padding: 10px; z-index: 20 }
+.quick-replies-head, .quick-replies-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px }
+.quick-replies-head { justify-content: space-between; font-size: 14px }
+.quick-replies-tools input { flex: 1; min-width: 0; width: auto }
+.quick-replies-tools select { width: 155px; min-width: 0 }
+.quick-replies-cats { display: flex; gap: 5px; overflow-x: auto; margin-bottom: 8px }
+.quick-replies-cats button { white-space: nowrap; padding: 5px 8px; font-size: 11px }
+.quick-replies-cats button.active { background: var(--ink); color: var(--surface) }
+.quick-reply-row { display: flex; width: 100%; gap: 10px; align-items: flex-start; text-align: left; padding: 8px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; cursor: pointer }
+.quick-reply-row:hover { background: var(--rule-soft) }
+.quick-reply-row img, .quick-reply-thumb { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 6px; object-fit: cover; background: var(--rule-soft); display: grid; place-items: center; color: var(--muted) }
+.quick-reply-copy { min-width: 0; display: grid; gap: 3px }
+.quick-reply-copy small { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: normal }
+@media (max-width: 767px) { .quick-replies-popover { position: fixed; left: 8px; right: 8px; bottom: 70px; width: auto; max-height: 65vh } .quick-replies-tools select { width: 130px } }
+
+/* ───────────────────────── หน้าสถานะระบบ (/admin/health) ─────────────────────────
+   อยู่ในเปลือกเดียวกับแอปหลัก (header/nav ของเดิม) — ซ่อนคอลัมน์แชทแล้ววางการ์ดสถานะเต็มแทน
+   ★ สีทุกสีมาจากตัวแปร :root ตามกติกาของไฟล์นี้ โหมดมืดจึงถูกต้องเอง */
+body.admin-view main { display: block; padding: 18px clamp(14px, 3vw, 32px) 40px }
+body.admin-view .queue,
+body.admin-view .conversation,
+body.admin-view #lead-card { display: none }
+#admin-health { max-width: 980px; margin: 0 auto }
+.ah-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.ah-head h1 { font-size: 18px; margin: 0 }
+#ah-refresh { flex: 0 0 auto; margin-left: auto }
+.ah-meta { color: var(--muted); margin: 6px 0 4px }
+.ah-section { font-size: 15px; margin: 26px 0 10px }
+.ah-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 10px }
+.ah-card { background: var(--surface); border: 1px solid var(--rule-soft); border-radius: 10px; padding: 10px 12px }
+.ah-card header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px }
+.ah-card h3 { font-size: 13px; margin: 0 }
+.ah-card.ah-bad { border-color: var(--urgent-line) }
+.ah-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 2px 0 }
+.ah-row span:first-child { color: var(--muted) }
+.ah-row span:last-child { text-align: right; overflow-wrap: anywhere }
+.ah-bad-text { color: var(--bad) }
+/* ป้ายสถานะ — ใช้คู่สี pill ที่มีอยู่แล้วตามกติกาของไฟล์ */
+.pill.good { background: var(--pill-green-bg); color: var(--pill-green-fg) }
+.pill.warn { background: var(--pill-amber-bg); color: var(--pill-amber-fg) }
+.pill.gray { background: var(--pill-gray-bg); color: var(--pill-gray-fg) }
+/* ผลตรวจทีละขั้น */
+#ah-steps { margin-top: 10px }
+.ah-step { display: flex; align-items: baseline; gap: 10px; padding: 6px 2px; border-bottom: 1px solid var(--rule-soft); font-size: 13px }
+.ah-step span:nth-child(2) { flex: 1; overflow-wrap: anywhere }
+.ah-ms { color: var(--muted) }
+.ah-ok { color: var(--good) }
+.ah-skip { color: var(--warn) }
+.ah-fail { color: var(--bad) }
+.ah-sum { padding: 8px 2px; font-weight: 600 }
+/* กฎแจ้งเตือน */
+.ah-rule { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--rule-soft) }
+.ah-rule .pill { justify-self: end }
+.ah-rule.off .ah-name, .ah-rule.off .ah-ctl { opacity: .55 }
+.ah-name { font-weight: 600 }
+.ah-ctl { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; font-size: 13px }
+.ah-field { display: inline-flex; align-items: center; gap: 6px }
+.ah-field input[type="number"] { width: 84px }
+#ah-rule-note { margin-top: 10px }

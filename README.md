@@ -21,6 +21,12 @@ curl.exe -s http://127.0.0.1:3200/health    # ดูสถานะ
 
 เปิดหน้าจอทีมที่ http://localhost:3200
 
+### Admin System Status
+
+admin เปิด **เมนู "สถานะระบบ"** (หรือ `/admin/health`) เพื่อดูสถานะรวมทั้งระบบ — ฐานข้อมูล,
+ช่องทาง LINE/Messenger, worker สองคิว, คิวงาน, โหมดเงา — กด Run Self-Test และปรับเกณฑ์เตือนได้จากหน้าเดียว
+รายละเอียดทั้งหมดใน **`docs/admin-system-status.md`**
+
 ```bash
 npm test          # เทสต์ทั้งชุด (auth · profile · providers · bots · report · outcomes · decide · http)
 npm run check     # ตรวจ syntax + ตรวจ SQL ledger
@@ -202,6 +208,7 @@ ALLOW_DB_TESTS=1 node --test tests/testreset.db.test.mjs    # ⚠️ เขี�
 | **`CONFIG.md`** | **ค่าที่ต้องเติมใน `.env` — อยู่ที่ไหน เอามาจากไหน หน้าตาเป็นยังไง** |
 | **`ROADMAP.md`** | **แก้ปัญหาแจ้งเตือนไม่ทำงาน ทีละขั้น พร้อมตารางวินิจฉัยอาการ** |
 | `docs/switchover.md` | แผนสลับจาก cloud มาที่นี่ · เกณฑ์ผ่าน · วิธีถอย |
+| `docs/admin-system-status.md` | หน้าสถานะระบบของ admin — overall status, self-test, กฎเตือน |
 | `docs/testing.md` | วิธีทดสอบ |
 | `docs/individual-login.md` | ระบบล็อกอิน |
 | `docs/stats-plan.md` | แผนหน้าสถิติ |
