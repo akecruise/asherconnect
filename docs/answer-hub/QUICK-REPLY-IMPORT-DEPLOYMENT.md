@@ -15,3 +15,10 @@ Date: 2026-09-18 UTC
 - `/quick-replies`: HTTP 200; `/quick-replies-admin.js`: HTTP 200 and contains the import action.
 
 Authenticated admin preview/apply was not run from this environment because no usable admin browser session is available. The API continues to require the existing admin session and rejects unauthenticated requests; no production Quick Reply rows were changed by this deployment.
+
+## Follow-up verification (2026-09-18)
+
+- Release remains `b53033701b170b4cc131588f62c16b60ca7287e0`; no redeploy occurred.
+- `/healthz`: HTTP 200; `/health`: HTTP 200; container healthy; database, workers, queue, LINE, and Messenger healthy.
+- The authenticated browser/computer-use capability is unavailable in this environment, so the required Admin preview/apply could not be performed without bypassing authentication.
+- Production data result: no Quick Reply rows changed. Asher Naii preview/apply remains pending an authenticated Admin session.
