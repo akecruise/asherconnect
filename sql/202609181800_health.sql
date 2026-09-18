@@ -1,4 +1,4 @@
-﻿-- Phase 20 MVP: Answer Hub health summary for authenticated managers/admins.
+-- Phase 20 MVP: Answer Hub health summary for authenticated managers/admins.
 create or replace function inbox.ah_health(p_data jsonb default '{}') returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare v_role text:=coalesce(core.current_user_role(),''); v_total int; v_approved int; v_draft int; v_review int; v_learning int; v_usage int; v_feedback int;
 begin

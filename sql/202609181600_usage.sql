@@ -1,4 +1,4 @@
-﻿-- Phase 16 MVP: append-only usage audit, written only through a service-role RPC.
+-- Phase 16 MVP: append-only usage audit, written only through a service-role RPC.
 create table if not exists answer_hub.answer_usage (
  id uuid primary key default gen_random_uuid(), answer_item_id uuid not null references answer_hub.answer_item(id), user_id uuid, conversation_id uuid references inbox.conversation(id), channel text, used_at timestamptz not null default now(), metadata jsonb not null default '{}'::jsonb
 );

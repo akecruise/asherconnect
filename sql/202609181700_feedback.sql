@@ -1,4 +1,4 @@
-﻿-- Phase 17 MVP: authenticated feedback report, isolated from send flow.
+-- Phase 17 MVP: authenticated feedback report, isolated from send flow.
 create table if not exists answer_hub.answer_feedback (
  id uuid primary key default gen_random_uuid(), answer_item_id uuid not null references answer_hub.answer_item(id), conversation_id uuid references inbox.conversation(id), reporter_id uuid, kind text not null check (kind in ('incorrect','outdated','other')), note text, created_at timestamptz not null default now()
 );
