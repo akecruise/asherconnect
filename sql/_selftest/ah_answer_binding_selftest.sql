@@ -24,6 +24,7 @@ declare
   v_admin   uuid;
   v_manager uuid;
   v_sales   uuid;
+  v_has_optional_sources boolean := to_regclass('public.promotions') is not null and to_regclass('public.project_facts') is not null;
   v_proj    uuid;
   v_utype   uuid;
   v_item    uuid;
@@ -34,6 +35,10 @@ begin
   select user_id into v_admin   from core.profile where role = 'admin'   and is_active order by user_id limit 1;
   select user_id into v_manager from core.profile where role = 'manager' and is_active order by user_id limit 1;
   select user_id into v_sales   from core.profile where role = 'sales'   and is_active order by user_id limit 1;
+  if not v_has_optional_sources then
+    raise notice 'optional promotions/project_facts adapters absent; binding resolver integration test skipped';
+    return;
+  end if;
 
   -- ─── ของชั่วคราว: โครงการ + ยูนิต + โปร + fact + คำตอบ 3 สถานะ ───
   insert into core.project (code, name)
