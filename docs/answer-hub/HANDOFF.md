@@ -562,3 +562,15 @@ Known limitations: manual browser checklist, production migration/deploy, live R
 Safe next step: obtain an approved release/deployment window, create and verify a production backup, run migration plan/apply in canonical order, deploy the reviewed artifact, and append live evidence.
 
 Production read-only prerequisite check (2026-09-18): VPS `asher-connect` is `Up 8 hours (healthy)`, `/healthz` returned `{"ok":true}`, deployed commit remains `97d1b6362cc4ab2db6225c7d3b5531b829fec992`. This confirms the existing Phase 8 deployment only; it does not verify the new local migrations or Answer Hub actions in production.
+
+## Production release gate (2026-09-18)
+
+Release commit: `d793c7344c2cfbd0c42187d586ae5617235442ee` (`feat(answer-hub): complete MVP phases 1-30`).
+
+Local evidence is complete: `npm run check` PASS, `npm test` 302/302 PASS (220 Node + 82 HTTP), and 13/13 SQL selftests PASS. A secret-pattern scan found no credential values in the staged Answer Hub files.
+
+Deployment is BLOCKED before migration/deploy. Read-only production checks show the container healthy and `/healthz` HTTP 200, but production remains on `97d1b6362cc4ab2db6225c7d3b5531b829fec992`. The production `inbox.sql_applied` ledger currently contains only `_ledger.sql`, legacy/stat files, `202609172025_health.sql`, foundation/system/item/version; it does not contain the source, binding, service, answer-edit, import, learning, quick-answer, recommendation, usage, feedback, or health migrations from this release. The ledger therefore cannot safely distinguish unapplied migrations from historical catalog drift. The existing VPS archives are historical backups (`backup-pre-phase8-20260918-014105.tar.gz` and `backup-health-ah3-20260918.tar.gz`), not a newly verified pre-release database backup.
+
+Per `DEPLOYMENT.md`, do not apply migrations or deploy until an operator creates and verifies a fresh database backup and reconciles the production ledger/catalog with the release migration plan. No production data, flags, secrets, or containers were changed in this release attempt.
+
+Rollback point: production commit `97d1b6362cc4ab2db6225c7d3b5531b829fec992`; release commit remains available as `d793c7344c2cfbd0c42187d586ae5617235442ee`.

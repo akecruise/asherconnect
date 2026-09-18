@@ -32,7 +32,7 @@
 | 27 | Rollback procedure | ROLLBACK.md + flags | admin/ops controls | procedure documented | Live proof pending | MVP READY |
 | 28 | Troubleshooting | TROUBLESHOOTING.md | N/A | guide reviewed | Operational guide | MVP READY |
 | 29 | Feature flags | env/service gating | server-side flags | service tests | Legacy fallback | MVP READY |
-| 30 | Final acceptance | this matrix + HANDOFF | all verified local gates | full regression PASS | Production deploy pending | MVP READY |
+| 30 | Final acceptance | this matrix + HANDOFF | all verified local gates | full regression PASS | Production deploy blocked by ledger/backup gate | BLOCKED |
 
 ## Full regression evidence
 
@@ -40,4 +40,6 @@
 - `npm test`: 220 Node tests PASS / 0 FAIL; HTTP integration 82/82 PASS / 0 FAIL
 - Answer Hub SQL selftests: 13/13 PASS / 0 FAIL
 - `git diff --check`: PASS
-- Production: not deployed in this run
+- Production read-only: container healthy, `/healthz` HTTP 200, deployed SHA `97d1b6362cc4ab2db6225c7d3b5531b829fec992`
+- Release SHA: `d793c7344c2cfbd0c42187d586ae5617235442ee`
+- Production: NOT DEPLOYED; fresh backup and migration-ledger/catalog reconciliation are required before any migration or code deploy.

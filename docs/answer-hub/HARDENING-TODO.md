@@ -28,3 +28,7 @@
 - Live rollback rehearsal.
 - Full dashboard aggregation (14 counters), usage de-duplication, ranking tuning, and event taxonomy expansion.
 - Production health is currently PASS for the historical Phase 8 artifact only; new Answer Hub migrations were not deployed.
+
+## Release blocker
+
+- Before production deployment, create and verify a fresh database backup and reconcile `inbox.sql_applied` with the production catalog. The current ledger is missing the release migration set, so applying by filename alone is unsafe. Keep production on `97d1b6362cc4ab2db6225c7d3b5531b829fec992` until this gate is cleared.
