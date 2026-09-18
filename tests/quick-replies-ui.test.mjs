@@ -14,8 +14,23 @@ test('saved reply card inserts the full content without sending', () => {
   assert.match(source, /p\.textContent = item\.content/)
   assert.match(source, /message\.value = item\.content/)
   assert.match(source, /message\.dispatchEvent\(new Event\('input'/)
-  assert.match(source, /message\.focus\(\); close\(\)/)
+  assert.match(source, /message\.focus\(\); setTimeout\(close, 80\)/)
   assert.doesNotMatch(source, /sendMessage\(item\.content\)/)
+})
+
+test('category chips filter in place and keep search state', () => {
+  assert.match(source, /category = c; cats\.querySelectorAll\('button'\)/)
+  assert.match(source, /chip\.classList\.toggle\('active', chip === b\)/)
+  assert.match(source, /chip === b\)\); render\(\)/)
+  assert.match(source, /search\.addEventListener\('input', \(\) => \{ query = search\.value; render\(\) \}\)/)
+  assert.match(source, /select\.addEventListener\('change', \(\) => \{ sort = select\.value; render\(\) \}\)/)
+})
+
+test('card interaction has pressed feedback and remains manual-send only', () => {
+  assert.match(source, /b\.setAttribute\('aria-pressed', 'false'\)/)
+  assert.match(source, /b\.classList\.add\('selected'\)/)
+  assert.match(source, /b\.disabled = true/)
+  assert.match(source, /touch-action:manipulation/)
 })
 
 test('saved reply cards are safe, clamped and hide inactive rows', () => {
