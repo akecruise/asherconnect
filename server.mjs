@@ -32,6 +32,7 @@ import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
 import { createHealth } from './health/health.mjs'
 import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
+import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub/quick-reply-import.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -1304,6 +1305,38 @@ async function handleCommand(req, res) {
     const who = await rpc(accessToken, 'bootstrap')
     if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
     return json(res, 200, await rpcDirect(accessToken, 'qr_toggle', { p_id: input.data.id, p_active: input.data.active, p_bot_enabled: null }))
+  }
+  if (input.action === 'quick_reply_import_preview' || input.action === 'quick_reply_import_apply') {
+    const who = await rpc(accessToken, 'bootstrap')
+    if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
+    const parsed = parseQuickReplyFile({ filename: input.data.filename, content: input.data.content })
+    const existing = await rpcDirect(accessToken, 'qr_list', { p_project: null, p_query: null, p_category: null })
+    const classified = classifyQuickReplies(parsed.rows, existing)
+    const summary = {
+      total: classified.length + parsed.invalid.length,
+      ready: classified.filter(x => x.status === 'NEW').length,
+      update: classified.filter(x => x.status === 'UPDATE').length,
+      duplicate: classified.filter(x => x.status === 'SKIP').length,
+      inactive: classified.filter(x => !x.active).length,
+      errors: parsed.invalid.length,
+    }
+    if (input.action === 'quick_reply_import_preview') return json(res, 200, { summary, rows: classified, invalid: parsed.invalid })
+    if (parsed.invalid.length) throw fail(400, 'invalid_import_rows')
+    const result = { imported: 0, updated: 0, skipped: 0, errors: [], inactive: classified.filter(x => !x.active).map(x => x.shortcut) }
+    for (const row of classified) {
+      if (row.status === 'SKIP') { result.skipped++; continue }
+      try {
+        await rpcDirect(accessToken, 'qr_upsert', { p_data: {
+          id: row.id || '', project: 'all', title: row.title, shortcut: row.shortcut,
+          category: row.category, body: row.body, sort_order: row.sort_order,
+          active: row.active, intents: [], source: row.source, image_url: row.image_url,
+        } })
+        if (row.status === 'UPDATE') result.updated++; else result.imported++
+      } catch (error) {
+        result.errors.push({ row: row._row, shortcut: row.shortcut, code: 'import_row_failed' })
+      }
+    }
+    return json(res, 200, { summary, result })
   }
 
   if (input.action.startsWith('fn:')) {
