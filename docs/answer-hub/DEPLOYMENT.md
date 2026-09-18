@@ -108,3 +108,15 @@ Latest verification: `npm run check` exit 0; `npm test` 281/281 (209 unit + 72 H
 Scope decision: six missing Phase 4+ RPCs and the real-client RPC check are explicitly deferred to the next authorized task. They do not justify extra migrations in this closeout. UI evidence is user-reported; automation remains unavailable. No credential/session-store access occurred.
 
 Next action: perform the deferred real-client RPC check in a separate authorized task. No additional deployment or phase work is authorized by this note. STOP. DO NOT START PHASE 9.
+
+## 2026-09-18 — Saved Replies UI controlled deployment
+
+- Release commit: `6667903298045c5f96b25dc2e9e7d4d42d009290`.
+- Previous production commit: `b53033701b170b4cc131588f62c16b60ca7287e0`.
+- Fresh database backup: `/opt/asher-inbox/backup-pre-quick-replies-ui-20260918T141107Z.dump` (2,066,987 bytes; SHA-256 `e36285c02063c7025c4ba3963c4310f61591b459f49a4f387272f1d0f4855360`; `pg_restore --list` PASS).
+- No migration was applied and no Quick Reply data or activation state was modified.
+- Production catalog verification: `inbox.quick_reply`, `qr_list(jsonb)`, and `qr_upsert(jsonb)` present.
+- Container healthy, restart count 0; `/healthz` HTTP 200; `/health` HTTP 200; LINE and Messenger health remained healthy.
+- Saved Replies asset smoke: `/quick-replies.js` HTTP 200, deployed hash matched the tested archive, card/display mapping and full-content insertion code present.
+- Protected inactive rows verified after deploy: `NAII_PRICE=false`, `NAII_PSM=false`, `NAII_ROOM_PRICE=false`.
+- Rollback: image tag `app-asher-connect:rollback-b53033701b170b4cc131588f62c16b60ca7287e0` and previous commit/app backup retained.
