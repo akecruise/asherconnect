@@ -55,3 +55,11 @@ The detailed phase table above predates the MVP execution pass. Canonical MVP re
 - Fresh backup verified before migration attempt; migration transaction rolled back cleanly.
 - Missing production dependencies: `public.promotions`, `public.project_facts`.
 - No production application, flags, data, or migration ledger changes were made.
+
+## Production rollout completion (2026-09-18)
+
+- Production schema compatibility fix deployed; optional ERP adapters remain safe when absent.
+- Release `6895b20bd327854a3a4934ec491c2fb78ac1af04` is running.
+- 13/13 migrations and 13/13 production SQL selftests passed.
+- `/healthz` and `/health` are HTTP 200; container restart count is 0.
+- Authenticated UI/API smoke remains pending because the available production login returned HTTP 403.

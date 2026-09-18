@@ -148,3 +148,11 @@
 - Reconciled production ledger/catalog read-only.
 - Stopped safely when the canonical source registry migration found missing `public.promotions` and `public.project_facts` dependencies; transaction rolled back.
 - No production deployment or data mutation completed.
+
+## 2026-09-18 — Production MVP deployment
+
+- Made optional promotions/project_facts adapters install-safe.
+- Applied the complete 13-migration Answer Hub chain with matching hashes.
+- Deployed commit `6895b20bd327854a3a4934ec491c2fb78ac1af04`.
+- Verified container, health endpoints, migration ledger, and production SQL selftests.
+- Authenticated smoke remains pending due rejected production login credentials.

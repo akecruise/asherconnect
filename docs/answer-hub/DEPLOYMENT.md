@@ -41,6 +41,19 @@ ANSWER_HUB_DYNAMIC_DATA_ENABLED=false
 - Blocker: production lacks `public.promotions` and `public.project_facts`, required by the migration. No guessed schema was created.
 - Result: NOT DEPLOYED; production remains on `97d1b6362cc4ab2db6225c7d3b5531b829fec992`.
 
+### MVP controlled deployment — completed (2026-09-18)
+
+- **Release**: `6895b20bd327854a3a4934ec491c2fb78ac1af04`
+- **Archive SHA256**: `efe50ffe2015b858c5f152a921ffd326c26bfcbf79c4a7d180999c5a46781c99`
+- **Backup**: `/opt/asher-inbox/backup-pre-answer-hub-20260918T174500Z.dump` (verified before migration)
+- **Migrations**: 13/13 applied in canonical order with matching ledger hashes
+- **Container**: healthy, restart count 0
+- **Health**: `/healthz` and `/health` HTTP 200
+- **SQL selftests**: 13/13 PASS
+- **Flags**: Answer Hub flags unset/default-off
+- **Rollback**: `97d1b6362cc4ab2db6225c7d3b5531b829fec992`, image tag `app-asher-connect:rollback-6895b20`
+- **Authenticated smoke**: pending; production login credential pair returned HTTP 403 and was not changed
+
 ### Phase 8 — Corrected Controlled Deploy (2026-09-18 09:00+07:00)
 - **Status**: COMPLETE within original controlled-deploy scope
 - **Deployed Commit**: `97d1b6362cc4ab2db6225c7d3b5531b829fec992`

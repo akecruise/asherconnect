@@ -586,3 +586,15 @@ The first canonical release migration, `202609180530_source_registry.sql`, was e
 Classification: `202609180530_source_registry.sql` = CONFLICTING; dependent release migrations remain NOT_APPLIED. Required action is an explicit schema decision/migration for the missing business tables or a reviewed source-registry compatibility migration. Do not create guessed placeholder tables and do not continue with dependent migrations.
 
 Deployment remains BLOCKED. Production stays on `97d1b6362cc4ab2db6225c7d3b5531b829fec992` and remains healthy.
+
+## Production deployment completed (2026-09-18)
+
+Schema fix: optional `public.promotions` and `public.project_facts` adapters now install without those relations and return `source_unavailable`; no placeholder business tables were created.
+
+Production migration chain applied transaction-by-transaction after the verified backup. All 13 release migration hashes match `inbox.sql_applied`: source registry, binding, service, resolver, answer edit, import, learning, learning review, quick answer, recommendation, usage, feedback, and health.
+
+Deployed application commit: `6895b20bd327854a3a4934ec491c2fb78ac1af04`. Archive SHA-256: `efe50ffe2015b858c5f152a921ffd326c26bfcbf79c4a7d180999c5a46781c99`. Previous production SHA: `97d1b6362cc4ab2db6225c7d3b5531b829fec992`.
+
+Production verification: container healthy, restart count 0, `/healthz` HTTP 200, `/health` HTTP 200 with database/channels/workers healthy, no error/fatal logs in the post-deploy window. Production SQL selftests: 13/13 PASS. Answer Hub feature flags remain unset (default-off), preserving legacy fallback behavior.
+
+Authenticated browser/API smoke could not be completed because the production login credential pair rejected with HTTP 403; no credentials were printed or changed. Read-only health and database verification passed. Rollback remains the previous image tag `app-asher-connect:rollback-6895b20`, previous SHA, and backup `/opt/asher-inbox/backup-pre-answer-hub-20260918T174500Z.dump`.
