@@ -203,3 +203,20 @@ _ledger.sql
 202609181600_usage.sql
 202609181700_feedback.sql
 202609181800_health.sql
+
+# ── Meta App Review — รหัสรีวิวใน Messenger (2026-09-19) ──
+# ★ receive_event (ต่อยอด 036): ข้อความจาก asher-messenger ที่ขึ้นต้นด้วย
+#   META_REVIEW_CODE (server.mjs: tagReviewCode) ติดธง is_test + mode='human'
+#   ให้บทสนทนานั้น กันบอทตอบผู้ตรวจสอบ ไม่แตะกิ่งอื่นของ receive_event
+#   ★ ต้องอยู่หลัง 036_echo_source_from_queue.sql เสมอ — มีด่านตรวจในตัว
+# ★ + ปิดช่องโหว่ที่เจอระหว่างทำ: inbox.stats_normalize ไม่เคยกรอง is_test
+#   ออกจาก countable มาก่อน (สวนทางกับคอมเมนต์คอลัมน์ตั้งแต่ sql/031) แก้ให้ตรง
+202609191500_review_code.sql
+
+# ── เซลส์ใช้คิวรวม + ผู้ตรวจสอบ Meta เห็นเฉพาะแชททดสอบ (2026-09-19) ──
+# ★ เอาการแก้ที่ทำสดบน VPS (2026-09-19, ไม่เคยเข้า repo) กลับมาไว้ที่นี่:
+#   connect_private.can_read (นิยามเดิมอยู่ใน database.sql ฐาน ไม่เคยมีไฟล์ใน
+#   sql/ แตะมาก่อน) + คอลัมน์ core.profile.test_only ที่ไม่เคยอยู่ในโค้ดชุดนี้เลย
+#   ★ ต้องอยู่หลัง sql/031_test_reset.sql (มีด่านตรวจในตัว) และหลัง
+#     202609191500_review_code.sql (ลำดับเวลา ไม่ใช่ dependency จริง)
+041_shared_sales_queue.sql

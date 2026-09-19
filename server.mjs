@@ -29,6 +29,7 @@ import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
 import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
+import { reviewCode, tagReviewCode } from './bots/reviewcode.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
 import { createHealth } from './health/health.mjs'
 import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
@@ -863,7 +864,7 @@ async function processInbound(job) {
   try {
     const events = normalizeWebhook(config.channel, job.payload, config)
     const received = []
-    for (const event of events) received.push(await rpc(service, 'receive', event, true))
+    for (const event of events) received.push(await rpc(service, 'receive', tagReviewCode(event, config, META_REVIEW_CODE), true))
     await finish({ status: 'done', events_count: events.length })
     log.info('webhook_processed', { channel: job.channel_key, log_id: job.id, events: events.length })
     // ★ ยิงทิ้งไว้ ไม่ await — ข้อความลงฐานเสร็จไปแล้ว โปรไฟล์เป็นของแถมที่ขาดได้
@@ -1231,6 +1232,14 @@ async function handleWebhook(req, res, url) {
 // ★ ต้องตรงทั้งข้อความเท่านั้น — "test ระบบ" เป็นข้อความลูกค้าปกติ
 //   ถ้าจับแบบขึ้นต้นด้วย test ลูกค้าจริงที่พิมพ์คำนี้จะโดนรีเซ็ตแชทตัวเอง
 const TEST_USER_IDS = testUserIds()
+
+// ───────────────────────────────────────────── Meta App Review
+//
+// ผู้ตรวจสอบ (test_only) ต้องทดสอบ pages_messaging ด้วยบัญชี Messenger จริง
+// พิมพ์ข้อความขึ้นต้นด้วยรหัสนี้จาก asher-messenger เท่านั้น = ติดธง is_test ให้บทสนทนา
+// เพื่อไม่ให้ปนกับงานขายจริง — คนละกลไกกับ TEST_USER_IDS ข้างบน (นั่นคือรีเซ็ตแชทให้บอทเริ่มใหม่
+// ส่วนนี้คือกันบอทตอบ/ไม่นับสถิติ ดู sql/202609191500_review_code.sql)
+const META_REVIEW_CODE = reviewCode()
 
 async function runTestResets(hits, config, key) {
   for (const hit of hits) {
