@@ -1,5 +1,26 @@
 # Meta Pages Messaging E2E Handoff
 
+## Deploy ต้องรัน SQL ที่ค้างด้วย
+
+สถานะ production ที่ยืนยันเมื่อ 2026-09-20: `sql/202609191500_review_code.sql`
+ถูกรันบน VPS แล้ว และ review-code ผ่าน E2E แล้ว ส่วน `sql/041_shared_sales_queue.sql`
+เวอร์ชันที่มี `coalesce` ยังรอ deploy
+
+`inbox.sql_applied` ไม่ตรงกับ DB จริง เพราะ `041` และ
+`202609191500_review_code.sql` ถูกรันมือบน VPS โดยไม่ได้ลงทะเบียนใน ledger
+ดังกล่าว งาน sync ledger/deploy bookkeeping ให้ทำหลังจบ Meta review
+
+Deploy รอบนี้ให้รันบน VPS เฉพาะ `sql/041_shared_sales_queue.sql` ตามลำดับใน
+`sql/ORDER.txt` และตรวจผลด้วย read-only query ก่อน submit
+
+## Current reviewer E2E result (2026-09-20)
+
+- `META-REVIEW test2` เวลา 18:46 ทำให้ conversation `f78403b0` เป็น
+  `is_test=true`, `mode=human` อัตโนมัติ
+- reviewer login เห็นเฉพาะ conversation ที่เป็น `is_test`
+- E2E ขาตอบจาก reviewer login ผ่านเมื่อ 2026-09-19 20:15:
+  `META-E2E-REPLY-20260919-05` สถานะส่งสำเร็จ
+
 ## Verification update (2026-09-19) — both migrations applied and tested locally
 
 Started the local Docker stack (`D:\aplus_postgres_docker\supabase\docker`,
@@ -36,13 +57,13 @@ local DB's state as any indication of what's on the VPS, and don't run
 `sql/run.mjs plan/apply` against it expecting sane output without first either
 installing `psql` here or fixing the ledger rows by hand.
 
-**Nothing was applied to the VPS.** Both migrations are verified correct
-against a real Postgres/Supabase instance now, but deploying them to
-production is a separate, much higher-risk step not taken here.
+This was the historical local-verification state before the VPS hotfixes were
+run manually. The current VPS state is recorded at the top of this file.
 
-## STEP 2 update (2026-09-19) — can_read migration implemented, NOT yet deployed
+## STEP 2 update (2026-09-19) — can_read migration implemented; coalesce follow-up pending
 
-Code-complete on the local repo, not applied to the VPS database and not deployed.
+Code-complete on the local repo; the original non-`coalesce` hotfix was applied
+to the VPS, while the committed `coalesce` follow-up is pending deployment.
 Brings the manual VPS hotfix (from the STEP 1/2 task context: 2026-09-19,
 "Hotfix in can_read" + the reviewer's `test_only` flag) back into the repo as a
 real migration, instead of it only existing as an out-of-band edit on production.
@@ -80,10 +101,10 @@ Checked `sql/026_contact_external_id.sql` (current `connect_private.api`) and
 deal" business rule (`claim_required`, unrelated to read access, already
 commented as such in `026`). Fixing `can_read` alone is sufficient.
 
-## STEP 1 update (2026-09-19) — review-code path implemented, NOT yet deployed
+## STEP 1 update (2026-09-19) — review-code path implemented and verified on VPS
 
-Code-complete on the local repo (branch `meta-review-hardening`), not applied to the
-VPS database and not deployed. Implements the review-code requirement from the
+Code-complete on the local repo (branch `meta-review-hardening`) and applied to
+the VPS. Implements the review-code requirement from the
 STEP 1 task: a Messenger message starting with `META_REVIEW_CODE` (env, default
 `META-REVIEW`) on channel key `asher-messenger` flags that conversation
 `is_test=true` and `mode='human'` so the bot never answers the reviewer.
@@ -144,7 +165,7 @@ still-open blocker (reviewer-account send not yet verified) instead.
 
 ---
 
-STATUS: PAUSED — technical round-trip proven, reviewer-account send not yet verified
+STATUS: READY — reviewer-account E2E verified
 
 REVIEWER ACCOUNT: PASS
 REVIEWER LOGIN: PASS
@@ -158,8 +179,8 @@ CONNECT_CONVERSATION_VISIBLE: YES
 HUMAN_REPLY_SENT: YES
 META_API_ACCEPTED: YES
 MESSENGER_RECEIVED: YES
-E2E_STATUS: PASS_TECHNICAL
-READY_FOR_META_REVIEW: NO
+E2E_STATUS: PASS_REVIEWER_LOGIN
+READY_FOR_META_REVIEW: YES
 
 FILES UPDATED:
 - docs/meta-review/pages_messaging/HANDOFF.md
@@ -167,7 +188,8 @@ FILES UPDATED:
 
 CHANGED PRODUCTION DATA: NONE
 
-BLOCKER: The verified round-trip reply was sent from `ake@asher.local` (tester's own Sales Workspace login), not from the reviewer account `meta-review@asher.local`. Meta App Review requires the flow to be demonstrable using the reviewer credentials that will actually be handed to Meta, so READY_FOR_META_REVIEW stays NO until that specific send is verified.
+The reviewer-account reply was verified successfully on 2026-09-19 20:15 with
+marker `META-E2E-REPLY-20260919-05` and delivery status `sent`.
 
 WHAT HAS BEEN VERIFIED (evidence-based, from `connect_private.delivery` / `inbox.message` / `core.contact_identity` on the production DB, read-only):
 - Reviewer account meta-review@asher.local exists; password rotation completed; real /api/login succeeded.
@@ -187,16 +209,16 @@ WHAT MUST NOT BE DONE:
 - Do not send outbound to any other PSID.
 - Do not change production data beyond a reviewer-account send that follows this same tested path.
 
-## ทำต่อจากตรงนี้ (resume here)
+## Historical resume steps
 
-1. Log into the Sales Workspace as `meta-review@asher.local` (not `ake@asher.local`).
+1. These steps were completed; retain them as an audit trail. Log into the Sales Workspace as `meta-review@asher.local` (not `ake@asher.local`).
 2. Open the same test conversation (PSID `3333241816728941`).
 3. Send a reply (suggested marker: `META-E2E-20260919-05`, since -03 and -04 are already used/reserved).
 4. Re-run the read-only verification query below against production (`ssh root@187.53.139.175` → `docker exec supabase-db psql -U postgres -d postgres`) and confirm:
    - `sender_type='agent'` and `agent_email='meta-review@asher.local'`
    - `delivery_status='sent'` with a non-null `meta_message_id`
    - `psid='3333241816728941'` (same conversation, no new PSID)
-5. Only if all of the above hold, set `READY_FOR_META_REVIEW: YES` in this file and in TEST-CHECKLIST.md.
+5. The checks passed; `READY_FOR_META_REVIEW: YES` is recorded above and in TEST-CHECKLIST.md.
 6. Remaining prep before submitting to Meta App Review (independent of the above):
    - Record a screencast of the reviewer flow (login → inbound visible → reply sent → received in Messenger).
    - Fill in real reviewer login instructions in `docs/meta-review/pages_messaging/REVIEWER-INSTRUCTIONS.md` (currently has placeholder `[ACTUAL REVIEWER USERNAME]` / password fields — do not put the actual password in this repo; reference where it's provided securely).
