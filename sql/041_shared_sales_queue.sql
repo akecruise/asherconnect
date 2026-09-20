@@ -57,16 +57,18 @@ comment on column core.profile.test_only is
   'บทสนทนาที่ is_test=true เท่านั้น ไม่เห็นงานขายจริง · ตั้งครั้งเดียวตอนสร้างบัญชี';
 
 -- ── can_read: คิวรวมสำหรับเซลส์ + กันผู้ตรวจสอบไม่ให้เห็นงานจริง ────────────
-create or replace function connect_private.can_read(p_id uuid) returns boolean
-language sql stable security definer set search_path = pg_catalog, public
-as $$
+create or replace function connect_private.can_read(p_id uuid)
+returns boolean language sql stable security definer
+set search_path to 'pg_catalog','public'
+as $function$
   select auth.uid() is not null and exists(
     select 1 from core.profile p join inbox.conversation c on c.id = p_id
-     where p.user_id = auth.uid() and p.is_active
-       and p.role in ('sales', 'senior_sales', 'manager', 'admin')
-       and (not p.test_only or c.is_test)
+    where p.user_id = auth.uid()
+      and p.is_active
+      and p.role in ('sales','senior_sales','manager','admin')
+      and (not coalesce(p.test_only,false) or coalesce(c.is_test,false))
   )
-$$;
+$function$;
 
 grant execute on function connect_private.can_read(uuid) to authenticated;
 revoke all on function connect_private.can_read(uuid) from public, anon;

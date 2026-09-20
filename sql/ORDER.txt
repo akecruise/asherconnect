@@ -219,4 +219,7 @@ _ledger.sql
 #   sql/ แตะมาก่อน) + คอลัมน์ core.profile.test_only ที่ไม่เคยอยู่ในโค้ดชุดนี้เลย
 #   ★ ต้องอยู่หลัง sql/031_test_reset.sql (มีด่านตรวจในตัว) และหลัง
 #     202609191500_review_code.sql (ลำดับเวลา ไม่ใช่ dependency จริง)
+#   ★ can_read ใช้เงื่อนไข test_only → is_test และกิ่ง list ของ
+#     connect_private.api เรียก can_read(c.id) จึงกรองระดับรายการด้วย
 041_shared_sales_queue.sql
+042_bootstrap_test_only.sql
