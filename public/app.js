@@ -126,6 +126,7 @@ function initials(label){
 function avatar(url, label){
  const box = text('span', '', 'avatar')
  box.textContent = initials(label)
+ if (boot?.user?.test_only) return box
  if (url) {
   const img = document.createElement('img')
   img.alt = ''
@@ -357,7 +358,7 @@ function renderChatHeadExtras(who){
   const url=items.find(i=>i.id===selected)?.picture_url||detail.contact?.picture_url||''
   box.replaceChildren()
   box.textContent=initials(who)
-  if(url){
+  if(url&&!boot?.user?.test_only){
    const img=document.createElement('img')
    img.alt='';img.loading='lazy'
    img.addEventListener('error',()=>img.remove())
@@ -382,6 +383,7 @@ function appointment(){dialog('นัดเข้าชม · เวลาไท
 let botState=[]
 // สถานะบอทต้องอ่านจากฐานเสมอ ไม่ใช่จำไว้ในหน้าจอ — ผู้จัดการอีกคนอาจเพิ่งกดปิดไป
 async function refreshBot(){
+ if (boot?.user?.test_only) { botState=[]; renderSendMode(); return }
  try{botState=await api('bot_status')}catch{botState=[]}
  renderSendMode()
  const btn=$('bot-toggle');if(!btn)return
