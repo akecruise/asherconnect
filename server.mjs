@@ -34,6 +34,7 @@ import { buildDailyDigest } from './reports/reply-digest.mjs'
 import { createHealth } from './health/health.mjs'
 import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
 import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub/quick-reply-import.mjs'
+import { classifyCrmFailure, crmBackoffMs } from './lib/crm-publisher.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -50,6 +51,20 @@ if (process.env.CONNECT_CHANNELS_FILE) channels = JSON.parse(await readFile(proc
 // ช่องทางจะ "ใช้งานได้" ก็ต่อเมื่อมีครบทั้งปลายทาง ความลับ และถูกเปิดไว้
 // ขาดอย่างใดอย่างหนึ่งถือว่ายังไม่เชื่อม ดีกว่าปล่อยให้ไปพังตอนยิงจริง
 const activeChannels = channels.filter(c => c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true)
+
+const crmPublisherEnabled = process.env.ASHER_CRM_PUBLISH_ENABLED === 'true' || process.env.ASHER_CRM_PUBLISH_ENABLED === '1'
+const crmUrl = (process.env.ASHER_CRM_URL || '').replace(/\/$/, '')
+const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
+const crmProducer = process.env.ASHER_CRM_PRODUCER || 'connect-sandbox'
+const crmWorkspaceId = process.env.ASHER_CRM_WORKSPACE_ID || ''
+const crmPublisherConfigured = Boolean(crmPublisherEnabled && crmUrl && crmToken && crmWorkspaceId)
+const CRM_PUBLISH_INTERVAL = Number(process.env.ASHER_CRM_PUBLISH_INTERVAL_MS || 3000)
+const CRM_PUBLISH_BATCH = 20
+const CRM_PUBLISH_LEASE_SECONDS = 60
+let crmPublisherRunning = false
+let crmPublisherLastSuccess = null
+let crmPublisherLastError = null
+let crmPublisherStats = { pending: 0, processing: 0, delivered: 0, dead_letter: 0, last_success_at: null, last_error_at: null, oldest_pending_at: null }
 
 const WORKER_INTERVAL = 3000
 // ไม่สำเร็จนานกว่านี้ = ตัวส่งข้อความตาย
@@ -227,6 +242,88 @@ const rpcDirect = (token, fn, body = {}) =>
     token, method: 'POST', body,
     headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
   })
+
+async function refreshCrmPublisherStats() {
+  try {
+    const stats = await rpcDirect(service, 'crm_publish_stats')
+    if (stats && typeof stats === 'object') crmPublisherStats = { ...crmPublisherStats, ...stats }
+  } catch (e) {
+    crmPublisherLastError = new Date().toISOString()
+    log.warn('crm_publisher_stats_failed', { reason: e.message })
+  }
+}
+
+async function crmPublisherWorker() {
+  if (crmPublisherRunning) return
+  if (!crmPublisherConfigured) {
+    if (crmPublisherEnabled || crmUrl || crmToken || crmWorkspaceId) await refreshCrmPublisherStats()
+    return
+  }
+  crmPublisherRunning = true
+  try {
+    const rows = await rpcDirect(service, 'crm_publish_claim', {
+      p_limit: CRM_PUBLISH_BATCH,
+      p_lease_seconds: CRM_PUBLISH_LEASE_SECONDS,
+    })
+    for (const row of Array.isArray(rows) ? rows : []) {
+      let result = 'delivered'
+      let errorCode = null
+      let errorDetail = null
+      let nextAttemptAt = null
+      try {
+        const response = await fetch(`${crmUrl}/internal/events`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${crmToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_id: row.event_id,
+            producer: crmProducer,
+            type: row.event_type,
+            schema_version: 1,
+            workspace_id: crmWorkspaceId,
+            aggregate_type: row.aggregate_type,
+            aggregate_id: row.aggregate_id,
+            aggregate_version: 1,
+            occurred_at: row.occurred_at,
+            emitted_at: new Date().toISOString(),
+            correlation_id: row.aggregate_id,
+            causation_id: row.event_id,
+            source_is_test: false,
+            payload: row.payload,
+          }),
+          signal: AbortSignal.timeout(10000),
+        })
+        if (!response.ok) {
+          result = classifyCrmFailure({ status: response.status })
+          errorCode = `http_${response.status}`
+          errorDetail = (await response.text()).slice(0, 1000)
+        }
+      } catch (e) {
+        result = 'retry'
+        errorCode = e.name === 'TimeoutError' ? 'timeout' : 'network_error'
+        errorDetail = e.message
+      }
+      if (result === 'retry') {
+        const attempts = Number(row.attempts || 1)
+        nextAttemptAt = new Date(Date.now() + crmBackoffMs(attempts)).toISOString()
+      }
+      await rpcDirect(service, 'crm_publish_finish', {
+        p_id: row.id,
+        p_status: result,
+        p_error_code: errorCode,
+        p_error_detail: errorDetail,
+        p_next_attempt_at: nextAttemptAt,
+      })
+      if (result === 'delivered') crmPublisherLastSuccess = new Date().toISOString()
+      if (result === 'dead_letter' || result === 'retry') crmPublisherLastError = new Date().toISOString()
+    }
+    await refreshCrmPublisherStats()
+  } catch (e) {
+    crmPublisherLastError = new Date().toISOString()
+    log.warn('crm_publisher_failed', { reason: e.message })
+  } finally {
+    crmPublisherRunning = false
+  }
+}
 
 // ชั้นบริการคลังคำตอบ (Phase 6) — ประตูเดียวของทุก action ah_* ในตัวจัดการด้านล่าง
 // flags default ปิดหมด (ANSWER_HUB_ENABLED ฯลฯ) — เปิดทีละตัวทาง env / inbox.settings
@@ -941,6 +1038,18 @@ function health() {
            // หน่วยเป็น MB เพราะไบต์ดิบไม่มีใครอ่านออกตอนตีสาม
            // rss คือของที่ docker วัดจริง ส่วน heapUsed คือของที่ V8 ถืออยู่
            memory: { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 },
+           crmPublisher: {
+             enabled: crmPublisherEnabled,
+             configured: crmPublisherConfigured,
+             status: !crmPublisherEnabled ? 'disabled' : crmPublisherConfigured ? 'healthy' : 'misconfigured',
+             pending: Number(crmPublisherStats.pending || 0),
+             processing: Number(crmPublisherStats.processing || 0),
+             delivered: Number(crmPublisherStats.delivered || 0),
+             deadLetter: Number(crmPublisherStats.dead_letter || 0),
+             lastSuccessAt: crmPublisherLastSuccess || crmPublisherStats.last_success_at || null,
+             lastErrorAt: crmPublisherLastError || crmPublisherStats.last_error_at || null,
+             oldestPendingAt: crmPublisherStats.oldest_pending_at || null,
+           },
            // สวิตช์ของบอทต้องมองเห็นจากข้างนอกเสมอ
            // ไม่งั้น "บอทไม่ตอบ" กับ "บอทถูกปิดไว้" จะแยกกันไม่ออกตอนมีคนถามว่าทำไมเงียบ
            bot: jobQueue }
@@ -1519,6 +1628,12 @@ server.headersTimeout = 10000
 
 const workerTimer = setInterval(worker, WORKER_INTERVAL); workerTimer.unref()
 const inboundTimer = setInterval(inboundWorker, WORKER_INTERVAL); inboundTimer.unref()
+const crmPublisherTimer = setInterval(crmPublisherWorker, CRM_PUBLISH_INTERVAL); crmPublisherTimer.unref()
+if (crmPublisherConfigured) {
+  crmPublisherWorker().catch(e => log.warn('crm_publisher_start_failed', { reason: e.message }))
+} else if (crmPublisherEnabled) {
+  log.warn('crm_publisher_misconfigured', { urlConfigured: Boolean(crmUrl), tokenConfigured: Boolean(crmToken), workspaceConfigured: Boolean(crmWorkspaceId) })
+}
 // ของดิบมีข้อความลูกค้าจริงอยู่ในนั้น เก็บ 30 วันตามที่ตั้งไว้ในฝั่งฐาน
 // เดินวันละสี่ครั้งก็พอ ไม่ใช่งานที่ต้องตรงเวลา ขอแค่ไม่มีวันที่ลืมทำ
 const sweepTimer = setInterval(() => {
@@ -1548,6 +1663,7 @@ server.listen(port, '0.0.0.0', () => console.log(`ASHER Connect listening on ${p
 process.on('SIGTERM', () => {
   clearInterval(workerTimer)
   clearInterval(inboundTimer)
+  clearInterval(crmPublisherTimer)
   clearInterval(sweepTimer)
   clearInterval(sessionTimer)
   clearInterval(sysTimer)

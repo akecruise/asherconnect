@@ -224,3 +224,4 @@ _ledger.sql
 041_shared_sales_queue.sql
 042_bootstrap_test_only.sql
 202609211200_messenger_identity_p0.sql
+202609211300_crm_publisher.sql
