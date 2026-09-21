@@ -223,3 +223,4 @@ _ledger.sql
 #     connect_private.api เรียก can_read(c.id) จึงกรองระดับรายการด้วย
 041_shared_sales_queue.sql
 042_bootstrap_test_only.sql
+202609211200_messenger_identity_p0.sql

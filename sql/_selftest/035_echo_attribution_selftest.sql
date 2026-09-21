@@ -97,8 +97,8 @@ begin
 
   -- ════════ เตรียมบทสนทนา messenger สำหรับเคส echo ════════
   r := connect_private.receive_event(jsonb_build_object(
-         'inbox_id', v_msgr, 'event_id', '__selftest__mcust1', 'event_type', 'message',
-         'external_id', 'U__selftest__mcust', 'display_name', 'ลูกค้า messenger selftest',
+          'inbox_id', v_msgr, 'page_id', 'PAGE__selftest__', 'event_id', '__selftest__mcust1', 'event_type', 'message',
+          'external_id', 'U__selftest__mcust', 'customer_psid', 'U__selftest__mcust', 'display_name', 'ลูกค้า messenger selftest',
          'content_type', 'text', 'text', 'สนใจห้อง 1 นอนครับ', 'occurred_at', now()), now());
   v_conv := (r->>'id')::uuid;
 
@@ -110,8 +110,8 @@ begin
 
   select count(*) into v_before from inbox.message where conversation_id = v_conv;
   r := connect_private.receive_event(jsonb_build_object(
-         'inbox_id', v_msgr, 'event_id', 'm___selftest__mid_bot1', 'event_type', 'echo',
-         'external_id', 'U__selftest__mcust', 'app_id', BOT_APP,
+          'inbox_id', v_msgr, 'page_id', 'PAGE__selftest__', 'event_id', 'm___selftest__mid_bot1', 'event_type', 'echo',
+          'external_id', 'U__selftest__mcust', 'customer_psid', 'U__selftest__mcust', 'app_id', BOT_APP,
          'content_type', 'text', 'text', 'ห้อง 1 นอน เริ่ม 2.39 ลบ. ค่ะ', 'occurred_at', now()), now());
   select count(*) into v_after from inbox.message where conversation_id = v_conv;
   select m.external_message_id into v_txt from inbox.message m where m.id = v_botmsg;
@@ -135,8 +135,8 @@ begin
   -- ตั้งใจไม่เซ็ต provider_id (จำลองว่า worker ยัง finish ไม่เสร็จ)
   select count(*) into v_before from inbox.message where conversation_id = v_conv;
   r := connect_private.receive_event(jsonb_build_object(
-         'inbox_id', v_msgr, 'event_id', 'm___selftest__mid_bot2', 'event_type', 'echo',
-         'external_id', 'U__selftest__mcust', 'app_id', BOT_APP,
+          'inbox_id', v_msgr, 'page_id', 'PAGE__selftest__', 'event_id', 'm___selftest__mid_bot2', 'event_type', 'echo',
+          'external_id', 'U__selftest__mcust', 'customer_psid', 'U__selftest__mcust', 'app_id', BOT_APP,
          'content_type', 'text', 'text', 'ว่างอยู่ 3 ห้องค่ะ', 'occurred_at', now()), now());
   select count(*) into v_after from inbox.message where conversation_id = v_conv;
   if v_after = v_before and (r->>'message_id')::uuid = v_botmsg and coalesce((r->>'linked_mid')::boolean,false)
@@ -146,8 +146,8 @@ begin
   -- ════════ 10) echo จาก Page Inbox → คนตอบ + เครดิตจากลายเซ็น ════════
   select count(*) into v_before from inbox.message where conversation_id = v_conv;
   r := connect_private.receive_event(jsonb_build_object(
-         'inbox_id', v_msgr, 'event_id', 'm___selftest__mid_page1', 'event_type', 'echo',
-         'external_id', 'U__selftest__mcust', 'app_id', PAGE_APP,
+          'inbox_id', v_msgr, 'page_id', 'PAGE__selftest__', 'event_id', 'm___selftest__mid_page1', 'event_type', 'echo',
+          'external_id', 'U__selftest__mcust', 'customer_psid', 'U__selftest__mcust', 'app_id', PAGE_APP,
          'content_type', 'text', 'text', 'เดี๋ยวส่งแปลนให้นะคะ -Mint', 'occurred_at', now()), now());
   select count(*) into v_after from inbox.message where conversation_id = v_conv;
   select m.sender_type into v_txt from inbox.message m where m.id = (r->>'message_id')::uuid;
@@ -161,8 +161,8 @@ begin
 
   -- ════════ 11) echo จากแอปอื่น → other_app ════════
   r := connect_private.receive_event(jsonb_build_object(
-         'inbox_id', v_msgr, 'event_id', 'm___selftest__mid_other1', 'event_type', 'echo',
-         'external_id', 'U__selftest__mcust', 'app_id', '999999999999999',
+          'inbox_id', v_msgr, 'page_id', 'PAGE__selftest__', 'event_id', 'm___selftest__mid_other1', 'event_type', 'echo',
+          'external_id', 'U__selftest__mcust', 'customer_psid', 'U__selftest__mcust', 'app_id', '999999999999999',
          'content_type', 'text', 'text', 'ทดสอบจากแอปอื่น', 'occurred_at', now()), now());
   if r->>'source' = 'other_app'
     then raise notice '11) echo จากแอปอื่น            ผ่าน  (source=other_app)';

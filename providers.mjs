@@ -168,6 +168,7 @@ function messengerEvents(body, config) {
 
       const base = {
         inbox_id: config.inbox_id,
+        page_id: entry.id,
         occurred_at: iso(e.timestamp),
         is_standby: standby,
         reply_token: null,
@@ -183,7 +184,8 @@ function messengerEvents(body, config) {
         //   2. Page Inbox ส่ง app_id ของ Business Suite มาด้วย ไม่ใช่ค่าว่าง
         //   ฐานจึงผูก mid กับคิวขาออกก่อน แล้วค่อยดู app_id เป็นตัวรอง
         if (!e.recipient?.id || !e.message.mid) continue
-        out.push({ ...base, event_type: 'echo', external_id: e.recipient.id, event_id: e.message.mid,
+        out.push({ ...base, event_type: 'echo', external_id: e.recipient.id, customer_psid: e.recipient.id,
+          event_id: e.message.mid,
           app_id: e.message.app_id != null ? String(e.message.app_id) : null,
           content_type: e.message.text ? 'text' : 'attachment',
           text: e.message.text || `[แนบ: ${e.message.attachments?.[0]?.type ?? 'unknown'}]`,
@@ -192,7 +194,7 @@ function messengerEvents(body, config) {
       }
 
       if (!e.sender?.id) continue
-      const withUser = { ...base, external_id: e.sender.id }
+      const withUser = { ...base, external_id: e.sender.id, customer_psid: e.sender.id }
       const referral = e.referral || e.postback?.referral || e.message?.referral || null
       const adId = referral?.ad_id ?? null
       const adTitle = referral?.ads_context_data?.ad_title ?? null
