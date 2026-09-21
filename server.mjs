@@ -34,7 +34,7 @@ import { buildDailyDigest } from './reports/reply-digest.mjs'
 import { createHealth } from './health/health.mjs'
 import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
 import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub/quick-reply-import.mjs'
-import { classifyCrmFailure, crmBackoffMs } from './lib/crm-publisher.mjs'
+import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -58,6 +58,9 @@ const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
 const crmProducer = process.env.ASHER_CRM_PRODUCER || 'connect-sandbox'
 const crmWorkspaceId = process.env.ASHER_CRM_WORKSPACE_ID || ''
 const crmPublisherConfigured = Boolean(crmPublisherEnabled && crmUrl && crmToken && crmWorkspaceId)
+// ช่องทาง -> โครงการ: CRM สร้าง Lead ได้ต่อเมื่อ conversation.created พก project_ref
+// ที่ชี้ไป crm_project_refs ซึ่ง active และ verified_at ไม่ว่าง
+const { map: crmProjectMap, invalid: crmProjectMapInvalid } = parseProjectMap(process.env.ASHER_CRM_PROJECT_MAP)
 const CRM_PUBLISH_INTERVAL = Number(process.env.ASHER_CRM_PUBLISH_INTERVAL_MS || 3000)
 const CRM_PUBLISH_BATCH = 20
 const CRM_PUBLISH_LEASE_SECONDS = 60
@@ -270,6 +273,18 @@ async function crmPublisherWorker() {
       let errorCode = null
       let errorDetail = null
       let nextAttemptAt = null
+      // conversation.created เท่านั้นที่พก project_ref — CRM ใช้ตัวนี้ตัดสินว่าจะเปิด Lead ไหม
+      // ไม่มีคู่ที่แมปไว้ = ส่งไปโดยไม่มี project_ref แล้ว CRM ลง project_ref_missing
+      // (ไม่มี Lead แต่ contact/conversation ยังเข้าตามปกติ) ดีกว่าผูก Lead ผิดโครงการ
+      let payload = row.payload
+      if (row.event_type === 'conversation.created') {
+        const projectRef = projectRefFor(crmProjectMap, payload?.account_scope)
+        if (projectRef) {
+          payload = { ...payload, project_ref: projectRef }
+        } else {
+          log.warn('crm_project_map_miss', { account_scope: payload?.account_scope, event_id: row.event_id })
+        }
+      }
       try {
         const response = await fetch(`${crmUrl}/internal/events`, {
           method: 'POST',
@@ -288,7 +303,7 @@ async function crmPublisherWorker() {
             correlation_id: row.aggregate_id,
             causation_id: row.event_id,
             source_is_test: false,
-            payload: row.payload,
+            payload,
           }),
           signal: AbortSignal.timeout(10000),
         })
@@ -1630,6 +1645,15 @@ const workerTimer = setInterval(worker, WORKER_INTERVAL); workerTimer.unref()
 const inboundTimer = setInterval(inboundWorker, WORKER_INTERVAL); inboundTimer.unref()
 const crmPublisherTimer = setInterval(crmPublisherWorker, CRM_PUBLISH_INTERVAL); crmPublisherTimer.unref()
 if (crmPublisherConfigured) {
+  // แมปโครงการพังต้องเห็นตั้งแต่ตอนบูต ไม่ใช่ไปรู้ตอน Lead ไม่ขึ้นอีกสามวัน
+  if (crmProjectMapInvalid.length > 0) {
+    log.warn('crm_project_map_invalid', { entries: crmProjectMapInvalid.length })
+  }
+  if (crmProjectMap.size === 0) {
+    log.warn('crm_project_map_empty', { hint: 'ASHER_CRM_PROJECT_MAP ว่าง — conversation.created จะไม่มี project_ref และ CRM จะไม่เปิด Lead' })
+  } else {
+    log.info('crm_project_map_loaded', { channels: crmProjectMap.size })
+  }
   crmPublisherWorker().catch(e => log.warn('crm_publisher_start_failed', { reason: e.message }))
 } else if (crmPublisherEnabled) {
   log.warn('crm_publisher_misconfigured', { urlConfigured: Boolean(crmUrl), tokenConfigured: Boolean(crmToken), workspaceConfigured: Boolean(crmWorkspaceId) })
