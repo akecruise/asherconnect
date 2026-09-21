@@ -1,4 +1,4 @@
-import test from 'node:test'
+﻿import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -13,7 +13,7 @@ const B = TAG + '_PSID_B'
 const REVIEW = TAG + '_META_REVIEW_PSID'
 
 async function sql(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'supabase_admin', '-d', 'postgres',
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c',
     `begin; ${text} commit;`], { maxBuffer: 16 << 20 })
   return stdout.split(/\r?\n/).map(s => s.trim())
@@ -71,7 +71,83 @@ dbTest('Messenger PSID isolation, echo safety, and unresolved identity boundary'
 
 test.after(async () => {
   if (!inbox) return
-  await sql(`delete from connect_private.inbound_event where event_id like '${TAG}_%';`)
-  await sql(`delete from inbox.conversation where inbox_id='${inbox}' and contact_id in (select contact_id from core.contact_identity where channel='messenger' and account_key='${inbox}' and external_id like '${TAG}_%');`)
-  await sql(`delete from core.contact_identity where channel='messenger' and account_key='${inbox}' and external_id like '${TAG}_%';`)
+  await sql(`
+    create temp table messenger_identity_test_contacts on commit drop as
+      select distinct contact_id
+      from core.contact_identity
+      where channel = 'messenger'
+        and account_key = '${inbox}'
+        and left(external_id, length('${TAG}')) = '${TAG}';
+
+    create temp table messenger_identity_test_conversations on commit drop as
+      select c.id
+      from inbox.conversation c
+      join messenger_identity_test_contacts tc on tc.contact_id = c.contact_id
+      where c.inbox_id = '${inbox}';
+
+    create temp table messenger_identity_test_leads on commit drop as
+      select distinct l.id
+      from crm.lead l
+      join messenger_identity_test_contacts tc on tc.contact_id = l.contact_id;
+
+    -- inbound_event.message_id is SET NULL, but remove the test events first.
+    delete from connect_private.inbound_event
+    where left(event_id, length('${TAG}')) = '${TAG}';
+
+    -- These conversation children are RESTRICT, so remove them before the
+    -- conversation. Cascading children are then handled by the FK itself.
+    delete from answer_hub.answer_feedback f
+    using messenger_identity_test_conversations tc
+    where f.conversation_id = tc.id;
+    delete from answer_hub.answer_usage u
+    using messenger_identity_test_conversations tc
+    where u.conversation_id = tc.id;
+    delete from answer_hub.learning_candidate l
+    using messenger_identity_test_conversations tc
+    where l.conversation_id = tc.id;
+    delete from connect_private.case_state s
+    using messenger_identity_test_conversations tc
+    where s.conversation_id = tc.id;
+    delete from crm.activity a
+    using messenger_identity_test_conversations tc
+    where a.conversation_id = tc.id;
+    delete from inbox.quick_reply_usage u
+    using messenger_identity_test_conversations tc
+    where u.conversation_id = tc.id;
+
+    delete from inbox.conversation c
+    using messenger_identity_test_conversations tc
+    where c.id = tc.id;
+
+    -- Remove any lead/contact dependents created by ensure_lead/receive_event.
+    delete from crm.activity a
+    using messenger_identity_test_leads tl
+    where a.lead_id = tl.id;
+    delete from web.web_form_submit w
+    using messenger_identity_test_leads tl
+    where w.lead_id = tl.id;
+    delete from web.web_form_submit w
+    using messenger_identity_test_contacts tc
+    where w.contact_id = tc.contact_id;
+    delete from campaign.touch t
+    using messenger_identity_test_contacts tc
+    where t.contact_id = tc.contact_id;
+    delete from core.event_log e
+    using messenger_identity_test_contacts tc
+    where e.contact_id = tc.contact_id;
+    delete from engage.participant p
+    using messenger_identity_test_contacts tc
+    where p.contact_id = tc.contact_id;
+
+    delete from crm.lead l
+    using messenger_identity_test_leads tl
+    where l.id = tl.id;
+    delete from core.contact_identity ci
+    using messenger_identity_test_contacts tc
+    where ci.contact_id = tc.contact_id;
+    delete from core.contact c
+    using messenger_identity_test_contacts tc
+    where c.id = tc.contact_id;
+  `)
 })
+
