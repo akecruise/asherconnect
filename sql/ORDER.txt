@@ -237,3 +237,10 @@ _ledger.sql
 # ★ อ่าน core.contact.display_name/picture_url/profile_status ที่ rpc 'profile_update'
 #   เป็นคนเขียน — ไม่ได้สร้างคอลัมน์ใหม่และไม่แตะเส้นทางดึงโปรไฟล์เดิม
 202609221200_crm_publish_profile_content.sql
+
+# ── ชื่อที่คนตั้งเอง ห้ามตัวดึงโปรไฟล์ทับ (2026-09-22) ──
+# ★ ต้องอยู่หลัง 202609221200_crm_publish_profile_content.sql เสมอ — ไฟล์นี้เขียนทับ
+#   connect_private.worker + connect_private.api ทั้งสองตัวจากนิยามจริงบนฐาน
+#   ถ้าสลับลำดับกับไฟล์ที่แก้ api ทีหลัง จะได้ของเก่ากลับมาเงียบ ๆ
+# ★ additive: ไม่มี DDL ไม่แตะข้อมูล ไม่แตะเส้นทาง Messenger backfill
+202609221400_manual_name_guard.sql
