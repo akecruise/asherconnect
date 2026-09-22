@@ -1538,6 +1538,7 @@ async function handleCommand(req, res) {
     catch (e) { throw fail(400, e.message) }
     const text = String(input.data.text || '').trim()
     if (!text && !files.length) throw fail(400, 'invalid_message')
+    if (detail.channel === 'line' && text && files.length > 4) throw fail(400, 'LINE ส่งข้อความพร้อมรูปได้สูงสุด 4 รูปต่อครั้ง')
     outboundFiles = files
     outboundConversation = detail
     input.data = { ...input.data, text: text || '[แนบรูปภาพ]' }

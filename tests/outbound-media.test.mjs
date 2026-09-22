@@ -6,10 +6,10 @@ import { renderPayloads } from '../providers.mjs'
 const png = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]).toString('base64')
 const file = (name = 'x.png', data = png) => ({ name, type: 'image/png', data })
 
-test('server validates image bytes, rejects non-images and enforces max two', () => {
+test('server validates image bytes, rejects non-images and enforces max five', () => {
   assert.equal(validateOutboundImages([file()]).length, 1)
   assert.throws(() => validateOutboundImages([file('x.txt')]), /JPG/)
-  assert.throws(() => validateOutboundImages([file(), file('y.png'), file('z.png')]), /สูงสุด 2/)
+  assert.throws(() => validateOutboundImages(Array.from({ length: 6 }, (_, i) => file(`${i}.png`))), /สูงสุด 5/)
   assert.throws(() => validateOutboundImages([file('x.png', Buffer.alloc(OUTBOUND_IMAGE_MAX_BYTES + 1).toString('base64'))]), /10 MB/)
   assert.throws(() => validateOutboundImages([file('x.png', Buffer.from('not an image').toString('base64'))]), /ไม่ใช่รูป/)
 })
