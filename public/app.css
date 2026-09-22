@@ -281,6 +281,10 @@ nav button.active { background: var(--accent-soft); color: var(--accent); font-w
 
 .composer { padding: 17px 22px; background: var(--surface); border-top: 1px solid var(--rule) }
 .composer textarea { resize: vertical; max-height: 200px; margin: 10px 0 }
+.image-preview { display: flex; gap: 8px; margin: 8px 0 2px }
+.image-preview-item { position: relative; width: 72px; height: 72px }
+.image-preview-item img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; border: 1px solid var(--rule) }
+.image-preview-remove { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; padding: 0; border-radius: 50%; background: var(--ink); color: var(--surface); border: 0; line-height: 20px }
 .composer-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px }
 .canned { display: flex; flex-wrap: wrap; gap: 5px }
 .canned button { font-size: 10px; padding: 6px 8px }
@@ -1105,7 +1109,7 @@ body.lead-open .lead-card { transform: none; visibility: visible }
   .messages { padding: 12px 12px 4px }
   .pipeline { display: none }
 }
-@media (min-width: 768px) { .composer-attach { display: none } }
+@media (min-width: 768px) { .composer-attach { display: inline-flex } }
 
 /* จอแคบมาก: ย่อไอคอนแต่ยังกดไม่พลาด */
 @media (max-width: 339px) {

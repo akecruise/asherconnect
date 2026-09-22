@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { verifySignature, matchesDestination, normalizeWebhook, deliver } from './providers.mjs'
 import { fetchProfile } from './lib/profile.mjs'
 import { mediaTasks, storagePath, enrichMessageMedia, MEDIA_MAX_BYTES } from './lib/media.mjs'
+import { validateOutboundImages, OUTBOUND_IMAGE_MAX_BYTES } from './lib/outbound-media.mjs'
 import { createMediaHandler } from './lib/media-http.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
@@ -587,7 +588,7 @@ async function runJob(job) {
   try {
     if (job.source === 'delivery') {
       const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-      const result = await deliver(job, config)
+      const result = await deliver(await addOutboundMedia(job), config)
       // ทางส่งหาลูกค้ามีทางเดียวทั้งระบบ (บอทกับเซลส์เข้าคิวเดียวกัน) — จุดเดียวที่บอกได้ว่า "ถึงมือลูกค้าหรือยัง"
       flowHealth.log('reply_sent', { channel: config?.key ?? null, ref: result.message_id ?? job.message_id,
                                  ok: result.status === 'sent', detail: result.error ?? null })
@@ -605,6 +606,31 @@ async function runJob(job) {
     await finishJob(job, { status: e.retryable === false ? 'failed' : 'retry', error: e.message })
       .catch(err => log.error('finish_job_failed', { job_id: job.id, reason: err.message }))
   }
+}
+
+async function signMediaObject(path) {
+  const response = await fetch(`${upstream}/storage/v1/object/sign/inbox-media/${path}`, {
+    method: 'POST', headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn: 3600 }), signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
+  })
+  if (!response.ok) throw new Error(`storage_sign_${response.status}`)
+  const body = await response.json()
+  const signed = body.signedURL || body.signedUrl
+  if (!signed) throw new Error('storage_sign_missing_url')
+  return signed.startsWith('http') ? signed : `${upstream}${signed}`
+}
+
+async function addOutboundMedia(job) {
+  if (!job.message_id || !job.conversation_id) return job
+  const map = await rpcDirect(service, 'media_of', { p_conversation_id: job.conversation_id })
+  const media = Array.isArray(map?.[job.message_id]) ? map[job.message_id] : []
+  if (!media.length) return job
+  const images = []
+  for (const item of media) {
+    if (!item?.path || !/^image\/(jpeg|png|webp)$/.test(item.mime || '')) continue
+    images.push({ url: await signMediaObject(item.path) })
+  }
+  return images.length ? { ...job, payload: { type: 'media', text: job.text === '[แนบรูปภาพ]' ? '' : job.text, media: images } } : job
 }
 
 const finishJob = (job, body) =>
@@ -928,6 +954,19 @@ async function uploadMediaObject(path, { bytes, type }) {
     signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`storage_${response.status}`)
+}
+
+async function attachOutboundMedia({ inboxId, messageId, files }) {
+  const media = []
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index]
+    const path = storagePath(inboxId, messageId, index + 1, file.mime)
+    await uploadMediaObject(path, { bytes: file.bytes, type: file.mime })
+    media.push({ path, mime: file.mime, bytes: file.bytes.length })
+  }
+  const attached = await rpcDirect(service, 'media_attach', { p_message_id: messageId, p_media: media })
+  if (!attached) throw new Error('media_attach_missed')
+  return media
 }
 
 async function syncMedia(config, events, received) {
@@ -1386,10 +1425,12 @@ async function runTestResets(hits, config, key) {
 
 async function handleCommand(req, res) {
   const accessToken = await sessions.access(req)
-  const input = JSON.parse((await readBody(req)).toString('utf8'))
+  const raw = await readBody(req, 32 * 1024 * 1024)
+  const input = JSON.parse(raw.toString('utf8'))
   if (typeof input.action !== 'string' || !input.data || typeof input.data !== 'object' || Array.isArray(input.data)) {
     throw fail(400, 'invalid_request')
   }
+  if (input.action !== 'send' && raw.length > 262144) throw fail(413, 'body_too_large')
 
   // ทางไป Edge Function: action ขึ้นต้นด้วย fn: แล้วตามด้วยชื่อในทะเบียน
   // แยกทางกันตั้งแต่ตรงนี้ เพราะคำตอบไม่ผ่านตัวแปลของ connect_api และไม่ควรผ่าน
@@ -1480,6 +1521,8 @@ async function handleCommand(req, res) {
     return res.end(reply.text)
   }
 
+  let outboundFiles = []
+  let outboundConversation = null
   if (input.action === 'send') {
     // ด่านแรกสุด ก่อนแตะอะไรทั้งนั้น — ในโหมดเงายังมีบอทตัวเดิมคุยกับลูกค้าอยู่
     // ถามฐานก่อนเสมอ (มีตัวกันถี่ 3 วินาทีอยู่แล้ว) เพราะ admin อาจเพิ่งกดปิดไปเมื่อครู่
@@ -1490,9 +1533,22 @@ async function handleCommand(req, res) {
     const list = await rpc(accessToken, 'bootstrap')
     if (!list.user) throw fail(403, 'not_allowed')
     if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
+    let files
+    try { files = validateOutboundImages(input.data.files || []) }
+    catch (e) { throw fail(400, e.message) }
+    const text = String(input.data.text || '').trim()
+    if (!text && !files.length) throw fail(400, 'invalid_message')
+    outboundFiles = files
+    outboundConversation = detail
+    input.data = { ...input.data, text: text || '[แนบรูปภาพ]' }
+    delete input.data.files
   }
 
   const data = await rpc(accessToken, input.action, input.data)
+
+  if (input.action === 'send' && outboundFiles.length && data?.message_id) {
+    await attachOutboundMedia({ inboxId: outboundConversation.conversation.inbox_id, messageId: data.message_id, files: outboundFiles })
+  }
 
   // ท่อรูป: media เก็บที่คอลัมน์ inbox.message.media โดยไม่แตะ connect_private.api
   // (เหตุผลใน sql/037) — ตรงนี้จึงเติมเข้าคำตอบของ detail ก่อนส่งกลับหน้าจอ

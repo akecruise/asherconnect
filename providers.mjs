@@ -284,6 +284,14 @@ export function renderPayload(channel, payload, fallbackText) {
   return message
 }
 
+export function renderPayloads(channel, payload, fallbackText) {
+  if (!payload?.media?.length) return [renderPayload(channel, payload, fallbackText)]
+  const out = []
+  if (payload.text?.trim()) out.push(renderPayload(channel, { type: 'text', text: payload.text }, fallbackText))
+  for (const media of payload.media) out.push(renderPayload(channel, { type: 'image', url: media.url, preview_url: media.url }))
+  return out
+}
+
 /** ข้อความล้วนสำหรับช่องทางที่ไม่มีรูปแบบอะไรให้เล่น (Telegram, Email, ข้อความแจ้งทีม) */
 export function payloadText(payload, fallbackText = '') {
   if (typeof payload === 'string') return payload
@@ -367,7 +375,7 @@ export async function deliver(job, config = {}, fetcher = fetch) {
 
 async function sendLine(job, base, channel, target, config, fetcher) {
   if (!config.access_token) return { ...base, status: 'failed', error: 'line_token_missing' }
-  const rendered = renderPayload(channel, job.payload, job.text)
+  const rendered = renderPayloads(channel, job.payload, job.text)
   const reply = canReplyToken(job)
   const response = await fetcher(reply ? LINE_REPLY : LINE_PUSH, {
     method: 'POST',
@@ -375,8 +383,8 @@ async function sendLine(job, base, channel, target, config, fetcher) {
                // retry key ทำให้ยิงซ้ำแล้วไม่เกิดข้อความซ้ำ — ใช้ได้เฉพาะงานที่มีตัวตนถาวร
                // ทาง reply ไม่ต้องมี เพราะ token ใช้ได้ครั้งเดียวอยู่แล้ว
                ...(base.message_id && !reply ? { 'X-Line-Retry-Key': base.message_id } : {}) },
-    body: JSON.stringify(reply ? { replyToken: job.reply_token, messages: [rendered] }
-                               : { to: target, messages: [rendered] }),
+    body: JSON.stringify(reply ? { replyToken: job.reply_token, messages: rendered }
+                               : { to: target, messages: rendered }),
     signal: AbortSignal.timeout(15000),
   })
   // ยิงซ้ำด้วย retry key เดิมแล้วปลายทางบอกว่า "รับไปแล้ว" = สำเร็จ ไม่ใช่ชนกัน
@@ -404,16 +412,19 @@ async function sendMessenger(job, base, kind, target, config, fetcher) {
   }
   if (!config.access_token) return { ...base, status: 'failed', error: 'meta_token_missing' }
   const url = `https://graph.facebook.com/${config.api_version || 'v23.0'}/${encodeURIComponent(config.account_id)}/messages`
-  const response = await fetcher(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${config.access_token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipient: { id: target }, messaging_type: 'RESPONSE',
-                           message: renderPayload('messenger', job.payload, job.text) }),
-    signal: AbortSignal.timeout(15000),
-  })
-  if (!response.ok) return { ...base, status: outcome(response.status, 'messenger'), error: `provider_http_${response.status}` }
-  const data = await response.json()
-  return { ...base, status: 'sent', provider_id: data.message_id ?? null }
+  let providerId = null
+  for (const message of renderPayloads('messenger', job.payload, job.text)) {
+    const response = await fetcher(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: target }, messaging_type: 'RESPONSE', message }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!response.ok) return { ...base, status: outcome(response.status, 'messenger'), error: `provider_http_${response.status}` }
+    const data = await response.json()
+    providerId = data.message_id ?? providerId
+  }
+  return { ...base, status: 'sent', provider_id: providerId }
 }
 
 /**
