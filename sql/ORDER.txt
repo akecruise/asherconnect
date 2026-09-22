@@ -229,3 +229,4 @@ _ledger.sql
 # ── Connect -> CRM: conversation.created เพื่อให้ CRM เปิด Lead ได้ (2026-09-21) ──
 # ★ ต้องอยู่หลัง 202609211300_crm_publisher.sql เสมอ (แก้ทริกเกอร์+ข้อจำกัดของตารางเดิม)
 202609212000_crm_conversation_created.sql
+202609221000_unified_identity.sql
