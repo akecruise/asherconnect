@@ -53,6 +53,7 @@ if (process.env.CONNECT_CHANNELS_FILE) channels = JSON.parse(await readFile(proc
 const activeChannels = channels.filter(c => c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true)
 
 const crmPublisherEnabled = process.env.ASHER_CRM_PUBLISH_ENABLED === 'true' || process.env.ASHER_CRM_PUBLISH_ENABLED === '1'
+const crmProfileRetryEnabled = process.env.ASHER_CRM_PROFILE_RETRY_ENABLED === 'true'
 const crmUrl = (process.env.ASHER_CRM_URL || '').replace(/\/$/, '')
 const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
 const crmProducer = process.env.ASHER_CRM_PRODUCER || 'connect-sandbox'
@@ -264,6 +265,10 @@ async function crmPublisherWorker() {
   }
   crmPublisherRunning = true
   try {
+    if (crmProfileRetryEnabled) {
+      try { await rpcDirect(service, 'crm_retry_profile_updates', { p_limit: CRM_PUBLISH_BATCH }) }
+      catch { log.warn('crm_profile_retry_failed', { code: 'profile_retry_unavailable' }) }
+    }
     const rows = await rpcDirect(service, 'crm_publish_claim', {
       p_limit: CRM_PUBLISH_BATCH,
       p_lease_seconds: CRM_PUBLISH_LEASE_SECONDS,
@@ -1055,6 +1060,7 @@ function health() {
            memory: { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 },
            crmPublisher: {
              enabled: crmPublisherEnabled,
+             profileRetryEnabled: crmProfileRetryEnabled,
              configured: crmPublisherConfigured,
              status: !crmPublisherEnabled ? 'disabled' : crmPublisherConfigured ? 'healthy' : 'misconfigured',
              pending: Number(crmPublisherStats.pending || 0),

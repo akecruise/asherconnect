@@ -1,0 +1,119 @@
+
+> asher-connect@1.0.0 check
+> node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js && node --check public/answer-hub.js && node --check public/quick-answer.js && node --check public/quick-replies.js && node --check public/quick-replies-admin.js && node --check services/answer-hub/service.mjs && node --check services/answer-hub/import.mjs && node --check services/answer-hub/quick-reply-import.mjs && node --check lib/media.mjs && node --check lib/media-http.mjs && node sql/run.mjs check
+
+
+ลำดับใน ORDER.txt: 70 ไฟล์   ในโฟลเดอร์: 70 ไฟล์
+
+ของที่ถูกเขียนทับมากกว่าหนึ่งไฟล์ — ตัวท้ายสุดคือตัวที่ได้ใช้จริง[2m  (24 ชิ้นถูกทับแบบไม่ drop ก่อน)[0m
+  [33mfunction inbox.extract_phone[0m
+      1. 002_decide.sql[2m   (ถูกทับ)[0m
+      2. 014_fix_extract_phone.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 033_receive_event_resync.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction connect_private.receive_event[0m
+      1. 002_decide.sql[2m   (ถูกทับ)[0m
+      2. 006_receive_line.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 033_receive_event_resync.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      4. 035_echo_attribution.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      5. 036_echo_source_from_queue.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      6. 202609191500_review_code.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      7. 202609211200_messenger_identity_p0.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction connect_private.worker[0m
+      1. 002_decide.sql[2m   (ถูกทับ)[0m
+      2. 003_job_worker.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 004_bot_switch.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      4. 007_line_wiring.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      5. 008_human_reply_signal.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      6. 022_send_mode_switch.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      7. 032_worker_resync.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      8. 202609221400_manual_name_guard.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction connect_private.claim_job[0m
+      1. 003_job_worker.sql[2m   (ถูกทับ)[0m
+      2. 004_bot_switch.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction connect_private.api[0m
+      1. 004_bot_switch.sql[2m   (ถูกทับ)[0m
+      2. 007_line_wiring.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 010_report_api.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      4. 015_bot_switch_admin_only.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      5. 022_send_mode_switch.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      6. 024_case_status_api.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      7. 025_reply_without_claim.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      8. 026_contact_external_id.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      9. 042_bootstrap_test_only.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      10. 202609221400_manual_name_guard.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.refresh_sales_staff_kpi_daily[0m
+      1. 009_report.sql[2m   (ถูกทับ)[0m
+      2. 011_cloud_functions.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 034_kpi_refresh_resync.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.reply_report[0m
+      1. 009_report.sql[2m   (ถูกทับ)[0m
+      2. 012_report_weekly_sla.sql[32m   <- ตัวนี้ชนะ[0m[2m  [drop ก่อน][0m
+  [33mfunction inbox.enqueue_daily_report[0m
+      1. 009_report.sql[2m   (ถูกทับ)[0m
+      2. 012_report_weekly_sla.sql[32m   <- ตัวนี้ชนะ[0m[2m  [drop ก่อน][0m
+  [33mfunction inbox.stats_normalize[0m
+      1. 017_stats_functions.sql[2m   (ถูกทับ)[0m
+      2. 202609191500_review_code.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.stats_scope[0m
+      1. 018_stats_api.sql[2m   (ถูกทับ)[0m
+      2. 027_stats_v2.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.stats_overview[0m
+      1. 018_stats_api.sql[2m   (ถูกทับ)[0m
+      2. 027_stats_v2.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.stats_agents[0m
+      1. 018_stats_api.sql[2m   (ถูกทับ)[0m
+      2. 027_stats_v2.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.stats_timeline[0m
+      1. 018_stats_api.sql[2m   (ถูกทับ)[0m
+      2. 027_stats_v2.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.stats_open_windows[0m
+      1. 018_stats_api.sql[2m   (ถูกทับ)[0m
+      2. 027_stats_v2.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.stats_telegram_daily[0m
+      1. 018_stats_api.sql[2m   (ถูกทับ)[0m
+      2. 027_stats_v2.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.purge_channel_events[0m
+      1. 020_capture_layer.sql[2m   (ถูกทับ)[0m
+      2. 021_outbox.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.health_snapshot[0m
+      1. 202609172025_health.sql[2m   (ถูกทับ)[0m
+      2. 202609172130_system_status.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.health_rule_save[0m
+      1. 202609172025_health.sql[2m   (ถูกทับ)[0m
+      2. 202609172130_system_status.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.ah_list[0m
+      1. 202609172145_answer_item.sql[2m   (ถูกทับ)[0m
+      2. 202609180730_answer_service.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.ah_get[0m
+      1. 202609172145_answer_item.sql[2m   (ถูกทับ)[0m
+      2. 202609180630_answer_binding.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.ah_save[0m
+      1. 202609172145_answer_item.sql[2m   (ถูกทับ)[0m
+      2. 202609180430_answer_version.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 202609180900_answer_edit.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.ah_retire[0m
+      1. 202609172145_answer_item.sql[2m   (ถูกทับ)[0m
+      2. 202609180430_answer_version.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction answer_hub._snapshot_version[0m
+      1. 202609180430_answer_version.sql[2m   (ถูกทับ)[0m
+      2. 202609180900_answer_edit.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.ah_versions[0m
+      1. 202609180430_answer_version.sql[2m   (ถูกทับ)[0m
+      2. 202609180900_answer_edit.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.ah_resolve[0m
+      1. 202609180630_answer_binding.sql[2m   (ถูกทับ)[0m
+      2. 202609180740_resolve_sources.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+  [33mfunction inbox.crm_publish_message[0m
+      1. 202609211300_crm_publisher.sql[2m   (ถูกทับ)[0m
+      2. 202609212000_crm_conversation_created.sql[2m   (ถูกทับ)[0m[31m  [ทับเฉย ๆ][0m
+      3. 202609221200_crm_publish_profile_content.sql[32m   <- ตัวนี้ชนะ[0m[31m  [ทับเฉย ๆ][0m
+[2m
+  หมายเหตุ: เทียบด้วยชื่อ ไม่ได้เทียบลายเซ็น — ฟังก์ชันที่ตั้งใจทำ overload
+  (คนละชุดอาร์กิวเมนต์) จะขึ้นในรายการนี้ด้วย ดูคอลัมน์ [drop ก่อน] ประกอบ[0m
+
+เตือน: เลข 022 ซ้ำ (022_send_mode_switch.sql , 022_contact_profile_sync.sql) แต่คนละของ สลับลำดับกันได้
+เตือน: เลข 023 ซ้ำ (023_sla_case_status.sql , 023_channel_health.sql) แต่คนละของ สลับลำดับกันได้
+เตือน: เลข 024 ซ้ำ (024_case_status_api.sql , 024_queue_counts.sql) แต่คนละของ สลับลำดับกันได้
+
+[32mตรวจผ่าน[0m  [2m(โหมด check ไม่ต่อฐาน — ใช้ plan/apply เพื่อเทียบกับทะเบียน)[0m
+

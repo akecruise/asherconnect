@@ -1,3 +1,5 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
 ﻿import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -13,7 +15,7 @@ const B = TAG + '_PSID_B'
 const REVIEW = TAG + '_META_REVIEW_PSID'
 
 async function sql(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'supabase_admin', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.adminUser, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c',
     `begin; ${text} commit;`], { maxBuffer: 16 << 20 })
   return stdout.split(/\r?\n/).map(s => s.trim())

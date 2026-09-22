@@ -1,3 +1,5 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
 /**
  * Phase 3 — ชุดทดสอบตรรกะตัดสินใจของบอท
  *
@@ -25,7 +27,7 @@ const run = promisify(execFile)
 // เรียกจาก psql จึงต้องสวม claim เองในธุรกรรมเดียวกัน
 async function sql(text) {
   const wrapped = `begin; set local request.jwt.claims = '{"role":"service_role"}'; ${text} commit;`
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.user, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', wrapped], { maxBuffer: 8 << 20 })
   return stdout.split('\n').map(s => s.trim())
     .filter(s => s && !['BEGIN', 'COMMIT', 'SET', 'ROLLBACK'].includes(s))

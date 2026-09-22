@@ -1,3 +1,7 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
+const testApi = process.env.HTTP_TEST_SUPABASE_URL;
+if (!testApi || !['localhost','127.0.0.1','[::1]'].includes(new URL(testApi).hostname) || new URL(testApi).port === '8055') throw new Error('HTTP database tests require an explicit isolated PostgREST endpoint on a non-shared port');
 // ชุดทดสอบระดับ HTTP ของ ASHER Connect
 //
 //   npm test --prefix ../asher-connect        (จาก asher-web: npm run test:webhook)
@@ -59,12 +63,12 @@ async function settle(timeout = 30000) {
 
 // ── คุยกับฐานผ่าน container เพื่อไม่ต้องมี pg client บนเครื่อง
 async function sql(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.user, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 8 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(line => line.split('|'))
 }
 async function sqlAdmin(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'supabase_admin', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.adminUser, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 8 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(line => line.split('|'))
 }
@@ -191,7 +195,7 @@ async function startServer(scene, cfg, extraEnv = {}, port = PORT) {
       // ชุดทดสอบต้องคุยกับฐานทดสอบเท่านั้น จึงปิดมันตั้งแต่บูต
       CONNECT_HEALTH: 'off',
       // จากบนโฮสต์ต้องเข้าทาง envoy ที่ map ออกมา ไม่ใช่ชื่อภายใน docker
-      SUPABASE_URL: process.env.HTTP_TEST_SUPABASE_URL || 'http://127.0.0.1:8055',
+      SUPABASE_URL: testApi,
       SUPABASE_ANON_KEY: cfg.SUPABASE_ANON_KEY,
       SUPABASE_SERVICE_ROLE_KEY: cfg.SUPABASE_SERVICE_ROLE_KEY,
       ...extraEnv },
@@ -437,7 +441,7 @@ async function main() {
 
     // ── 25-27 บันทึกคำตอบของบอทตัวเดิม โดยไม่สร้างงานขาออก
     {
-      const SB = process.env.HTTP_TEST_SUPABASE_URL || 'http://127.0.0.1:8055'
+      const SB = testApi
       const callRpc = (key, payload) => fetch(SB + '/rest/v1/rpc/connect_replay', {
         method: 'POST',
         headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + key,
@@ -470,7 +474,7 @@ async function main() {
     //    token ใบเดียวถูกแชร์ทั้งบริการ ถ้าการล็อกอินที่อื่นทำให้ใบเดิมตาย หน้าจอจะค้างยกแผง
     //    เทสต์นี้จึงยืนยันว่าเปิดใช้พร้อมกันได้จริง ไม่ใช่แค่เชื่อว่าได้
     {
-      const SB = process.env.HTTP_TEST_SUPABASE_URL || 'http://127.0.0.1:8055'
+      const SB = testApi
       const again = await fetch(SB + '/auth/v1/token?grant_type=password', {
         method: 'POST',
         headers: { apikey: cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
@@ -1069,7 +1073,7 @@ async function main() {
     // ── 68 Health Rules: ตรวจค่าก่อนเขียน — ค่าผิดถูกปฏิเสธ ค่าถูกบันทึกได้ แล้วคืนค่าเดิม
     {
       const admin = await testUser('admin.test@')
-      const SB = process.env.HTTP_TEST_SUPABASE_URL || 'http://127.0.0.1:8055'
+      const SB = testApi
       const grant = await fetch(SB + '/auth/v1/token?grant_type=password', {
         method: 'POST', headers: { apikey: cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: admin.email, password: admin.password }) })

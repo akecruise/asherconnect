@@ -1,3 +1,5 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
 /**
  * Phase 9 ข้อ 0 — ชั้น label ผลลัพธ์ของแต่ละรอบสนทนา
  *
@@ -22,7 +24,7 @@ const DAY = '2026-04-08'
 const TZ = '+07'
 
 async function sql(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.user, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 16 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(l => l.split('|'))
 }

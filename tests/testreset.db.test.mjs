@@ -1,3 +1,5 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
 /**
  * คำสั่ง "test" — ส่วนที่ต้องมีฐานจริง
  *
@@ -29,7 +31,7 @@ const dbTest = (name, fn) => test(name, { skip: SKIP && SKIP_WHY }, fn)
 
 async function sql(text, role = 'service_role') {
   const wrapped = `begin; set local request.jwt.claims = '{"role":"${role}"}'; ${text} commit;`
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.user, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', wrapped], { maxBuffer: 8 << 20 })
   return stdout.split('\n').map(s => s.trim())
     .filter(s => s && !['BEGIN', 'COMMIT', 'SET', 'ROLLBACK'].includes(s))

@@ -1,3 +1,5 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
 /**
  * Phase 7 — รายงานการตอบแชท
  *
@@ -31,7 +33,7 @@ const DAY = '2026-03-05'          // วันที่ตายตัวใน�
 const TZ = '+07'
 
 async function sql(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', testTarget.container, 'psql', '-U', testTarget.user, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 16 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(l => l.split('|'))
 }

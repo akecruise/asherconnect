@@ -1,0 +1,265 @@
+
+> asher-connect@1.0.0 test
+> node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/testcmd.test.mjs && node --test tests/reviewcode.test.mjs && node --test tests/media.test.mjs tests/media-http.test.mjs && node --test tests/answer-hub.render.test.mjs tests/answer-hub.import.test.mjs tests/quick-reply-import.test.mjs tests/quick-replies-ui.test.mjs tests/return-to.test.mjs && node --test tests/answer-hub.service.test.mjs && node --test tests/db-target.test.mjs tests/crm-publisher.test.mjs
+
+✔ ตัวตนแยกกัน · คุกกี้ · ออกจากระบบแล้วใช้ซ้ำไม่ได้ · หมุน token ทีละครั้ง · หมดอายุ (43.086946ms)
+✔ เส้นทาง HTTP บังคับล็อกอินและต้นทาง ส่วน webhook ไม่เกี่ยวกับเซสชัน (453.745949ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 628.586161
+✔ LINE 200 — ได้ชื่อและรูป (5.00792ms)
+✔ LINE ในกลุ่ม — ใช้ endpoint ของ group (0.33668ms)
+✔ LINE ในห้อง — ใช้ endpoint ของ room (0.286304ms)
+✔ 404 — คืน not_found ไม่ throw (0.759287ms)
+✔ 500 — คืน error ไม่ throw (0.294756ms)
+✔ timeout — คืน error ไม่ throw (0.738572ms)
+✔ เน็ตล่มสนิท — ยังคืนค่าปกติ ไม่ throw (0.482215ms)
+✔ Messenger 200 — ต่อ first_name กับ last_name (0.431561ms)
+✔ Messenger มีแต่ชื่อต้น — ไม่ได้ช่องว่างห้อยท้าย (0.575026ms)
+✔ Messenger error code 100 — นับเป็น not_found ไม่ใช่ error (0.779983ms)
+✔ ★ ยิงซ้ำคนเดิม — เรียก API นัดเดียว (cache) (0.504488ms)
+✔ ★ สามข้อความพร้อมกันจากคนเดียว — ยังยิงนัดเดียว (inflight) (21.184905ms)
+✔ ★ คนละ OA = คนละคีย์ ไม่ใช้ cache ปนกัน (0.780792ms)
+✔ ไม่มี token — คืน error ไม่ยิงเน็ต (0.237291ms)
+✔ ★ log ต้องไม่มี token และไม่มีเนื้อคำตอบ (0.393009ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 145.258417
+✔ LINE signatures use unmodified bytes and base64; Messenger uses prefixed hex (2.280023ms)
+✔ provider echo is not an inbound customer response (1.368513ms)
+✔ LINE rejects a signed event addressed to a different account (0.619439ms)
+✔ LINE retries carry stable idempotency key and accept previously accepted request (25.632766ms)
+✔ Messenger unknown transport outcome is not automatically retried (0.743202ms)
+✔ Messenger closes standard reply after 24 hours without calling provider (0.243571ms)
+✔ definite rejection fails; rate limit retries without stopping SLA (2.003934ms)
+✔ ทุก event ที่ผ่าน normalize มี event_type ติดมาด้วยเสมอ (0.514261ms)
+✔ postback ของ Messenger ที่ไม่มี mid ยังได้คีย์กันซ้ำที่คงที่ (0.415159ms)
+✔ ของที่ normalize ไม่รู้จัก ถูกข้าม ไม่ใช่ทำให้ทั้งก้อนล้ม (3.868236ms)
+✔ ส่งผิดบ้านต้องรู้ก่อนเก็บของดิบ (0.406706ms)
+✔ payload ขาออกเป็น JSON จึงส่งได้มากกว่าข้อความล้วน (0.37009ms)
+✔ payload ที่ไม่รู้จักตกลงมาเป็นข้อความล้วน ไม่ใช่ส่งไม่ออก (0.19253ms)
+✔ deliver ใช้ payload จากคิว ไม่ใช่เนื้อความดิบ (1.372087ms)
+✔ Messenger: echo ของคนที่ตอบจาก Business Suite (0.395652ms)
+✔ Messenger: echo ของบอทเราเอง แยกออกจาก echo ของคนด้วย app_id (0.26982ms)
+✔ Messenger: standby คือข้อความของลูกค้าจริง แต่เพจไม่ใช่เจ้าของ thread (0.292954ms)
+✔ Messenger: คลิกโฆษณาแล้วยังไม่พิมพ์อะไร ก็ยังเป็นเหตุการณ์ที่ต้องรู้ (0.222752ms)
+✔ Messenger: ข้อความแรกที่มาจากโฆษณา พา ad_id ติดมาด้วย (0.151671ms)
+✔ Messenger: postback ที่มาจากโฆษณา ได้ทั้งปุ่มและที่มา (0.169293ms)
+✔ Messenger: read / delivery receipt ไม่ใช่เหตุการณ์ของบทสนทนา (0.224771ms)
+✔ echo ต้องถึง receive ด้วย ไม่ใช่ถูกกรองทิ้ง (0.277125ms)
+✔ บอทถูกเชิญเข้ากลุ่ม (join) ยังไม่ต้องทำอะไร นอกจากเก็บไว้ (0.321835ms)
+✔ LINE: ตอบด้วย reply token เมื่อยังไม่หมดอายุ · เลยเวลาแล้วใช้ push (1.176772ms)
+✔ push โดน 403 = ลูกค้าบล็อกแล้ว ต้องติดธงให้ชั้นบนรู้ ไม่ใช่ลองใหม่เรื่อย ๆ (0.472697ms)
+✔ LINE: ข้อความในกลุ่มคือทีมสั่งงาน ไม่ใช่ลูกค้า — เก็บไว้แต่ไม่เข้า receive (0.208409ms)
+✔ LINE: บอทถูกเชิญเข้ากลุ่ม (0.217477ms)
+✔ LINE: ของที่ผู้ให้บริการยิงซ้ำ ติดธงไว้และไม่ต้องทำงานซ้ำ (0.276335ms)
+✔ LINE: reply_token ติดมากับ event และหมดอายุเร็ว จึงต้องส่งต่อไปชั้นที่ส่งของ (0.200439ms)
+✔ LINE: สติกเกอร์กับโลเคชั่นไม่ใช่ข้อความ แต่ต้องอ่านออกในหน้าจอ (0.300607ms)
+✔ ส่งเข้ากลุ่ม LINE ใช้ push เหมือนกัน แต่ปลายทางเป็น groupId (0.73767ms)
+✔ Telegram ส่งด้วย chat_id จาก target และ token จาก config ไม่ใช่จาก env (0.781602ms)
+✔ Email ส่งผ่าน Resend · ถ้าไม่ได้ให้ html มา ส่งเป็นข้อความล้วน (0.52633ms)
+✔ typing: messenger ล้ม → skipped · line สำเร็จ → ยิงถูก endpoint (0.619777ms)
+✔ งานแจ้งทีมผ่าน Messenger ไม่ติดกฎหน้าต่าง 24 ชม. ของการตอบลูกค้า (0.508431ms)
+✔ ไม่มี token ต้องบอกตรง ๆ ว่าขาดอะไร ไม่ใช่ยิงออกไปด้วย Bearer undefined (0.375715ms)
+✔ ช่องทางที่ยังไม่รองรับ ต้องปฏิเสธ ไม่ใช่เงียบแล้วนับว่าส่งแล้ว (0.4265ms)
+✔ ผลลัพธ์จากปลายทางแปลเป็นสถานะของคิวถูกต้องทุกช่องทาง (1.051145ms)
+✔ LINE ตอบ 403 แปลว่าลูกค้าบล็อกแล้ว ไม่ใช่ error ทั่วไป (0.447995ms)
+✔ payloadText ดึงข้อความจาก payload ได้ทุกทรง (0.113651ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 202.340772
+✔ ข้อมูลโครงการอ่านจากไฟล์ ไม่ได้ฝังในโค้ด (1.31078ms)
+✔ โครงการที่ยังไม่มีข้อมูล ต้องสั่งให้บอทไม่ตอบ ไม่ใช่ไปหยิบของโครงการอื่นมา (0.303311ms)
+✔ system prompt พาข้อมูลโครงการกับสไตล์ไปด้วยเสมอ (0.881559ms)
+✔ ลูกค้าเก่าต้องไม่โดนทักซ้ำและไม่โดนยิงโบรชัวร์ซ้ำ (0.619091ms)
+✔ สไตล์เปลี่ยนตามค่าที่ส่งมาจากฐาน ไม่ใช่ค่าคงที่ในโค้ด (0.699547ms)
+✔ cleanReply ตัด markdown และคำลงท้ายแบบโรมันที่โมเดลชอบแถม (0.967737ms)
+✔ parseIntent อ่านก้อน JSON ที่โมเดลตอบมา (0.84589ms)
+✔ โมเดลตอบไม่เป็น JSON ก็ยังต้องได้คำตอบส่งให้ลูกค้า (0.531802ms)
+✔ หมวดที่โมเดลไม่มั่นใจพอ ถูกยุบเป็น other ไม่ใช่เก็บของมั่ว (0.270547ms)
+✔ [OFFTOPIC] ที่โมเดลติดมา ถูกจับได้แม้ตอบไม่เป็น JSON (0.677694ms)
+✔ normalizeMessages: ต้องเริ่มด้วยลูกค้า และไม่มี role ซ้ำติดกัน (1.144704ms)
+✔ generateReply ส่ง system prompt กับประวัติไปให้โมเดล แล้วคืนคำตอบที่ทำความสะอาดแล้ว (44.542037ms)
+✔ ไม่มี key ต้องไม่ลองใหม่ · โดน 429 ต้องลองใหม่ (2.56602ms)
+✔ ลูกค้าที่ให้เบอร์มาแล้ว ต้องไม่ถูกถามเบอร์ซ้ำ (0.990718ms)
+✔ classifyOnly อ่านก้อนหมวดที่โมเดลตอบมา (1.124112ms)
+✔ งานถอดหมวดล้มแล้วต้องไม่โยน error ออกมา — เป็นของแถม ไม่ควรทำให้คิวค้าง (0.655052ms)
+✔ ไม่มี key ก็ยังได้หมวดจากคำสำคัญ ไม่ใช่พังทั้งงาน (0.210336ms)
+✔ intentRow แปลงเป็นของที่ store_intent รับได้ และ mask ข้อมูลลูกค้า (0.781131ms)
+✔ detectTopicCode เดาหมวดจากคำสำคัญได้ตามของเดิม (0.598458ms)
+✔ ข้อความแจ้งทีมบอกความเร่งด่วนตั้งแต่บรรทัดแรก (20.883788ms)
+✔ ปลายทางของการแจ้งมาจาก env · Telegram กับอีเมลใช้เฉพาะตอนได้ lead (0.395385ms)
+✔ ทุกโฟลเดอร์ที่โค้ดฝั่งเซิร์ฟเวอร์ import ต้องถูก COPY เข้า image (28.408958ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 245.567876
+✔ รายชื่อบัญชีทดสอบมาจาก env และทนช่องว่าง/จุลภาคเกิน (6.418831ms)
+✔ รับเฉพาะข้อความที่เป็นคำสั่งทั้งข้อความ (0.454337ms)
+✔ ดึงผู้ส่งจากก้อนดิบได้ทั้ง LINE และ Messenger (0.419257ms)
+✔ echo ของเราเองต้องไม่ถูกนับเป็นคำสั่ง (0.156056ms)
+✔ ก้อนที่ไม่ใช่ข้อความ (join/postback/ว่าง) ต้องไม่พัง (0.336363ms)
+✔ อยู่ในรายชื่อ + "test" → รีเซ็ต (0.233797ms)
+✔ ไม่อยู่ในรายชื่อ + "test" → ข้อความปกติ (0.243171ms)
+✔ อยู่ในรายชื่อ + "test อะไรก็ได้" → ข้อความปกติ (0.312788ms)
+✔ ไม่ตั้ง TEST_USER_IDS = ปิดสนิท แม้คนในทีมพิมพ์ test (0.275772ms)
+✔ LINE: ก้อนมีทั้งคำสั่ง test และข้อความลูกค้า → ลูกค้าต้องยังอยู่ (0.602371ms)
+✔ Messenger: หลาย entry / หลาย messaging → ตัดเฉพาะคำสั่ง (0.51922ms)
+✔ Messenger: entry ที่เหลือแต่คำสั่ง ต้องถูกทิ้ง แต่ standby ต้องอยู่ (0.20426ms)
+✔ ก้อนที่มีแต่คำสั่ง → ไม่เหลืออะไรให้ log (0.22308ms)
+✔ ไม่มีคำสั่งในก้อน → คืน body เดิมทั้งก้อน ไม่คัดลอกโดยไม่จำเป็น (0.143311ms)
+✔ countEvents นับทั้ง messaging และ standby (0.123834ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 116.992794
+✔ รหัสรีวิวมาจาก env — ไม่ตั้งไว้ใช้ META-REVIEW (1.0568ms)
+✔ (a) asher-messenger + ขึ้นต้นด้วยรหัส → ติดธง review_code_hit (0.304817ms)
+✔ (b) asher-messenger + ข้อความปกติของลูกค้าจริง → ไม่ติดธง (1.483771ms)
+✔ (c) ช่องทางอื่นพิมพ์รหัสเดียวกัน → ไม่ติดธง (0.259779ms)
+✔ ต้อง "ขึ้นต้นด้วย" ไม่ใช่ "มีอยู่ตรงไหนก็ได้" — คำตรงกลางข้อความไม่นับ (0.257187ms)
+✔ event_type อื่น (echo/postback/follow) ไม่เข้าเงื่อนไข แม้ text จะตรงรหัส (0.20928ms)
+✔ ไม่มี text (เช่นสื่อแนบ) ต้องไม่พัง และไม่ติดธง (0.216145ms)
+✔ ไม่ hit → คืน object เดิม (reference เท่าเดิม) ไม่คัดลอกโดยไม่จำเป็น (0.170051ms)
+✔ hit แล้วต้องไม่แก้ event เดิมแบบ in-place (0.384649ms)
+✔ รหัสตรงตัวพิมพ์เท่านั้น — ผู้ตรวจสอบพิมพ์ผิดตัวพิมพ์ต้องไม่ติดธงเงียบ ๆ (0.396922ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 108.804159
+✔ anonymous media read returns 401 without accessing storage (1.833873ms)
+✔ authenticated but unauthorized media read returns 403 before storage (0.639376ms)
+✔ workspace bearer token is authorized before streaming private media (39.298122ms)
+✔ active content is downloaded, never executed on the application origin (2.328253ms)
+✔ external LINE content survives normalization and uses its original URL (4.338822ms)
+✔ initial detail and polling/pagination both include stored media (0.336824ms)
+✔ LINE image → งานเดียวแบบ line_content โดยใช้ provider_message_id (0.278569ms)
+✔ LINE สติกเกอร์/ข้อความ = ไม่มีงาน (สติกเกอร์ตัดสินใจเก็บเป็นข้อความไปแล้ว) (0.166834ms)
+✔ Messenger รูปผ่าน attribution.attachments — ตัด location กับ URL ที่ไม่ใช่ https ทิ้ง (0.286653ms)
+✔ echo ของทีม (Messenger) ผ่านทางเดียวกัน — ทีมส่งรูปก็ต้องเก็บด้วย (0.159888ms)
+✔ ยังไม่รู้ message_id หรือ event ว่าง = ไม่มีงาน ไม่ throw (0.188196ms)
+✔ storagePath — ไฟล์แรกไม่มีเลข ไฟล์ถัดไปมี -2 -3 (0.240334ms)
+✔ extFor รู้จักชนิดหลัก ชนิดแปลกลง bin (0.347694ms)
+✔ safeMediaPath รับเฉพาะรูปร่าง <uuid>/<uuid>[-n].<สกุลที่รู้จัก> (0.651046ms)
+✔ เพดานขนาดไฟล์เป็น 25 MB — ตัวเลขนี้ต้องตรงกับ bucket (scripts/ensure-media-bucket.mjs) (0.20258ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 156.136749
+✔ T12 CSV parser handles quoted commas and produces a valid import row (2.556744ms)
+✔ T13 invalid rows and spreadsheet formula injection are rejected before RPC (0.568428ms)
+✔ parser rejects malformed quoted CSV and excessive rows (0.532918ms)
+✔ render: แทนค่าหลายตัวแปรพร้อมข้อความไทยครบ (2.188933ms)
+✔ render: required ขาด → missing list + คง {{}} เดิมไว้ (ห้ามส่งออก) (0.363748ms)
+✔ render: ตัวแปรที่ไม่ได้ประกาศ required ขาด → แทนค่าว่าง (2.079831ms)
+✔ render: ค่าที่มี {{ตัวแปร}} ข้างใน ไม่เกิด recursion (0.306149ms)
+✔ render: รองรับช่องว่างในปีกกา {{ name }} (0.294378ms)
+✔ render: ตัวอักษรพิเศษ regex ($&) ใส่ตรงตามค่า (0.218726ms)
+✔ render: ค่าว่าง/ค่าว่างเปล่า นับเป็นขาด (0.448897ms)
+✔ render: body null/undefined ไม่พัง (0.283343ms)
+✔ renderFromResolve: ประกอบร่างจากรูปทรง ah_resolve ตรง ๆ (0.315247ms)
+✔ renderFromResolve: ผล resolve แปลก ๆ (null / ไม่มี keys) ไม่พัง (0.401348ms)
+✔ saved reply display mapping keeps technical shortcut searchable (2.101141ms)
+✔ saved reply card inserts the full content without sending (0.405395ms)
+✔ category chips filter in place and keep search state (0.440434ms)
+✔ card interaction has pressed feedback and remains manual-send only (1.595691ms)
+✔ saved reply cards are safe, clamped and hide inactive rows (0.33335ms)
+✔ CSV import preserves BOM and multiline Thai text (1.587966ms)
+✔ invalid active and duplicate shortcuts are rejected (0.390714ms)
+✔ Asher Naii workbook reads Import_Data, Thai text, URLs and inactive price rows (14.795678ms)
+✔ classification skips identical and updates changed existing rows (1.178309ms)
+✔ admin UI exposes file import and server route gates preview/apply to admins (10.098349ms)
+✔ return-to keeps a same-origin conversation path only (0.956334ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 282.656236
+✔ Phase 9 preview is gated by master before any RPC (1.996757ms)
+✔ Phase 9 static preview authorizes and never saves (1.517038ms)
+✔ Phase 9 denies static preview and editor reads for non-editor roles (2.031992ms)
+✔ Phase 9 dynamic preview respects flag and renders unsaved values with the shared renderer (0.735426ms)
+✔ Phase 9 editor can load expired answers for correction (0.642ms)
+✔ Phase 9 resolve command dispatch reaches renderer (0.866934ms)
+✔ Phase 11 learning queue and review are independently flag-gated and use RPC (0.668412ms)
+✔ S15 invalid answer id → ANSWER_NOT_FOUND โดยไม่ยิง rpc เลย (3.976087ms)
+✔ S01 get approved answer → ok พร้อม item/versions/bindings + log (0.688287ms)
+✔ S02 rpc ปฏิเสธ (ah_not_allowed) → mapped ANSWER_NOT_ALLOWED (0.565877ms)
+✔ S03 admin อ่าน draft ผ่าน (SQL อนุญาต) — service บอกสถานะไม่ block (0.321701ms)
+✔ S06 answer หมดอายุ (valid_to ผ่านมาแล้ว) → ANSWER_EXPIRED (0.17544ms)
+✔ S06 answer ยังไม่ถึงวันเริ่ม (valid_from อนาคต) → ANSWER_EXPIRED (0.137789ms)
+✔ S04 bot ห้ามใช้ answer สำหรับคน (audience=human) → ANSWER_NOT_ALLOWED (0.342817ms)
+✔ S05 bot ห้ามใช้ answer ที่ bot_auto_answer=false → ANSWER_NOT_ALLOWED (0.187447ms)
+✔ bot ห้ามใช้ของยังไม่ approved → ANSWER_NOT_APPROVED (0.207467ms)
+✔ S10 resolve static → ไม่ยิง ah_resolve เลย + ไม่โดน dynamic flag (0.403694ms)
+✔ S11 resolve dynamic → render จากค่าจริง + sources_used ตามที่ฐานรายงาน (0.311815ms)
+✔ S12 resolve hybrid (มี ok/fallback/missing ปน) → review=true + {{}} ค้าง (0.379526ms)
+✔ S13 required binding missing → requires_human_review (ห้ามส่งอัตโนมัติ) (0.563305ms)
+✔ S14 disabled source → warning SOURCE_DISABLED (ไม่ใช่ค่ามั่ว) (0.257074ms)
+✔ S16+S17 rpc ล้มด้วย raw error แปลก → INTERNAL_ERROR ไม่หลุดข้อความดิบ (0.363461ms)
+✔ flag master ปิด → ทุก action คืน HUB_DISABLED (0.331557ms)
+✔ flag dynamic ปิด → resolve ของ dynamic คืน FEATURE_DISABLED (static ไม่โดน) (0.358543ms)
+✔ S18 pagination — ค่าตามผ่านถึง rpc + page_size เกินถูก clamp + filter uuid ผิดรูปโดนกัน (0.431008ms)
+✔ S09 searchAnswers → รูปทรง normalized + score null (คะแนนเป็นของ Phase 14) (0.458189ms)
+✔ boundary ของ Phase ที่ยังไม่ถึง → usage/feedback คืน NOT_AVAILABLE_YET ไม่แต่งผล (0.181485ms)
+✔ buildFlags — env เปิด/override ชนะ env/override พังแล้วใช้ env ต่อ (0.248437ms)
+✔ Phase 13 quick answer validates client filters before RPC and preserves server filtering (0.708409ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 179.538883
+✔ CRM publisher retries network and transient HTTP failures (1.642164ms)
+✔ CRM publisher dead-letters permanent contract/auth failures (0.256654ms)
+✔ CRM publisher backoff is bounded and restart-safe by attempt number (0.225017ms)
+✔ project map reads channel -> project pairs from configuration (2.08188ms)
+✔ project map tolerates spacing and empty entries (0.315769ms)
+✔ project map reports malformed entries instead of silently dropping them (0.347632ms)
+✔ empty or absent project map yields no bindings (0.189835ms)
+✔ unmapped channel resolves to null so CRM records project_ref_missing (0.235283ms)
+✔ database tests reject default/shared targets and accept explicit disposable targets (1.473629ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 113.40219

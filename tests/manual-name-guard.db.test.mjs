@@ -1,3 +1,5 @@
+import { disposableTarget } from './db-target.mjs';
+const testTarget = disposableTarget();
 /**
  * ชื่อที่คนตั้งเอง ห้ามตัวดึงโปรไฟล์ทับ — เทสต์กติกาของ 202609221400_manual_name_guard.sql
  *
@@ -24,8 +26,8 @@ const TAG = '__manual_name_guard__' + Date.now()
 
 /** รันใน transaction แล้ว rollback — คืนบรรทัดผลลัพธ์ที่ไม่ใช่ noise ของ psql */
 async function sqlRollback(body) {
-  const { stdout } = await run('docker', ['exec', '-i', 'supabase-db', 'psql',
-    '-U', 'supabase_admin', '-d', 'postgres',
+  const { stdout } = await run('docker', ['exec', '-i', testTarget.container, 'psql',
+    '-U', testTarget.adminUser, '-d', testTarget.database,
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|',
     '-c', `begin; ${body} rollback;`], { maxBuffer: 16 << 20 })
   return stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
