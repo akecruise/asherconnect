@@ -1562,6 +1562,8 @@ async function route(req, res, url) {
   // เสิร์ฟ index.html เหมือน "/" ล็อกอินเป็นหน้าที่ของ app.js (bootstrap ไม่ผ่าน → ฟอร์มเดิม → กลับมาหน้าเดิม)
   // ★ ต้องตัดมาก่อน flowHealth.handle ไม่งั้นหน้า standalone (health.html + password grant แยก) ชิงไปเสิร์ฟ
   if (url.pathname === '/admin/health' && req.method === 'GET') return handleStatic(req, res, new URL('/', origin))
+  // Canonical CRM deep link: serve the SPA shell so refresh/auth can resolve it.
+  if (req.method === 'GET' && /^\/conversations\/[^/]+$/.test(url.pathname)) return handleStatic(req, res, new URL('/', origin))
   // ประตูของระบบเช็ค: /healthz สำหรับ monitor ภายนอก · /api/health/* (เส้นเก่าของตัวเช็ค ยังใช้กับเทสต์ SQL)
   // ด่านสิทธิ์ของหน้านี้อยู่ใน SQL (health_can_view) ไม่ได้พึ่งการซ่อนทางเข้า
   if (await flowHealth.handle(req, res)) return
