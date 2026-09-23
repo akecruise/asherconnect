@@ -19,6 +19,24 @@ window.asherQuickReplies = () => boot?.quick_replies?.length ? boot.quick_replie
 const drafts=new Map(),pendingCommands=new Map()
 let selectedImages=[]
 const text=(tag,value,cls)=>{const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
+
+// เมนูที่สร้างด้วย JS ต้องมีโครงเดียวกับที่เขียนไว้ใน index.html คือ svg.nav-icon + span.nav-label
+// ★ ไม่ใช่แค่ความสวย — ที่จอแคบ .nav-item ถูกบีบเป็นกล่อง 44×44 (ดู app.css)
+//   เมนูที่มีแต่ข้อความจะถูกยัดลงกล่องนั้นจนอ่านไม่ออก ส่วนเมนูที่มีไอคอนจะซ่อน label แล้วเหลือไอคอน
+const ICON_ANSWER_HUB='M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM13 4h5.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H13z'
+const ICON_USERS='M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M3 20a6 6 0 0 1 12 0M16.5 11.5a3 3 0 1 0 0-6M18 20a5.5 5.5 0 0 0-2-4.3'
+const navLink=(id,href,label,iconPath,title=label)=>{
+ const a=document.createElement('a')
+ a.className='nav-item';a.id=id;a.href=href;a.title=title;a.setAttribute('aria-label',label)
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg')
+ svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','nav-icon')
+ svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false')
+ const path=document.createElementNS('http://www.w3.org/2000/svg','path')
+ path.setAttribute('d',iconPath);path.setAttribute('fill','none');path.setAttribute('stroke','currentColor')
+ path.setAttribute('stroke-width','1.8');path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round')
+ svg.append(path);a.append(svg,text('span',label,'nav-label'))
+ return a
+}
 function note(value,error=false){$('notice').hidden=!value;$('notice').textContent=value;$('notice').className='notice'+(error?' error':'')}
 function safeReturnTo(value){return typeof value==='string'&&value.startsWith('/')&&!value.startsWith('//')&&!value.includes('\\')?value:null}
 function currentReturnTo(){return safeReturnTo(location.pathname+location.search)}
@@ -712,11 +730,11 @@ function wireAppNav(role){
  // สถานะระบบ: แสดงเมนูให้ manager/admin — การซ่อนปุ่มคือความสะอาดตา
  // ด่านจริงอยู่ที่ health_can_view() ในฐาน (แตะ /api/admin/system-health ตรง ๆ ก็ตายที่นั่น)
  // การบันทึกกฎยังเป็นของ admin เท่านั้นตาม health_rule_save ในฐาน หน้าจอปิดช่องแก้ตาม can_edit
- if(!$('nav-answer-hub')&&managerUp){const a=text('a','คลังคำตอบ','nav-item');a.id='nav-answer-hub';a.href='/answer-hub';$('app-nav').append(a)}
+ if(!$('nav-answer-hub')&&managerUp){$('app-nav').append(navLink('nav-answer-hub','/answer-hub','คลังคำตอบ',ICON_ANSWER_HUB))}
  if($('nav-admin-status'))$('nav-admin-status').hidden=!managerUp
  // แสดงทางเข้ากลางไว้เสมอเพื่อให้ผู้ใช้รู้ว่าหน้าอยู่ที่ไหน; endpoint ป้องกัน non-admin ฝั่ง server
  // และจะตอบ 403 หากบัญชีไม่มีสิทธิ์ admin.
- if(!$('nav-admin-users')){const a=text('a','ผู้ใช้และสิทธิ์','nav-item');a.id='nav-admin-users';a.href='/admin/users';a.title='ผู้ใช้และสิทธิ์ (admin เท่านั้น)';$('app-nav').append(a)}
+ if(!$('nav-admin-users')){$('app-nav').append(navLink('nav-admin-users','/admin/users','ผู้ใช้และสิทธิ์',ICON_USERS,'ผู้ใช้และสิทธิ์ (admin เท่านั้น)'))}
  // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
  // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
  $('nav-settings').addEventListener('click',()=>{
