@@ -12,7 +12,7 @@ export function messageSenderLabel(message, contact = {}, channel = '') {
     return message.responder_display_name || message.sender_name || 'ไม่ระบุผู้ตอบ'
   }
   if (message?.sender_type === 'contact') {
-    return contact.display_name || contact.external_id || (channel === 'line' ? 'ลูกค้า LINE' : 'ลูกค้า Messenger')
+    return contact.display_name || contact.external_id || (channel === 'line' ? 'ลูกค้า LINE' : channel === 'instagram' ? 'ลูกค้า Instagram' : 'ลูกค้า Messenger')
   }
   return 'ระบบ'
 }

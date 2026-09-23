@@ -10,6 +10,7 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { chunkText } from './reports/reply-digest.mjs'
+import { instagramEvents, sendInstagram } from './lib/instagram.mjs'
 
 export function verifySignature(raw, supplied, secret, channel) {
   if (!supplied || !secret) return false
@@ -28,6 +29,8 @@ export function verifySignature(raw, supplied, secret, channel) {
  */
 export function matchesDestination(channel, body, config) {
   if (channel === 'line') return body?.destination === config.account_id
+  if (channel === 'instagram') return body?.object === 'instagram' && Array.isArray(body.entry)
+    && body.entry.some(entry => String(entry.id) === String(config.account_id))
   if (body?.object !== 'page') return false
   return (body.entry || []).some(entry => entry.id === config.account_id)
 }
@@ -60,7 +63,7 @@ export function matchesDestination(channel, body, config) {
  *
  * ที่ยังไม่รับคือ join (บอทถูกเชิญเข้ากลุ่ม) — ยังไม่มีอะไรต้องทำนอกจาก log
  */
-const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral', 'group_command'])
+const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral', 'group_command', 'message_deleted'])
 
 const iso = ms => new Date(ms ?? Date.now()).toISOString()
 
@@ -81,6 +84,7 @@ const iso = ms => new Date(ms ?? Date.now()).toISOString()
  *   join           บอทถูกเชิญเข้ากลุ่ม (LINE)
  */
 export function normalizeEvents(channel, body, config) {
+  if (channel === 'instagram') return instagramEvents(body, config)
   return channel === 'line' ? lineEvents(body, config) : messengerEvents(body, config)
 }
 
@@ -358,6 +362,8 @@ export async function deliver(job, config = {}, fetcher = fetch) {
         return await sendLine(job, base, channel, target, config, fetcher)
       case 'messenger':
         return await sendMessenger(job, base, kind, target, config, fetcher)
+      case 'instagram':
+        return await sendInstagram(job, base, target, config, fetcher)
       case 'telegram':
         return await sendTelegram(job, base, target, config, fetcher)
       case 'email':
@@ -489,6 +495,7 @@ async function sendEmail(job, base, target, config, fetcher) {
  * ยิงซ้ำทีหลังจะกลายเป็นจุดไข่ปลาขึ้นมาตอนที่ไม่มีใครกำลังพิมพ์
  */
 async function sendTyping(base, channel, target, config, fetcher) {
+  if (channel === 'instagram') return { ...base, status: 'skipped', error: 'instagram_typing_not_enabled' }
   if (!config.access_token) return { ...base, status: 'skipped', error: 'token_missing' }
   const response = channel === 'line'
     ? await fetcher(LINE_LOADING, {

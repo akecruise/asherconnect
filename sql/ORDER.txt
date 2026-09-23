@@ -262,3 +262,5 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 202609231000_user_access_admin.sql และหลังย้าย asher_crm มาฐานเดียวกัน
 # ★ additive: ทริกเกอร์ + ฟังก์ชันใหม่ ไม่แก้ตารางเดิม
 202609231600_crm_membership_sync.sql
+
+20260923090119_instagram_inbox.sql

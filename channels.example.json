@@ -1,11 +1,37 @@
 [
   {
-    "key": "naii-line", "name": "Naii LINE OA", "channel": "line", "enabled": false,
-    "inbox_id": "UUID_FROM_INBOX_TABLE", "account_id": "LINE_BOT_USER_ID", "secret": "", "access_token": ""
+    "key": "naii-line",
+    "name": "Naii LINE OA",
+    "channel": "line",
+    "enabled": false,
+    "inbox_id": "UUID_FROM_INBOX_TABLE",
+    "account_id": "LINE_BOT_USER_ID",
+    "secret": "",
+    "access_token": ""
   },
   {
-    "key": "vibe-messenger", "name": "Vibe Facebook", "channel": "messenger", "enabled": false,
-    "inbox_id": "UUID_FROM_INBOX_TABLE", "account_id": "FACEBOOK_PAGE_ID", "api_version": "v23.0",
-    "secret": "", "access_token": "", "verify_token": ""
+    "key": "vibe-messenger",
+    "name": "Vibe Facebook",
+    "channel": "messenger",
+    "enabled": false,
+    "inbox_id": "UUID_FROM_INBOX_TABLE",
+    "account_id": "FACEBOOK_PAGE_ID",
+    "api_version": "v23.0",
+    "secret": "",
+    "access_token": "",
+    "verify_token": ""
+  },
+  {
+    "key": "asher-instagram",
+    "name": "Instagram ASHER",
+    "channel": "instagram",
+    "enabled": false,
+    "inbox_id": "UUID_FROM_INBOX_TABLE",
+    "account_id": "INSTAGRAM_PROFESSIONAL_ACCOUNT_ID",
+    "login_type": "instagram",
+    "api_version": "v23.0",
+    "secret": "",
+    "access_token": "",
+    "verify_token": ""
   }
 ]

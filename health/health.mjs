@@ -116,14 +116,17 @@ export function createHealth(opts = {}) {
     const channels = await cfg.getChannels().catch(() => []);
     return Promise.all(channels.filter((c) => c.accessToken).map((c) =>
       timed(`Token ${c.key}`, async () => {
-        const res = c.type === 'line'
+        const res = c.type === 'instagram'
+          ? await fetch(`https://graph.instagram.com/${c.apiVersion || 'v23.0'}/${encodeURIComponent(c.accountId)}?fields=id,username`, {
+              headers: { Authorization: `Bearer ${c.accessToken}` }, signal: AbortSignal.timeout(8000) })
+          : c.type === 'line'
           ? await fetch('https://api.line.me/v2/bot/info', {
               headers: { Authorization: `Bearer ${c.accessToken}` }, signal: AbortSignal.timeout(8000) })
           : await fetch(`https://graph.facebook.com/v23.0/debug_token?input_token=${encodeURIComponent(c.accessToken)}`, {
               headers: { Authorization: `Bearer ${c.accessToken}` }, signal: AbortSignal.timeout(8000) });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        if (c.type !== 'line' && data.data?.is_valid === false) {
+        if (c.type === 'messenger' && data.data?.is_valid === false) {
           throw new Error(`token ใช้ไม่ได้: ${data.data?.error?.message ?? 'Facebook แจ้งว่าใบนี้ใช้ไม่ได้แล้ว'}`);
         }
         if (data.error) throw new Error(String(data.error.message ?? 'graph error'));

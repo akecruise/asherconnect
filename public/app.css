@@ -1298,3 +1298,7 @@ body.admin-view #lead-card { display: none }
 .ah-field { display: inline-flex; align-items: center; gap: 6px }
 .ah-field input[type="number"] { width: 84px }
 #ah-rule-note { margin-top: 10px }
+
+/* Instagram inbox badge */
+.channel-badge.ig { background: linear-gradient(135deg,#833AB4,#C13584,#F56040) }
+.channel-badge.ig::after { content: 'IG'; color: #fff; font-size: 8px; font-weight: 600 }

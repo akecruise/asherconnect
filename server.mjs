@@ -39,6 +39,7 @@ import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub
 import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
 import { createUserAdmin } from './services/user-admin/service.mjs'
 import { extractCustomerContact } from './lib/customer-contact-extraction.mjs'
+import { instagramUrl, instagramMedia } from './lib/instagram.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -54,7 +55,9 @@ let channels = []
 if (process.env.CONNECT_CHANNELS_FILE) channels = JSON.parse(await readFile(process.env.CONNECT_CHANNELS_FILE, 'utf8'))
 // ช่องทางจะ "ใช้งานได้" ก็ต่อเมื่อมีครบทั้งปลายทาง ความลับ และถูกเปิดไว้
 // ขาดอย่างใดอย่างหนึ่งถือว่ายังไม่เชื่อม ดีกว่าปล่อยให้ไปพังตอนยิงจริง
-const activeChannels = channels.filter(c => c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true)
+const activeChannels = channels.filter(c => c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true
+  && (c.channel !== 'instagram' || (c.login_type === 'instagram' && c.verify_token && /^\d+$/.test(c.account_id)
+    && /^v\d+\.\d+$/.test(c.api_version || 'v23.0'))))
 
 const crmPublisherEnabled = process.env.ASHER_CRM_PUBLISH_ENABLED === 'true' || process.env.ASHER_CRM_PUBLISH_ENABLED === '1'
 // ★ ปิดไว้เป็นค่าตั้งต้น — crm_retry_profile_updates ยังไม่มีในฐานโปรดักชัน
@@ -378,7 +381,8 @@ const flowHealth = createHealth({
   publicUrl: process.env.PUBLIC_URL ?? origin,
   getChannels: async () => activeChannels.map(c => ({
     key: c.key,
-    type: c.channel === 'line' ? 'line' : 'messenger',
+    type: c.channel,
+    accountId: c.account_id, apiVersion: c.api_version, loginType: c.login_type,
     accessToken: c.access_token,
   })),
   // สถานะรวมของโพรเซส (overall/database/workers/queue) — snapshot แนบไปกับคำตอบของหน้า admin
@@ -422,6 +426,7 @@ async function checkToken(config) {
   //   debug_token ตอบตรงคำถามว่า "ใบนี้ยังมีชีวิตไหม" และไม่ต้องใช้สิทธิ์เพิ่ม
   const url = config.channel === 'line'
     ? 'https://api.line.me/v2/bot/info'
+    : config.channel === 'instagram' ? `${instagramUrl(config)}?fields=id,username`
     : `https://graph.facebook.com/${config.api_version || 'v23.0'}/debug_token`
       + `?input_token=${encodeURIComponent(config.access_token)}`
   try {
@@ -430,7 +435,7 @@ async function checkToken(config) {
       signal: AbortSignal.timeout(HEALTH_TIMEOUT),
     })
     const data = await response.json().catch(() => ({}))
-    if (config.channel !== 'line' && response.ok && !data.error) {
+    if (config.channel === 'messenger' && response.ok && !data.error) {
       if (data.data?.is_valid) return { ok: true }
       return { ok: false, reason: `token ใช้ไม่ได้: ${data.data?.error?.message ?? 'Facebook แจ้งว่าใบนี้ใช้ไม่ได้แล้ว'}`.slice(0, 140) }
     }
@@ -824,11 +829,12 @@ function outboundRoute(job, inboxConfig) {
 
 const channelLabel = job => {
   const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-  return config?.channel === 'line' ? ' LINE' : config?.channel === 'messenger' ? ' Messenger' : ''
+  return ({ line: ' LINE', messenger: ' Messenger', instagram: ' Instagram' })[config?.channel] || ''
 }
 const inboxUrlFor = job => {
   const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-  return config?.channel === 'line' ? 'https://chat.line.biz/' : 'https://business.facebook.com/latest/inbox/all'
+  return config?.channel === 'line' ? 'https://chat.line.biz/' : config?.channel === 'instagram'
+    ? 'https://www.instagram.com/direct/inbox/' : 'https://business.facebook.com/latest/inbox/all'
 }
 
 // ───────────────────────────────────────────────────────── คิวขาเข้า
@@ -990,6 +996,14 @@ async function attachOutboundMedia({ inboxId, messageId, files }) {
 }
 
 async function syncMedia(config, events, received) {
+  if (config.channel === 'instagram') {
+    for (let i = 0; i < events.length; i++) {
+      if (!received[i]?.message_id || received[i]?.duplicate_of) continue
+      const media = instagramMedia(events[i])
+      if (media.length) await rpcDirect(service, 'media_attach', { p_message_id: received[i].message_id, p_media: media })
+    }
+    return
+  }
   const jobs = events.flatMap((event, i) => mediaTasks(event, received[i]))
   if (!jobs.length) return
   log.info('media_sync_started', { channel: config.key, count: jobs.length })
@@ -1036,6 +1050,13 @@ async function processInbound(job) {
     const events = normalizeWebhook(config.channel, job.payload, config)
     const received = []
     for (const event of events) {
+      if (event.event_type === 'message_deleted') {
+        received.push(await rpcDirect(service, 'instagram_message_deleted', {
+          p_inbox_id: config.inbox_id, p_external_id: event.external_id,
+          p_message_id: event.provider_message_id,
+        }))
+        continue
+      }
       // เฉพาะข้อความของลูกค้าที่ผ่าน normalize แล้วเท่านั้น — echo/ข้อความของแอดมิน
       // คำสั่งในกลุ่ม และเนื้อหา Answer Hub ไม่ถูกดึงชื่อ/เบอร์
       const signal = event.event_type === 'message' && event.source_type === 'user'
@@ -1195,7 +1216,7 @@ async function computeSystemStatus() {
   let channels = {}
   try {
     for (const c of await channelStates()) {
-      channels[c.channel === 'line' ? 'line' : 'messenger'] = {
+      channels[c.channel] = {
         name: c.name, enabled: c.enabled, reachable: c.enabled && c.state !== 'off',
         status: !c.enabled ? 'disabled' : c.state === 'ok' || c.state === 'idle' ? 'healthy'
               : c.state === 'down' ? 'down' : 'unknown',
@@ -1340,7 +1361,7 @@ async function handleWebhook(req, res, url) {
   }
 
   // Messenger ยืนยันปลายทางด้วย GET ครั้งเดียวตอนตั้งค่า ต้องตอบ challenge กลับเป็น text ล้วน
-  if (req.method === 'GET' && config.channel === 'messenger') {
+  if (req.method === 'GET' && ['messenger', 'instagram'].includes(config.channel)) {
     if (url.searchParams.get('hub.mode') !== 'subscribe' || !config.verify_token || url.searchParams.get('hub.verify_token') !== config.verify_token) {
       throw webhookFail(403, 'invalid_verification', key)
     }
@@ -1393,6 +1414,10 @@ async function handleWebhook(req, res, url) {
   // ส่วนการแปลความว่าในก้อนมี event อะไรบ้าง ยกไปทำทีหลังได้
   if (!matchesDestination(config.channel, body, config)) {
     throw webhookFail(400, 'invalid_webhook', key, { เหตุ: 'wrong_destination', ปลายทางที่ตั้งไว้: config.account_id })
+  }
+  if (config.channel === 'instagram') {
+    // Meta can batch several accounts; only persist this channel's entries.
+    body = { ...body, entry: body.entry.filter(e => String(e.id) === String(config.account_id)) }
   }
 
   // ★ คำสั่ง "test" ของบัญชีทดสอบ — ถอดออกก่อนเข้าคิวขาเข้า
@@ -1584,13 +1609,17 @@ async function handleCommand(req, res) {
     // ปลายทางมาจากบทสนทนาในฐานเท่านั้น ไม่เคยมาจากเบราว์เซอร์
     const list = await rpc(accessToken, 'bootstrap')
     if (!list.user) throw fail(403, 'not_allowed')
-    if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
+    if (!activeChannels.some(c => c.channel === detail.channel && c.inbox_id === detail.conversation.inbox_id)) throw fail(503, 'channel_not_configured')
     let files
     try { files = validateOutboundImages(input.data.files || []) }
     catch (e) { throw fail(400, e.message) }
     const text = String(input.data.text || '').trim()
     if (!text && !files.length) throw fail(400, 'invalid_message')
     if (detail.channel === 'line' && text && files.length > 4) throw fail(400, 'LINE ส่งข้อความพร้อมรูปได้สูงสุด 4 รูปต่อครั้ง')
+    if (detail.channel === 'instagram') {
+      if ((text && files.length) || files.length > 1) throw fail(400, 'Instagram: ส่งข้อความหรือรูปครั้งละ 1 รายการ')
+      if ([...text].length > 1000) throw fail(400, 'Instagram: ข้อความยาวได้ไม่เกิน 1,000 ตัวอักษร')
+    }
     outboundFiles = files
     outboundConversation = detail
     input.data = { ...input.data, text: text || '[แนบรูปภาพ]' }

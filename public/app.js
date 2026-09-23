@@ -127,7 +127,7 @@ function rankTemplates(list){
 //   เพราะเคยมีของหลุดเข้าฐานจากตอนที่หน้าจอเอาคำนี้ไปใส่ช่องแก้ชื่อแล้วกดบันทึก
 //   ถ้าไม่ดัก ลูกค้าคนนั้นจะชื่อ "ลูกค้าใหม่" ตลอดไปและหา external id ดูไม่ได้เลย
 const NO_NAME = 'ลูกค้าใหม่'
-const CHANNEL_WORD = { line: 'LINE', messenger: 'Messenger' }
+const CHANNEL_WORD = { line: 'LINE', messenger: 'Messenger', instagram: 'Instagram' }
 // ★ ไม่โชว์ id เต็มบนการ์ดอีกแล้ว — userId ของ LINE ยาว 33 ตัว ตัดแล้วเหลือ "U666f06…"
 //   ซึ่งแยกคนไม่ออกและกินที่ทั้งแถว · id เต็มย้ายไปอยู่ในหน้ารายละเอียดพร้อมปุ่มคัดลอก
 function customerName(name, externalId, channel){
@@ -290,7 +290,7 @@ function renderList(){
     const shown=customerName(item.display_name,item.external_id,item.channel);
     const avatarBox=avatar(item.picture_url,shown);
     // ★ badge ช่องทางอยู่มุมล่างขวาของ avatar ตามสเปก ไม่ใช่ pill แยกในแถวข้อความแบบเดิม
-    avatarBox.append(text('span','','channel-badge '+(item.channel==='line'?'line':'fb')));
+    avatarBox.append(text('span','','channel-badge '+(item.channel==='line'?'line':item.channel==='instagram'?'ig':'fb')));
     b.append(text('div','','chat-row-avatar')); b.lastChild.append(avatarBox);
 
     const body=text('div','','chat-row-body');
@@ -376,7 +376,13 @@ function renderMessages(messages,prepend=false){
     const files=Array.isArray(m.media)?m.media:[]
     if(files.length){
       for(const f of files){
-        if(/^image\//.test(f.mime||'')){
+        if(f.provider==='instagram'){
+          let url;try{url=new URL(f.url)}catch{continue}
+          if(url.protocol!=='https:'||url.username||url.password)continue
+          const a=text('a','เปิดสื่อแนบจาก Instagram','media-file')
+          a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';a.referrerPolicy='no-referrer'
+          a.title='ลิงก์อาจหมดอายุเมื่อ Instagram ยกเลิกการเข้าถึงสื่อ';b.append(a)
+        }else if(/^image\//.test(f.mime||'')){
           const img=document.createElement('img')
           img.className='media-img';img.loading='lazy';img.alt='[รูปแนบ]'
           img.addEventListener('error',()=>img.replaceWith(mediaChip('[รูปเปิดไม่ได้]')))
@@ -429,7 +435,7 @@ function renderChatHeadExtras(who){
  tag.textContent=name
  tag.hidden=!name
 }
-function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=detail.channel==='line'?'LINE':'Messenger';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
+function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=CHANNEL_WORD[detail.channel]||detail.channel;renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
 async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||crypto.randomUUID();pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value='';selectedImages=[];renderImagePreview()}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(action==='send'?'กำลังอัปโหลด/ส่งข้อความและรูป… สถานะจะแสดงใต้ข้อความ':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);note(e.message,true);$('dialog-error').textContent=e.message}finally{setBusy(false)}}
 let dialogAction,dialogData
 function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
@@ -488,9 +494,9 @@ $('bot-toggle').addEventListener('click',async()=>{
  const imageInput=document.createElement('input');imageInput.id='image-files';imageInput.type='file';imageInput.accept='.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp';imageInput.multiple=true;imageInput.hidden=true;document.body.append(imageInput)
  function renderImagePreview(){previewBox.replaceChildren();previewBox.hidden=!selectedImages.length;selectedImages.forEach((file,index)=>{const item=text('div','','image-preview-item');const img=document.createElement('img');img.src=URL.createObjectURL(file);img.alt=file.name;const remove=text('button','×','image-preview-remove');remove.type='button';remove.title='ลบรูปนี้';remove.addEventListener('click',()=>{selectedImages.splice(index,1);renderImagePreview();permissions()});item.append(img,remove);previewBox.append(item)})}
  $('attach').disabled=false;$('attach').addEventListener('click',()=>imageInput.click())
- imageInput.addEventListener('change',e=>{const incoming=[...e.target.files];e.target.value='';const max=detail?.channel==='line'&&$('message').value.trim()?4:5;if(selectedImages.length+incoming.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง${max===4?' เมื่อมีข้อความร่วมด้วย':''}`,true);return}const bad=incoming.find(file=>!/\.(jpe?g|png|webp)$/i.test(file.name)||!['image/jpeg','image/png','image/webp'].includes(file.type));if(bad){note('รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP เท่านั้น',true);return}if(incoming.some(file=>file.size>10*1024*1024)){note('รูปแต่ละไฟล์ต้องมีขนาดไม่เกิน 10 MB',true);return}selectedImages.push(...incoming);renderImagePreview()})
+ imageInput.addEventListener('change',e=>{const incoming=[...e.target.files];e.target.value='';const max=detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5;if(selectedImages.length+incoming.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง${max===4?' เมื่อมีข้อความร่วมด้วย':''}`,true);return}const bad=incoming.find(file=>!/\.(jpe?g|png|webp)$/i.test(file.name)||!['image/jpeg','image/png','image/webp'].includes(file.type));if(bad){note('รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP เท่านั้น',true);return}if(incoming.some(file=>file.size>10*1024*1024)){note('รูปแต่ละไฟล์ต้องมีขนาดไม่เกิน 10 MB',true);return}selectedImages.push(...incoming);renderImagePreview()})
  async function filePayload(file){const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return {name:file.name,type:file.type,data:btoa(binary)}}
- $('reply').addEventListener('submit',async e=>{e.preventDefault();const value=$('message').value.trim();if(!value&&!selectedImages.length){note('กรุณาพิมพ์ข้อความหรือแนบรูปอย่างน้อย 1 รูป',true);return}const files=await Promise.all(selectedImages.map(filePayload));mutate('send',{text:value,files,answer_id:$('message').dataset.answerHubId||undefined})})
+ $('reply').addEventListener('submit',async e=>{e.preventDefault();const value=$('message').value.trim();if(!value&&!selectedImages.length){note('กรุณาพิมพ์ข้อความหรือแนบรูปอย่างน้อย 1 รูป',true);return}if(detail?.channel==='instagram'&&((value&&selectedImages.length)||selectedImages.length>1)){note('Instagram: ส่งข้อความหรือรูปครั้งละ 1 รายการ',true);return}if(detail?.channel==='instagram'&&[...value].length>1000){note('Instagram: ข้อความยาวได้ไม่เกิน 1,000 ตัวอักษร',true);return}const files=await Promise.all(selectedImages.map(filePayload));mutate('send',{text:value,files,answer_id:$('message').dataset.answerHubId||undefined})})
 $('lead-form').addEventListener('input',()=>dirty=true)
 $('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,follow_up_at:utc($('followup').value)})})
 $('claim').addEventListener('click',()=>mutate('claim'))
@@ -819,6 +825,7 @@ function renderAdminHealth(sys){
  const ch=sys.channels??{}
  cards.append(ahChannelCard('LINE',ch.line))
  cards.append(ahChannelCard('Messenger',ch.messenger))
+ if(ch.instagram)cards.append(ahChannelCard('Instagram',ch.instagram))
  const w=sys.workers??{},wi=w.inbound??{},wo=w.outbound??{}
  cards.append(ahCard('Worker ขาเข้า',wi.status??'unknown',[
   ['สำเร็จล่าสุด',ahAgo(wi.lastSuccessAt)],
