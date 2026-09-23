@@ -346,7 +346,8 @@ function renderMessages(messages,prepend=false){
       b.append(document.createTextNode(m.content))
     }
     const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':''
-    b.append(text('small',date(m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
+    if(m.sender_type==='agent') b.append(text('small','ตอบโดย: '+(m.responder_display_name||'ไม่ระบุผู้ตอบ'),'responder-attribution'))
+    b.append(text('small',date(m.sent_at||m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
     if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}
     fragment.append(b)
   }

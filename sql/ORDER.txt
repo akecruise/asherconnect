@@ -230,6 +230,7 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 202609211300_crm_publisher.sql เสมอ (แก้ทริกเกอร์+ข้อจำกัดของตารางเดิม)
 202609212000_crm_conversation_created.sql
 202609221000_unified_identity.sql
+202609221100_contact_profile_columns.sql
 
 # ── Connect -> CRM: พาชื่อ/รูป/สถานะโปรไฟล์ และเนื้อความจริงไปด้วย (2026-09-22) ──
 # ★ ต้องอยู่หลัง 202609212000_crm_conversation_created.sql เสมอ — เขียนทับ
@@ -244,3 +245,15 @@ _ledger.sql
 #   ถ้าสลับลำดับกับไฟล์ที่แก้ api ทีหลัง จะได้ของเก่ากลับมาเงียบ ๆ
 # ★ additive: ไม่มี DDL ไม่แตะข้อมูล ไม่แตะเส้นทาง Messenger backfill
 202609221400_manual_name_guard.sql
+202609221500_crm_profile_updated_outbox.sql
+202609231000_user_access_admin.sql
+
+# ── สิทธิ์ของฟังก์ชัน User & Access (2026-09-23) ──
+# ★ ต้องอยู่หลัง 202609231000_user_access_admin.sql เสมอ — ALTER ฟังก์ชันที่ไฟล์นั้นสร้าง
+# ★ additive: ไม่มี DDL กับตาราง ไม่แตะข้อมูล
+202609231200_user_access_state_definer.sql
+
+# ── ประตูอ่านสื่อของ worker (2026-09-23) ──
+# ★ additive: ฟังก์ชันใหม่ตัวเดียว ไม่แตะ inbox.media_of ของผู้ใช้
+202609231300_media_of_worker.sql
+202609231500_responder_attribution.sql

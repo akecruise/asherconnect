@@ -1435,6 +1435,25 @@ async function runTestResets(hits, config, key) {
   }
 }
 
+async function enrichResponderAttribution(accessToken, action, data, conversationId) {
+  if (!['detail', 'messages'].includes(action) || !Array.isArray(data?.messages) || !conversationId) return data
+  const ids = data.messages.map(m => m?.id).filter(Boolean)
+  if (!ids.length) return data
+  try {
+    const rows = await rpcDirect(accessToken, 'message_responder_snapshot', {
+      p_conversation_id: conversationId,
+      p_message_ids: ids,
+    })
+    const byId = new Map((Array.isArray(rows) ? rows : []).map(row => [row.id, row]))
+    data.messages = data.messages.map(message => ({ ...message, ...(byId.get(message.id) || {}) }))
+  } catch (e) {
+    // Historical messages remain usable; the UI's explicit fallback is safer
+    // than deriving a responder from the assignee or a current profile.
+    log.warn('responder_attribution_lookup_failed', { reason: e.message })
+  }
+  return data
+}
+
 async function handleCommand(req, res) {
   const accessToken = await sessions.access(req)
   const raw = await readBody(req, 32 * 1024 * 1024)
@@ -1569,6 +1588,7 @@ async function handleCommand(req, res) {
   await enrichMessageMedia(input.action, data, input.data?.id, id =>
     rpcDirect(accessToken, 'media_of', { p_conversation_id: id })
       .catch(e => { log.warn('media_lookup_failed', { reason: e.message }); return null }))
+  await enrichResponderAttribution(accessToken, input.action, data, input.data?.id)
 
   if (input.action === 'bootstrap') {
     data.channels = await channelStates()
