@@ -62,6 +62,17 @@
   --urgent: #8E1116;
   --urgent-tint: #FBEEEF;
   --bubble-out: #EDEDF0;
+  --customer-bubble: #EEF6FF;
+  --customer-line: #B8D8FF;
+  --customer-label: #1D4ED8;
+  --asher-bubble: #ECFDF3;
+  --asher-line: #A7E3BF;
+  --asher-label: #166534;
+  --bot-bubble: #F5F0FF;
+  --bot-line: #D8C6FF;
+  --bot-label: #6D28D9;
+  --system-bubble: #F3F4F6;
+  --system-line: #D1D5DB;
   --urgent-line: #F0C9CB;
   --fresh-shadow: #1F202408;
   --live: #1F6B4A;
@@ -104,6 +115,17 @@
   --urgent: #E5484D;
   --urgent-tint: #3A1518;
   --bubble-out: #26272B;
+  --customer-bubble: #102A43;
+  --customer-line: #24527A;
+  --customer-label: #9CCBFF;
+  --asher-bubble: #123B2A;
+  --asher-line: #2C7951;
+  --asher-label: #9BE7B8;
+  --bot-bubble: #2D2145;
+  --bot-line: #674EA1;
+  --bot-label: #D5BFFF;
+  --system-bubble: #2A2B2E;
+  --system-line: #4B4D52;
   --urgent-line: #5A2328;
   --fresh-shadow: #00000040;
   --live: #3FA873;
@@ -412,6 +434,13 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
 .conversation-item { border-left: 3px solid transparent }
 .conversation-item.overdue, .conversation-item.overdue.selected { border-left-color: var(--urgent) }
 .bubble.out { background: var(--bubble-out); border-color: var(--bubble-out) }
+.message-row.inbound .bubble { background: var(--customer-bubble); border-color: var(--customer-line) }
+.message-row.inbound .message-sender { color: var(--customer-label) }
+.message-row.outbound .bubble { background: var(--asher-bubble); border-color: var(--asher-line) }
+.message-row.outbound .message-sender { color: var(--asher-label) }
+.message-row.outbound:has(.bot-badge) .bubble { background: var(--bot-bubble); border-color: var(--bot-line) }
+.message-row.outbound:has(.bot-badge) .message-sender { color: var(--bot-label) }
+.message-row.system .bubble { background: var(--system-bubble); border-color: var(--system-line) }
 .pill { background: var(--good-soft); color: var(--good) }
 .pill.yellow { background: var(--warn-soft); color: var(--warn) }
 .pill.red, .pill.critical, .sla-count { background: var(--urgent-tint); color: var(--urgent) }
