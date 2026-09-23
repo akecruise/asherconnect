@@ -631,7 +631,10 @@ async function signMediaObject(path) {
 
 async function addOutboundMedia(job) {
   if (!job.message_id || !job.conversation_id) return job
-  const map = await rpcDirect(service, 'media_of', { p_conversation_id: job.conversation_id })
+  // ★ ประตูของ worker ไม่ใช่ media_of ของผู้ใช้ — ตัวนั้นตรวจ auth.uid() เป็นบรรทัดแรก
+  //   แต่ที่นี่ยิงด้วย service key ซึ่งไม่มีตัวตนผู้ใช้ จึงตกด่านนั้นเสมอ (403)
+  //   แล้วงานส่งจะค้างจนสัญญาเช่าหมดอายุ กลายเป็น stale_lease วนทุกรอบ
+  const map = await rpcDirect(service, 'media_of_worker', { p_conversation_id: job.conversation_id })
   const media = Array.isArray(map?.[job.message_id]) ? map[job.message_id] : []
   if (!media.length) return job
   const images = []

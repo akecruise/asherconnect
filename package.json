@@ -27,6 +27,7 @@
     "test:reviewcode": "node --test tests/reviewcode.test.mjs",
     "test:reviewcode:db": "node --test tests/reviewcode.db.test.mjs",
     "test:shared-sales-queue": "node --test tests/shared-sales-queue.db.test.mjs",
-    "test:crm-publisher": "node --test tests/crm-publisher.test.mjs"
+    "test:crm-publisher": "node --test tests/crm-publisher.test.mjs",
+    "test:media-of-worker": "node --test tests/media-of-worker.db.test.mjs"
   }
 }
