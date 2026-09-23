@@ -671,7 +671,9 @@ function relocateRefreshButton(){
 }
 // เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
 // "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง
+const normalizeRole = role => String(role ?? '').trim().toLowerCase()
 function wireAppNav(role){
+ role=normalizeRole(role)
  const managerUp=['manager','admin'].includes(role)
  $('nav-stats').hidden=!managerUp
  // สถานะระบบ: แสดงเมนูให้ manager/admin — การซ่อนปุ่มคือความสะอาดตา
@@ -851,7 +853,7 @@ async function runAdminSelfTest(){
  }catch(err){ahError('ตรวจไม่สำเร็จ: '+err.message)}
  finally{ahBusyTest=false;btn.disabled=false;btn.textContent='ตรวจทุกขั้น'}
 }
-async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);
+async function start(){boot=await api('bootstrap');const role=normalizeRole(boot.user.role);boot.user.role=role;$('login-panel').hidden=true;$('workspace').hidden=false;$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(role);relocateRefreshButton();wireAppNav(role);
 // หน้าสถานะระบบ: ยังใช้ header/nav/notice เดิมทุกอย่าง แค่สลับเนื้อหาตรงกลาง — ไม่โหลดของแชท
 if(ANSWER_VIEW){const { mountAnswerHub } = await import('./answer-hub.js');return mountAnswerHub({ api, role: boot.user.role })}
 if(ADMIN_VIEW){document.body.classList.add('admin-view');return initAdminHealth()}

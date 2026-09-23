@@ -111,6 +111,27 @@ or hunks from this task. Some CRM UI files were included in the independently
 deployed visual-pipeline release during this work; the CRM auth route and
 Connect admin service are not deployed.
 
+## Local implementation audit — 2026-09-23
+
+The implementation is present in Connect commit `9b771f4` and the CRM
+integration deep-link is present in CRM commit `9bfbc5d`. The follow-up local
+verification adds role normalization in the Connect navigation so the Admin
+link is not lost when the bootstrap response uses a different role casing.
+This pass does not deploy production or apply a migration.
+
+Verified locally:
+
+- Connect full suite: 82/82 passed; syntax and SQL ledger check passed.
+- User & Access service tests: 8/8 passed after the local regression additions.
+- CRM typecheck: passed; CRM auth/API targeted tests: 16/16 passed.
+- The canonical identity remains `auth.users.id`; no CRM credential table is
+  introduced and `core.user_module_access` remains the module boundary.
+
+Known boundary: the migration file is additive and idempotent. App rollback is
+safe without dropping its audit/security tables; a destructive schema rollback
+must not be attempted because it could remove newer audit data. Production
+deployment and production password changes are outside this local pass.
+
 To finish: verify the owner-approved identity mapping/temporary legacy policy;
 rerun CRM full suite; stage separate task-only commits; apply the new migration
 after verifying the backups; deploy controlled releases based on the latest
