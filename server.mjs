@@ -38,6 +38,7 @@ import { createAnswerHubService, buildFlags } from './services/answer-hub/servic
 import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub/quick-reply-import.mjs'
 import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
 import { createUserAdmin } from './services/user-admin/service.mjs'
+import { extractCustomerContact } from './lib/customer-contact-extraction.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -56,6 +57,9 @@ if (process.env.CONNECT_CHANNELS_FILE) channels = JSON.parse(await readFile(proc
 const activeChannels = channels.filter(c => c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true)
 
 const crmPublisherEnabled = process.env.ASHER_CRM_PUBLISH_ENABLED === 'true' || process.env.ASHER_CRM_PUBLISH_ENABLED === '1'
+// ★ ปิดไว้เป็นค่าตั้งต้น — crm_retry_profile_updates ยังไม่มีในฐานโปรดักชัน
+//   เปิดได้เมื่อ migration ของฝั่งนั้นขึ้นแล้ว ไม่งั้นรอบ publisher จะเสียเที่ยวทุกครั้ง
+const crmProfileRetryEnabled = process.env.ASHER_CRM_PROFILE_RETRY_ENABLED === 'true'
 const crmUrl = (process.env.ASHER_CRM_URL || '').replace(/\/$/, '')
 const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
 const crmProducer = process.env.ASHER_CRM_PRODUCER || 'connect-sandbox'
@@ -274,6 +278,10 @@ async function crmPublisherWorker() {
   }
   crmPublisherRunning = true
   try {
+    if (crmProfileRetryEnabled) {
+      try { await rpcDirect(service, 'crm_retry_profile_updates', { p_limit: CRM_PUBLISH_BATCH }) }
+      catch { log.warn('crm_profile_retry_failed', { code: 'profile_retry_unavailable' }) }
+    }
     const rows = await rpcDirect(service, 'crm_publish_claim', {
       p_limit: CRM_PUBLISH_BATCH,
       p_lease_seconds: CRM_PUBLISH_LEASE_SECONDS,
@@ -1027,7 +1035,19 @@ async function processInbound(job) {
   try {
     const events = normalizeWebhook(config.channel, job.payload, config)
     const received = []
-    for (const event of events) received.push(await rpc(service, 'receive', tagReviewCode(event, config, META_REVIEW_CODE), true))
+    for (const event of events) {
+      // เฉพาะข้อความของลูกค้าที่ผ่าน normalize แล้วเท่านั้น — echo/ข้อความของแอดมิน
+      // คำสั่งในกลุ่ม และเนื้อหา Answer Hub ไม่ถูกดึงชื่อ/เบอร์
+      const signal = event.event_type === 'message' && event.source_type === 'user'
+        ? extractCustomerContact(event.text)
+        : { name: null, phone: null }
+      const enriched = {
+        ...event,
+        ...(signal.name ? { extracted_name: signal.name } : {}),
+        ...(signal.phone ? { extracted_phone: signal.phone } : {}),
+      }
+      received.push(await rpc(service, 'receive', tagReviewCode(enriched, config, META_REVIEW_CODE), true))
+    }
     await finish({ status: 'done', events_count: events.length })
     log.info('webhook_processed', { channel: job.channel_key, log_id: job.id, events: events.length })
     // ★ ยิงทิ้งไว้ ไม่ await — ข้อความลงฐานเสร็จไปแล้ว โปรไฟล์เป็นของแถมที่ขาดได้
@@ -1106,6 +1126,7 @@ function health() {
            memory: { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 },
            crmPublisher: {
              enabled: crmPublisherEnabled,
+             profileRetryEnabled: crmProfileRetryEnabled,
              configured: crmPublisherConfigured,
              status: !crmPublisherEnabled ? 'disabled' : crmPublisherConfigured ? 'healthy' : 'misconfigured',
              pending: Number(crmPublisherStats.pending || 0),
