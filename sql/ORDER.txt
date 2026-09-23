@@ -257,3 +257,8 @@ _ledger.sql
 # ★ additive: ฟังก์ชันใหม่ตัวเดียว ไม่แตะ inbox.media_of ของผู้ใช้
 202609231300_media_of_worker.sql
 202609231500_responder_attribution.sql
+
+# ── สิทธิ์ CRM ตามสิทธิ์ที่ตั้งใน Connect (2026-09-23) ──
+# ★ ต้องอยู่หลัง 202609231000_user_access_admin.sql และหลังย้าย asher_crm มาฐานเดียวกัน
+# ★ additive: ทริกเกอร์ + ฟังก์ชันใหม่ ไม่แก้ตารางเดิม
+202609231600_crm_membership_sync.sql
