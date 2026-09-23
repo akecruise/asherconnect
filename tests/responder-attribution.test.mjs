@@ -16,8 +16,9 @@ test('responder attribution migration is additive and snapshot-based', async () 
 
 test('Inbox UI renders responder snapshot and explicit historical fallback', async () => {
   const app = await readFile(new URL('public/app.js', root), 'utf8')
-  assert.match(app, /ตอบโดย:/)
-  assert.match(app, /ไม่ระบุผู้ตอบ/)
-  assert.match(app, /responder_display_name/)
-  assert.match(app, /sent_at\|\|m\.created_at/)
+  const presentation = await readFile(new URL('public/conversation-presentation.mjs', root), 'utf8')
+  assert.match(app, /messageSenderLabel/)
+  assert.match(presentation, /ไม่ทราบผู้ตอบ/)
+  assert.match(presentation, /responder_display_name/)
+  assert.match(app, /stamp=m\.sent_at\|\|m\.created_at/)
 })

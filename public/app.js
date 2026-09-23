@@ -1,4 +1,5 @@
 import { slaTag } from './sla.mjs'
+import { dateSeparatorLabel, messageSenderLabel, messageSide, messageStatus } from './conversation-presentation.mjs'
 
 const $ = id => document.getElementById(id)
 const labels={mine:'งานของฉัน',unassigned:'ยังไม่มีคนรับ',waiting:'รอลูกค้าตอบ',sla:'ตอบเกิน SLA',today:'นัดหมายวันนี้',followup:'ถึงเวลาติดตาม',closed:'ปิดแล้ว',all:'ทั้งหมด'}
@@ -320,8 +321,40 @@ const mediaChip = label => text('span', label, 'media-miss')
 function renderMessages(messages,prepend=false){
   if(!prepend)$('messages').replaceChildren()
   const fragment=document.createDocumentFragment()
+  let previousDay = ''
+  if (prepend) {
+    const existing = $('messages').querySelectorAll('[data-message-day]')
+    previousDay = existing[0]?.dataset.messageDay || ''
+  }
+  const customer = detail?.contact || {}
+  const channel = detail?.channel || ''
   for(const m of messages){
-    const b=text('div','','bubble'+(m.sender_type==='agent'?' out':m.sender_type==='bot'?' bot':''))
+    const stamp=m.sent_at||m.created_at
+    const day=dateSeparatorLabel(stamp)
+    const dayKey=stamp ? new Date(stamp).toLocaleDateString('en-CA',{timeZone:'Asia/Bangkok'}) : ''
+    if(dayKey && dayKey!==previousDay){
+      const separator=text('div',day,'date-separator')
+      separator.dataset.messageDay=dayKey
+      fragment.append(separator)
+      previousDay=dayKey
+    }
+    const side=messageSide(m.sender_type)
+    const row=text('div','','message-row '+side)
+    row.dataset.messageId=m.id||''
+    if(side==='inbound'){
+      const avatar=text('span','','message-avatar')
+      avatar.textContent=initials(messageSenderLabel(m,customer,channel))
+      if(customer.picture_url && !boot?.user?.test_only){
+        const img=document.createElement('img');img.alt='';img.loading='lazy';img.src=customer.picture_url
+        img.addEventListener('error',()=>img.remove());avatar.replaceChildren(img)
+      }
+      row.append(avatar)
+    }
+    const content=text('div','','message-content')
+    const label=text('div',messageSenderLabel(m,customer,channel),'message-sender')
+    if(m.sender_type==='bot') label.append(text('span','BOT','bot-badge'))
+    content.append(label)
+    const b=text('div','','bubble'+(side==='outbound'?' out':side==='system'?' system':''))
     const files=Array.isArray(m.media)?m.media:[]
     if(files.length){
       for(const f of files){
@@ -345,11 +378,10 @@ function renderMessages(messages,prepend=false){
     }else{
       b.append(document.createTextNode(m.content))
     }
-    const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':''
-    if(m.sender_type==='agent') b.append(text('small','ตอบโดย: '+(m.responder_display_name||'ไม่ระบุผู้ตอบ'),'responder-attribution'))
-    b.append(text('small',date(m.sent_at||m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
+    const status=messageStatus(m)
+    b.append(text('small',date(stamp)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
     if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}
-    fragment.append(b)
+    content.append(b);row.append(content);fragment.append(row)
   }
   if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment)
   $('older').hidden=messages.length<100
