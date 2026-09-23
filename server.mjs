@@ -17,6 +17,7 @@
  */
 
 import http from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { createSessions } from './auth.mjs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -36,6 +37,7 @@ import { createHealth } from './health/health.mjs'
 import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
 import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub/quick-reply-import.mjs'
 import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
+import { createUserAdmin } from './services/user-admin/service.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -124,7 +126,7 @@ const log = {
 
 const fail = (status, code) => Object.assign(new Error(code), { status })
 
-const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked','ah_not_allowed','ah_not_found','ah_invalid','ah_state_not_allowed','ah_duplicate','ah_missing_required_data'])
+const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked','ah_not_allowed','ah_not_found','ah_invalid','ah_state_not_allowed','ah_duplicate','ah_missing_required_data','invalid_user','last_admin','self_admin_change'])
 
 /**
  * ปฏิเสธ webhook พร้อมบอกเหตุผลลง log
@@ -212,10 +214,10 @@ async function edgeCall(name, body, accessToken) {
 }
 
 const rpc = (token, action, data = {}, worker = false) =>
-  callSupabase(DATA, `/rest/v1/rpc/${worker ? 'connect_worker' : 'connect_api'}`, {
+  callSupabase(DATA, `/rest/v1/rpc/${worker === 'core' ? action : worker ? 'connect_worker' : 'connect_api'}`, {
     token, method: 'POST',
-    body: { p_action: action, p_data: data },
-    headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
+    body: worker === 'core' ? data : { p_action: action, p_data: data },
+    headers: { 'Content-Profile': worker === 'core' ? 'core' : 'inbox', 'Accept-Profile': worker === 'core' ? 'core' : 'inbox' },
   })
 
 // ───────────────────────────────────────────── เซสชันของคนที่ล็อกอิน
@@ -223,7 +225,14 @@ const rpc = (token, action, data = {}, worker = false) =>
 // เก็บเป็นไฟล์นอกโพรเซส เพื่อให้รีสตาร์ต/deploy แล้วคนที่กำลังทำงานอยู่ไม่หลุดพร้อมกันทั้งออฟฟิศ
 // บน VPS โฟลเดอร์นี้ผูกเป็น volume ไว้ใน docker-compose.yml ไม่งั้นสร้าง container ใหม่แล้วหายอยู่ดี
 const sessionDir = process.env.SESSION_DIR || join(root, '.sessions')
-const sessions = createSessions({ authCall, rpc, origin, log, sessionDir })
+const sessions = createSessions({ authCall, rpc, origin, log, sessionDir, authorize: async s => {
+  const userId = s.user_id ?? (() => { try { return JSON.parse(Buffer.from(s.access_token.split('.')[1], 'base64url')).sub } catch { return null } })()
+  if (!userId) return false
+  const state = await rpc(service, 'user_access_state', { p_user: userId }, 'core')
+  return state?.active === true && state.modules?.includes('connect') &&
+    (!state.revoked_after || (s.issued_at ?? 0) > Date.parse(state.revoked_after))
+} })
+const userAdmin = createUserAdmin({ upstream, serviceKey: service, rpc, sessions })
 
 // เรียกฟังก์ชันในฐานตรง ๆ ไม่ผ่านประตู connect_api/connect_worker
 // ใช้กับของที่เป็นเรื่องของชั้นนี้เอง ไม่ใช่คำสั่งของผู้ใช้ เช่นสถานะช่องทาง
@@ -1577,7 +1586,7 @@ async function handleCommand(req, res) {
 
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
-const staticFiles = { '/answer-hub': 'index.html', '/answer-hub.js': 'answer-hub.js', '/answer-hub.css': 'answer-hub.css', '/quick-answer.js': 'quick-answer.js', '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
+const staticFiles = { '/answer-hub': 'index.html', '/answer-hub.js': 'answer-hub.js', '/answer-hub.css': 'answer-hub.css', '/users.js': 'users.js', '/users.css': 'users.css', '/quick-answer.js': 'quick-answer.js', '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
   '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
   '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css',
@@ -1619,6 +1628,12 @@ async function route(req, res, url) {
   // เสิร์ฟ index.html เหมือน "/" ล็อกอินเป็นหน้าที่ของ app.js (bootstrap ไม่ผ่าน → ฟอร์มเดิม → กลับมาหน้าเดิม)
   // ★ ต้องตัดมาก่อน flowHealth.handle ไม่งั้นหน้า standalone (health.html + password grant แยก) ชิงไปเสิร์ฟ
   if (url.pathname === '/admin/health' && req.method === 'GET') return handleStatic(req, res, new URL('/', origin))
+  if (url.pathname === '/admin/users' && req.method === 'GET') {
+    let token
+    try { token = await sessions.access(req) } catch (e) { if (e.status !== 401) throw e }
+    if (token) await userAdmin.actor(token)
+    return handleStatic(req, res, new URL('/', origin))
+  }
   // Canonical CRM deep link: serve the SPA shell so refresh/auth can resolve it.
   if (req.method === 'GET' && /^\/conversations\/[^/]+$/.test(url.pathname)) return handleStatic(req, res, new URL('/', origin))
   // ประตูของระบบเช็ค: /healthz สำหรับ monitor ภายนอก · /api/health/* (เส้นเก่าของตัวเช็ค ยังใช้กับเทสต์ SQL)
@@ -1631,6 +1646,36 @@ async function route(req, res, url) {
   if (url.pathname.startsWith('/webhooks/')) return handleWebhook(req, res, url)
 
   if (url.pathname.startsWith('/api/')) {
+    const userRoute = /^\/api\/admin\/users(?:\/([0-9a-f-]{36})(?:\/(reset-password|revoke-sessions|disable|enable|audit))?)?$/i.exec(url.pathname)
+    if (userRoute) {
+      if (req.method !== 'GET') checkOrigin(req)
+      const token = await sessions.access(req)
+      const actorId = await userAdmin.actor(token)
+      const [, targetId, action] = userRoute
+      const requestId = randomUUID()
+      if (req.method === 'GET' && !targetId) return json(res, 200, await userAdmin.list(actorId, url.searchParams))
+      if (req.method === 'GET' && targetId && action === 'audit') return json(res, 200, await userAdmin.audit(actorId, targetId))
+      if (req.method === 'POST' && !targetId) {
+        const input = JSON.parse((await readBody(req, 8192)).toString('utf8'))
+        return json(res, 201, await userAdmin.save(actorId, null, input, requestId))
+      }
+      if (req.method === 'PATCH' && targetId && !action) {
+        const input = JSON.parse((await readBody(req, 8192)).toString('utf8'))
+        return json(res, 200, await userAdmin.save(actorId, targetId, input, requestId))
+      }
+      if (req.method === 'POST' && targetId && action === 'reset-password') {
+        const input = JSON.parse((await readBody(req, 4096)).toString('utf8'))
+        return json(res, 200, await userAdmin.reset(actorId, targetId, input, requestId))
+      }
+      if (req.method === 'POST' && targetId && action === 'revoke-sessions')
+        return json(res, 200, await userAdmin.revoke(actorId, targetId, requestId))
+      if (req.method === 'POST' && targetId && (action === 'enable' || action === 'disable')) {
+        const user = await userAdmin.get(actorId, targetId)
+        return json(res, 200, await userAdmin.save(actorId, targetId,
+          { ...user, is_active: action === 'enable' }, requestId))
+      }
+      throw fail(405, 'method_not_allowed')
+    }
     // ── Admin System Status: ด่านสิทธิ์อยู่ที่ health_can_view() ในฐาน (manager ขึ้นไป)
     //    ที่นี่ด่านเดียวคือเซสชันต้องถูกต้อง — ใครยิงตรง ๆ โดยไม่ล็อกอินตายที่ sessions.access
     if (url.pathname === '/api/admin/system-health' && req.method === 'GET') {

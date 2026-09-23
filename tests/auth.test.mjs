@@ -90,6 +90,8 @@ test('เส้นทาง HTTP บังคับล็อกอินแล�
       return res.end(JSON.stringify({ access_token: body.email, refresh_token: body.email, expires_in: 3600 }))
     }
     if (req.url.startsWith('/auth/v1/logout')) return res.end('{}')
+    if (req.url === '/rest/v1/rpc/user_access_state')
+      return res.end(JSON.stringify({ active: true, role: 'sales', modules: ['connect'], revoked_after: null }))
     const identity = req.headers.authorization?.slice(7)
     if (req.url === '/rest/v1/rpc/media_of') {
       assert.equal(req.headers['content-profile'], 'inbox')
