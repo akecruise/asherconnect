@@ -682,7 +682,9 @@ function wireAppNav(role){
  // การบันทึกกฎยังเป็นของ admin เท่านั้นตาม health_rule_save ในฐาน หน้าจอปิดช่องแก้ตาม can_edit
  if(!$('nav-answer-hub')&&managerUp){const a=text('a','คลังคำตอบ','nav-item');a.id='nav-answer-hub';a.href='/answer-hub';$('app-nav').append(a)}
  if($('nav-admin-status'))$('nav-admin-status').hidden=!managerUp
- if(role==='admin'&&!$('nav-admin-users')){const a=text('a','ผู้ใช้และสิทธิ์','nav-item');a.id='nav-admin-users';a.href='/admin/users';$('app-nav').append(a)}
+ // แสดงทางเข้ากลางไว้เสมอเพื่อให้ผู้ใช้รู้ว่าหน้าอยู่ที่ไหน; endpoint ป้องกัน non-admin ฝั่ง server
+ // และจะตอบ 403 หากบัญชีไม่มีสิทธิ์ admin.
+ if(!$('nav-admin-users')){const a=text('a','ผู้ใช้และสิทธิ์','nav-item');a.id='nav-admin-users';a.href='/admin/users';a.title='ผู้ใช้และสิทธิ์ (admin เท่านั้น)';$('app-nav').append(a)}
  // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
  // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
  $('nav-settings').addEventListener('click',()=>{
