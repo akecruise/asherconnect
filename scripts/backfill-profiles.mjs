@@ -53,6 +53,21 @@ async function rpc(fn, body) {
   return r.json()
 }
 
+async function syncMessengerName(row, displayName) {
+  if (row.channel !== 'messenger' || !displayName) return
+  const r = await fetch(`${upstream}/rest/v1/rpc/sync_contact_profile`, {
+    method: 'POST',
+    headers: { apikey: service, Authorization: `Bearer ${service}`, 'Content-Type': 'application/json',
+               'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
+    body: JSON.stringify({ p_data: {
+      channel: row.channel,
+      people: [{ external_id: row.external_id, name: displayName }],
+    } }),
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!r.ok) throw new Error(`sync_contact_profile -> HTTP ${r.status}`)
+}
+
 // PostgREST อ่านตารางตรง ๆ ไม่ได้ (RLS + สคีมา core ไม่ได้ expose)
 // จึงถามผ่าน RPC ที่มีอยู่แล้วทีละคน โดยใช้รายชื่อจาก connect_worker('profile_state')
 // รายชื่อ "ใครบ้าง" ต้องมาจากฐาน — ที่นี่ขอผ่าน worker action เดิมไม่ได้
@@ -105,9 +120,12 @@ for (const [i, row] of rows.entries()) {
 
   if (!DRY) {
     try {
+      await syncMessengerName(row, p.display_name)
       await rpc('connect_worker', { p_action: 'profile_update', p_data: {
         channel: row.channel, account_key: row.account_key, external_id: row.external_id,
-        display_name: p.display_name, picture_url: p.picture_url, status: p.status,
+        // ชื่อ Messenger ผ่าน sync_contact_profile เพื่อไม่ทับชื่อที่เซลส์ตั้งเอง
+        display_name: row.channel === 'messenger' ? null : p.display_name,
+        picture_url: p.picture_url, status: p.status,
       } })
     } catch (e) {
       console.log(`      เขียนกลับไม่สำเร็จ: ${e.message}`)
