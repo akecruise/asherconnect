@@ -274,3 +274,6 @@ _ledger.sql
 
 # ── Worker permission for the final reply-alert state check ──
 202609252100_reply_alert_service_grant.sql
+
+# ── LINE OA responder names + canonical lifecycle labels ──
+202609252200_line_oa_responder_name.sql
