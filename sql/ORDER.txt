@@ -271,3 +271,6 @@ _ledger.sql
 # ★ ต้องอยู่หลัง customer reply monitor เพราะเขียนทับ mark_human_reply,
 #   reply_alert_on_human_reply และ reply_message_delivered เพื่อกัน event สลับลำดับ
 202609252000_line_oa_reply_backfill.sql
+
+# ── Worker permission for the final reply-alert state check ──
+202609252100_reply_alert_service_grant.sql

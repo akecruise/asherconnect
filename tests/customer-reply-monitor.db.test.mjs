@@ -16,6 +16,11 @@ async function sql(statement) {
 
 const q = value => `'${String(value).replaceAll("'", "''")}'`
 
+dbTest('service worker can perform the final reply-alert state check', async () => {
+  const [allowed] = await sql(`select has_function_privilege('service_role','inbox.reply_alert_current(uuid)','execute')`)
+  assert.equal(allowed, 't')
+})
+
 dbTest('episode clock survives duplicate customer messages and bot/failed replies', async () => {
   const ext = `__monitor_${Date.now()}`
   const [inbox] = await sql(`select id from inbox.inbox where channel='line' and is_active order by created_at limit 1`)
