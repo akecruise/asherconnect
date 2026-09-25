@@ -40,3 +40,10 @@ test('saved reply cards are safe, clamped and hide inactive rows', () => {
   assert.match(source, /-webkit-line-clamp:3/)
   assert.match(source, /quick-reply-card:focus-visible/)
 })
+
+test('saved reply cards render an image thumbnail when one is configured', () => {
+  assert.match(source, /item\.image/)
+  assert.match(source, /img\.className = 'quick-reply-image'/)
+  assert.match(source, /img\.src = item\.image/)
+  assert.match(source, /img\.loading = 'lazy'/)
+})

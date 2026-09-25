@@ -12,6 +12,13 @@ const FB = { key: 'asher-messenger', channel: 'messenger', inbox_id: 'inbox-2', 
 const silent = { warn() {}, info() {}, error() {} }
 const res = (status, body) => ({ status, ok: status >= 200 && status < 300, json: async () => body })
 
+test('unknown provider never queries Facebook profile API', async () => {
+  _resetProfileCache()
+  const out = await fetchProfile({ channel: 'tiktok', externalId: 'customer', config: { inbox_id: 'inbox-3', access_token: 'token' },
+    deps: { log: silent, fetch: () => { throw Error('Facebook must not be called') } } })
+  assert.equal(out.status, 'error')
+})
+
 test('LINE 200 — ได้ชื่อและรูป', async () => {
   _resetProfileCache()
   const calls = []
@@ -109,6 +116,37 @@ test('Messenger error code 100 — นับเป็น not_found ไม่ใ�
     deps: { log: silent, fetch: async () => res(400, { error: { code: 100, message: 'does not exist' } }) },
   })
   assert.equal(out.status, 'not_found')
+})
+
+test('Messenger profile ไม่มีสิทธิ์ — ใช้ Page Conversations participants แทน', async () => {
+  _resetProfileCache()
+  const calls = []
+  const out = await fetchProfile({
+    channel: 'messenger', externalId: '2450', config: FB,
+    deps: { log: silent, fetch: async (u) => {
+      calls.push(u)
+      if (calls.length === 1) return res(400, { error: { code: 100, error_subcode: 33 } })
+      return res(200, { data: [{ participants: { data: [{ id: '2450', name: 'ลูกค้า จาก Conversations' }] } }] })
+    } },
+  })
+  assert.equal(out.status, 'ok')
+  assert.equal(out.display_name, 'ลูกค้า จาก Conversations')
+  assert.equal(out.picture_url, null)
+  assert.match(calls[1], /\/conversations\?/)
+  assert.match(calls[1], /user_id=2450/)
+  assert.match(calls[1], /fields=participants/)
+})
+
+test('Messenger participants ไม่มีชื่อ — คง not_found เพื่อให้หน้าจอใช้ fallback', async () => {
+  _resetProfileCache()
+  const out = await fetchProfile({
+    channel: 'messenger', externalId: '2451', config: FB,
+    deps: { log: silent, fetch: async (u) => u.includes('/conversations?')
+      ? res(200, { data: [{ participants: { data: [{ id: '2451' }] } }] })
+      : res(400, { error: { code: 100 } }) },
+  })
+  assert.equal(out.status, 'not_found')
+  assert.equal(out.display_name, null)
 })
 
 test('★ ยิงซ้ำคนเดิม — เรียก API นัดเดียว (cache)', async () => {
