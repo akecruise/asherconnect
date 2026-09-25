@@ -48,9 +48,9 @@ test('shared renderer keeps attachments and mobile layout hooks', async () => {
   assert.match(app, /message-row '\+side|message-row \+side/)
   assert.match(css, /@media \(max-width: 640px\)/)
   assert.match(css, /\.message-content \{ max-width: 88% \}/)
-  assert.match(css, /\.message-row\.inbound \.bubble \{ background: var\(--customer-bubble\)/)
-  assert.match(css, /\.message-row\.outbound \.bubble \{ background: var\(--asher-bubble\)/)
-  assert.match(css, /\.message-row\.outbound:has\(\.bot-badge\) \.bubble \{ background: var\(--bot-bubble\)/)
+  assert.match(css, /\.message-row\.inbound \.bubble \{ background: #F0F2F5/)
+  assert.match(css, /\.message-row\.outbound \.bubble \{ background: #0084FF/)
+  assert.match(css, /\.message-row\.outbound:has\(\.bot-badge\) \.bubble \{ background: #0084FF/)
 })
 
 test('send path uses the actual actor and leaves conversation ownership unchanged', async () => {
