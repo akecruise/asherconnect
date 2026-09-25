@@ -39,6 +39,7 @@ import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub
 import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
 import { createUserAdmin } from './services/user-admin/service.mjs'
 import { extractCustomerContact } from './lib/customer-contact-extraction.mjs'
+import { TIKTOK_OAUTH_CALLBACK_PATH, parseTikTokOAuthCallback } from './lib/tiktok-oauth.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -1297,6 +1298,28 @@ const json = (res, status, value) => {
   res.end(JSON.stringify(value))
 }
 
+function tiktokOAuthPage(res, status, title, message) {
+  const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+    'Referrer-Policy': 'no-referrer',
+  })
+  res.end(`<!doctype html><meta charset="utf-8"><title>${escape(title)}</title><style>body{font:16px system-ui,sans-serif;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#18212b}h1{font-size:1.4rem}</style><h1>${escape(title)}</h1><p>${escape(message)}</p>`)
+}
+
+async function handleTikTokOAuthCallback(req, res, url) {
+  if (req.method !== 'GET') throw fail(405, 'method_not_allowed')
+  const result = parseTikTokOAuthCallback(url)
+  if (result.status === 'denied') {
+    console.warn('[tiktok oauth] authorization denied', { error: result.error, state_present: result.state_present })
+    return tiktokOAuthPage(res, 400, 'TikTok authorization was not completed', 'The TikTok authorization request was cancelled or denied.')
+  }
+  if (result.status === 'missing_code') return tiktokOAuthPage(res, 400, 'Invalid TikTok callback', 'No authorization code was provided.')
+  console.info('[tiktok oauth] authorization callback received; integration remains disabled', { state_present: result.state_present, token_stored: false })
+  return tiktokOAuthPage(res, 200, 'TikTok authorization received', 'ASHER Connect has received the callback, but TikTok messaging is not enabled yet. No token was stored.')
+}
+
 async function readBody(req, limit = 262144) {
   const chunks = []
   let size = 0
@@ -1688,6 +1711,7 @@ async function route(req, res, url) {
     return json(res, state.ok ? 200 : 503, state)
   }
   if (url.pathname.startsWith('/webhooks/')) return handleWebhook(req, res, url)
+  if (url.pathname === TIKTOK_OAUTH_CALLBACK_PATH) return handleTikTokOAuthCallback(req, res, url)
 
   if (url.pathname.startsWith('/api/')) {
     const userRoute = /^\/api\/admin\/users(?:\/([0-9a-f-]{36})(?:\/(reset-password|revoke-sessions|disable|enable|audit))?)?$/i.exec(url.pathname)
