@@ -67,17 +67,34 @@ const getJson = async url => {
 }
 
 const identityRows = psql(`
-  select ci.external_id, coalesce(ct.display_name,'')
+  select jsonb_build_object(
+           'external_id',ci.external_id,
+           'display_name',coalesce(ct.display_name,''),
+           'created_ms',floor(extract(epoch from m.created_at)*1000)::bigint,
+           'content_type',m.content_type,
+           'content',coalesce(m.content,'')
+         )::text
     from core.contact_identity ci
     join core.contact ct on ct.id=ci.contact_id
     join inbox.conversation c on c.contact_id=ci.contact_id and c.inbox_id=${q(INBOX_ID)}::uuid
+    left join inbox.message m on m.conversation_id=c.id and m.sender_type='contact'
    where ci.channel='line' and ci.account_key=${q(INBOX_ID)}
-   group by ci.external_id,ct.display_name
-   order by ci.external_id`)
-const identities = new Map(identityRows ? identityRows.split('\n').map(row => {
-  const [externalId, displayName = ''] = row.split('\t')
-  return [externalId, displayName]
-}) : [])
+   order by ci.external_id,m.created_at desc`)
+const identityEvents = identityRows ? identityRows.split('\n').map(row => JSON.parse(row)) : []
+const identities = new Map()
+for (const row of identityEvents) {
+  if (!identities.has(row.external_id)) identities.set(row.external_id, { displayName: row.display_name, inbound: [] })
+  if (row.created_ms != null) identities.get(row.external_id).inbound.push(row)
+}
+
+const normalizedName = value => String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('th')
+const names = new Map()
+for (const [externalId, identity] of identities) {
+  const name = normalizedName(identity.displayName)
+  if (!name) continue
+  if (!names.has(name)) names.set(name, [])
+  names.get(name).push(externalId)
+}
 
 const ownersBody = await getJson(`https://chat.line.biz/api/v1/bots/${BOT_ID}/owners`)
 const owners = new Map((ownersBody.list || []).map(owner => [owner.bizId, owner.name || '']))
@@ -85,7 +102,8 @@ const owners = new Map((ownersBody.list || []).map(owner => [owner.bizId, owner.
 let next = null
 let chatPages = 0
 let oaChats = 0
-const matches = new Map()
+const directMatches = new Map()
+const nameCandidates = new Map()
 do {
   const query = new URLSearchParams({
     folderType: 'ALL', tagIds: '', autoTagIds: '', limit: '25', prioritizePinnedChat: 'true',
@@ -95,7 +113,16 @@ do {
   chatPages += 1
   oaChats += (body.list || []).length
   for (const chat of body.list || []) {
-    if (identities.has(chat.chatId)) matches.set(chat.chatId, chat)
+    if (identities.has(chat.chatId)) {
+      directMatches.set(chat.chatId, chat)
+      continue
+    }
+    const name = normalizedName(chat.profile?.name || chat.profile?.displayName)
+    const candidateIds = names.get(name) || []
+    if (candidateIds.length !== 1) continue
+    const externalId = candidateIds[0]
+    if (!nameCandidates.has(externalId)) nameCandidates.set(externalId, [])
+    nameCandidates.get(externalId).push(chat)
   }
   next = body.next || null
   if (next && chatPages >= MAX_CHAT_PAGES) throw new Error(`เกินเพดาน chat pagination ${MAX_CHAT_PAGES} หน้า`)
@@ -103,20 +130,56 @@ do {
 } while (next)
 
 const replies = []
-for (const [externalId] of matches) {
+const matches = new Map(directMatches)
+let matchedByFingerprint = 0
+let rejectedByFingerprint = 0
+const candidateEntries = [
+  ...[...directMatches].map(([externalId, chat]) => ({ externalId, chat, direct: true })),
+  ...[...nameCandidates].filter(([externalId, chats]) => chats.length === 1 && !directMatches.has(externalId))
+    .map(([externalId, chats]) => ({ externalId, chat: chats[0], direct: false })),
+]
+for (const { externalId, chat, direct } of candidateEntries) {
   let backward = null
   let messagePages = 0
+  const events = []
   do {
     const suffix = backward ? `?backward=${encodeURIComponent(backward)}` : ''
-    const body = await getJson(`https://chat.line.biz/api/v3/bots/${BOT_ID}/chats/${externalId}/messages${suffix}`)
+    const body = await getJson(`https://chat.line.biz/api/v3/bots/${BOT_ID}/chats/${chat.chatId}/messages${suffix}`)
     messagePages += 1
-    for (const event of body.list || []) {
+    events.push(...(body.list || []))
+    backward = body.backward || null
+    if (backward && messagePages >= MAX_MESSAGE_PAGES) {
+      throw new Error(`เกินเพดาน message pagination ${MAX_MESSAGE_PAGES} หน้า`)
+    }
+    if (backward) await sleep(DELAY_MS)
+  } while (backward)
+
+  if (!direct) {
+    const inbound = identities.get(externalId)?.inbound || []
+    const fingerprintMatched = events.some(event => {
+      if (event.type !== 'message' || !event.message?.type || !Number.isFinite(Number(event.timestamp))) return false
+      return inbound.some(saved => {
+        if (Math.abs(Number(event.timestamp) - Number(saved.created_ms)) > 1500) return false
+        if (event.message.type !== saved.content_type) return false
+        if (saved.content_type !== 'text') return true
+        return String(event.message.text || '').trim() === String(saved.content || '').trim()
+      })
+    })
+    if (!fingerprintMatched) {
+      rejectedByFingerprint += 1
+      continue
+    }
+    matches.set(externalId, chat)
+    matchedByFingerprint += 1
+  }
+
+  for (const event of events) {
       if (event.type !== 'messageSent' || !event.message?.id || !owners.has(event.bizId)) continue
       const contentType = event.message.type || 'other'
       const text = contentType === 'text' ? event.message.text : `[LINE OA ${contentType}]`
       replies.push({
         externalId,
-        displayName: identities.get(externalId),
+        displayName: identities.get(externalId)?.displayName || '',
         eventId: String(event.message.id),
         repliedAt: new Date(event.timestamp).toISOString(),
         staffExternalId: event.bizId,
@@ -124,13 +187,7 @@ for (const [externalId] of matches) {
         text,
         contentType,
       })
-    }
-    backward = body.backward || null
-    if (backward && messagePages >= MAX_MESSAGE_PAGES) {
-      throw new Error(`เกินเพดาน message pagination ${MAX_MESSAGE_PAGES} หน้า`)
-    }
-    if (backward) await sleep(DELAY_MS)
-  } while (backward)
+  }
 }
 
 replies.sort((a, b) => a.repliedAt.localeCompare(b.repliedAt) || a.eventId.localeCompare(b.eventId))
@@ -139,6 +196,9 @@ console.log(JSON.stringify({
   oa_chats_scanned: oaChats,
   crm_line_identities: identities.size,
   matched_chats: matches.size,
+  matched_by_id: directMatches.size,
+  matched_by_fingerprint: matchedByFingerprint,
+  rejected_by_fingerprint: rejectedByFingerprint,
   manual_replies_found: replies.length,
   unmatched_crm_identities: identities.size - matches.size,
 }, null, 2))
