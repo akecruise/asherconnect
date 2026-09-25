@@ -800,6 +800,8 @@ nav button.active {
 }
 .channel-badge.line { background: #06C755 }
 .channel-badge.fb   { background: #0866FF }
+.channel-badge.ig   { background: #E1306C }
+.channel-badge.unknown { background: #777777 }
 
 .chat-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px }
 
