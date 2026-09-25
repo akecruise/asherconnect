@@ -33,3 +33,10 @@ test('LINE OA backfill snapshots owner name and repairs mojibake system labels',
   assert.match(sql, /event_type = 'follow'/)
   assert.match(sql, /event_type = 'unfollow'/)
 })
+
+test('canonical lifecycle labels also repair the denormalized conversation preview', async () => {
+  const sql = await readFile(new URL('sql/202609252300_system_preview_label.sql', root), 'utf8')
+  assert.match(sql, /last_message_preview/)
+  assert.match(sql, /event_type in \('follow', 'unfollow'\)/)
+  assert.match(sql, /is distinct from/)
+})
