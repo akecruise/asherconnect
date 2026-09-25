@@ -87,7 +87,10 @@ for (const row of identityEvents) {
   if (row.created_ms != null) identities.get(row.external_id).inbound.push(row)
 }
 
-const normalizedName = value => String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('th')
+// OA Manager may add/remove spaces around emoji while Messaging API keeps the
+// original profile spelling.  Whitespace is not trusted as identity evidence;
+// the inbound timestamp/type/content fingerprint below remains mandatory.
+const normalizedName = value => String(value || '').normalize('NFKC').replace(/\s+/g, '').toLocaleLowerCase('th')
 const names = new Map()
 for (const [externalId, identity] of identities) {
   const name = normalizedName(identity.displayName)
