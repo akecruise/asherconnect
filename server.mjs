@@ -530,6 +530,7 @@ const TEAM_KINDS = ['notify']
 const SEND_KINDS = ['typing']
 
 let workerRunning = false, workerLastSuccess = null
+let replyWatchdogAt = 0
 // ภาพคิวล่าสุด อ่านนาทีละครั้งพอ — /health ต้องเบาและต้องไม่พังเพราะฐานช้า
 let jobQueue = null, jobQueueAt = 0
 
@@ -570,6 +571,14 @@ async function worker() {
   workerRunning = true
   try {
     await refreshSendMode()
+    // The database function is episode-aware and guarded by an advisory lock,
+    // so this remains safe if more than one Connect process is running.
+    if (Date.now() - replyWatchdogAt >= 60000) {
+      replyWatchdogAt = Date.now()
+      await rpcDirect(service, 'watchdog', { p_now: new Date().toISOString() })
+        .then(result => log.info('reply_watchdog', result))
+        .catch(error => log.warn('reply_watchdog_failed', { reason: error.message }))
+    }
     // วนจนคิวว่าง แต่ไม่เกินรอบละ 20 ชิ้น
     // ไม่จำกัดเลย = คิวยาว ๆ จะกินทั้งรอบแล้วงานอื่นไม่ได้เดิน
     let done = 0
@@ -759,6 +768,21 @@ async function runOutbound(job) {
   const inboxConfig = activeChannels.find(c => c.inbox_id === job.inbox_id) ?? {}
 
   if (job.kind === 'typing') return finishJob(job, await deliver(job, inboxConfig))
+
+  // A customer-reply alert can be claimed just before a human reply arrives.
+  // Re-read the durable episode state immediately before provider I/O so a
+  // cancelled alert is never sent merely because it already had a lease.
+  if (job.kind === 'notify' && job.payload?.alert_id) {
+    const current = await rpcDirect(service, 'reply_alert_current', {
+      p_alert_id: job.payload.alert_id,
+    })
+    if (!current) {
+      log.info('reply_alert_skipped_after_reply', {
+        job_id: job.id, alert_id: job.payload.alert_id,
+      })
+      return finishJob(job, { status: 'skipped', skip_reason: 'human_replied' })
+    }
+  }
 
   // งานที่รู้ปลายทางของตัวเองอยู่แล้ว (เช่นตอบกลับเข้ากลุ่ม LINE) ส่งตรงไปเลย
   // ตัวกระจายของทีมข้างล่างมีไว้สำหรับ channel 'team' ซึ่งแปลว่า "แจ้งใครก็ได้ที่เฝ้าอยู่"
@@ -1514,6 +1538,14 @@ async function handleCommand(req, res) {
   //   ไม่ได้ผ่านประตู connect_api เพราะเป็นการอ่านของชั้นนี้เอง ไม่ใช่คำสั่งที่ต้องลง audit
   if (input.action === 'queue_counts') {
     return json(res, 200, await rpcDirect(accessToken, 'queue_counts', { p_search: String(input.data.search ?? '') }))
+  }
+
+  // Read-only preview for the episode-aware customer-reply monitor.
+  // The RPC applies the same can_read boundary as the existing inbox list.
+  if (input.action === 'pending_reply_preview') {
+    const args = { p_limit: input.data.limit || 200 }
+    if (input.data.now) args.p_now = input.data.now
+    return json(res, 200, await rpcDirect(accessToken, 'pending_reply_preview', args))
   }
 
   // ★ หน้าสถิติ — ทางเดียวกันกับ queue_counts คือยิงด้วย token ของคนที่ล็อกอิน

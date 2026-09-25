@@ -262,3 +262,12 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 202609231000_user_access_admin.sql และหลังย้าย asher_crm มาฐานเดียวกัน
 # ★ additive: ทริกเกอร์ + ฟังก์ชันใหม่ ไม่แก้ตารางเดิม
 202609231600_crm_membership_sync.sql
+
+# ── Customer reply monitor: episode-aware watchdog + preview ──
+# ★ ต้องอยู่หลัง responder attribution เพื่อใช้เวลาตอบจริงของคนและ delivery state
+202609251000_customer_reply_monitor.sql
+
+# ── LINE OA Manager manual-reply reconciliation ──
+# ★ ต้องอยู่หลัง customer reply monitor เพราะเขียนทับ mark_human_reply,
+#   reply_alert_on_human_reply และ reply_message_delivered เพื่อกัน event สลับลำดับ
+202609252000_line_oa_reply_backfill.sql
