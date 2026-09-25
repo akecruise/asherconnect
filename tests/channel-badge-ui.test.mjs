@@ -13,3 +13,8 @@ test('channel badges keep LINE green, Messenger blue and Instagram red', () => {
   assert.match(css, /\.channel-badge\.fb\s*\{[^}]*#0866FF/i)
   assert.match(css, /\.channel-badge\.ig\s*\{[^}]*#E1306C/i)
 })
+
+test('chat bubbles use Facebook-style grey inbound and blue outbound colors', () => {
+  assert.match(css, /\.message-row\.inbound \.bubble\s*\{[^}]*#F0F2F5[^}]*#050505/i)
+  assert.match(css, /\.message-row\.outbound \.bubble\s*\{[^}]*#0084FF[^}]*#FFFFFF/i)
+})

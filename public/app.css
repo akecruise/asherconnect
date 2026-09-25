@@ -434,11 +434,12 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
 .conversation-item { border-left: 3px solid transparent }
 .conversation-item.overdue, .conversation-item.overdue.selected { border-left-color: var(--urgent) }
 .bubble.out { background: var(--bubble-out); border-color: var(--bubble-out) }
-.message-row.inbound .bubble { background: var(--customer-bubble); border-color: var(--customer-line) }
+.message-row.inbound .bubble { background: #F0F2F5; border-color: #E4E6EB; color: #050505 }
 .message-row.inbound .message-sender { color: var(--customer-label) }
-.message-row.outbound .bubble { background: var(--asher-bubble); border-color: var(--asher-line) }
+.message-row.outbound .bubble { background: #0084FF; border-color: #0084FF; color: #FFFFFF }
 .message-row.outbound .message-sender { color: var(--asher-label) }
-.message-row.outbound:has(.bot-badge) .bubble { background: var(--bot-bubble); border-color: var(--bot-line) }
+.message-row.outbound .bubble small { color: rgba(255,255,255,.82) }
+.message-row.outbound:has(.bot-badge) .bubble { background: #0084FF; border-color: #0084FF; color: #FFFFFF }
 .message-row.outbound:has(.bot-badge) .message-sender { color: var(--bot-label) }
 .message-row.system .bubble { background: var(--system-bubble); border-color: var(--system-line) }
 .pill { background: var(--good-soft); color: var(--good) }
