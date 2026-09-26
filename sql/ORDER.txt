@@ -262,3 +262,19 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 202609231000_user_access_admin.sql และหลังย้าย asher_crm มาฐานเดียวกัน
 # ★ additive: ทริกเกอร์ + ฟังก์ชันใหม่ ไม่แก้ตารางเดิม
 202609231600_crm_membership_sync.sql
+
+# Instagram Login messaging channel: receiver echo correlation and safe unsend handling
+20260923090119_instagram_inbox.sql
+202609240100_crm_profile_updated_all_channels.sql
+202609241000_responder_backfill_worker.sql
+
+# ── Customer reply monitor: episode-aware watchdog + preview ──
+202609251000_customer_reply_monitor.sql
+
+# ── เจ้าของเคสจากผู้ตอบคนแรก เชื่อม Connect ↔ CRM ด้วย user UUID เดียวกัน ──
+# ★ agent message ที่มี sender_id คนแรกกำหนด conversation.assignee_id
+# ★ bot, native-channel echo และคำตอบถัดไปไม่เปลี่ยนเจ้าของ
+202609251400_first_responder_case_owner.sql
+
+# ── LINE OA Manager reply reconciliation + out-of-order alert guard ──
+202609252000_line_oa_reply_backfill.sql

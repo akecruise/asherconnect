@@ -85,6 +85,12 @@
   --pill-green-fg: #166534;
   --pill-gray-bg: #F3F4F6;
   --pill-gray-fg: #4B5563;
+  --messenger-inbound: #F0F2F5;
+  --messenger-inbound-line: #E4E6EB;
+  --messenger-inbound-text: #050505;
+  --messenger-outbound: #0084FF;
+  --messenger-outbound-text: #FFFFFF;
+  --messenger-outbound-meta: rgba(255,255,255,.82);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -138,6 +144,12 @@
   --pill-green-fg: #6FCF8E;
   --pill-gray-bg: #2A2B2E;
   --pill-gray-fg: #A6A7AD;
+  --messenger-inbound: #3A3B40;
+  --messenger-inbound-line: #4B4D52;
+  --messenger-inbound-text: #F0F0F2;
+  --messenger-outbound: #1877F2;
+  --messenger-outbound-text: #FFFFFF;
+  --messenger-outbound-meta: rgba(255,255,255,.82);
   }
 }
 
@@ -433,7 +445,7 @@ input:focus, textarea:focus, select:focus, button:focus-visible { outline-color:
 nav button.active, .conversation-item.selected { background: var(--accent-soft); border-color: transparent; border-left: 3px solid var(--accent); color: var(--accent) }
 .conversation-item { border-left: 3px solid transparent }
 .conversation-item.overdue, .conversation-item.overdue.selected { border-left-color: var(--urgent) }
-.bubble.out { background: var(--bubble-out); border-color: var(--bubble-out) }
+.bubble.out { background: var(--messenger-outbound); border-color: var(--messenger-outbound) }
 .message-row.inbound .bubble { background: var(--customer-bubble); border-color: var(--customer-line) }
 .message-row.inbound .message-sender { color: var(--customer-label) }
 .message-row.outbound .bubble { background: var(--asher-bubble); border-color: var(--asher-line) }
@@ -441,6 +453,15 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
 .message-row.outbound:has(.bot-badge) .bubble { background: var(--bot-bubble); border-color: var(--bot-line) }
 .message-row.outbound:has(.bot-badge) .message-sender { color: var(--bot-label) }
 .message-row.system .bubble { background: var(--system-bubble); border-color: var(--system-line) }
+/* Messenger uses the familiar Facebook blue/grey contrast. LINE keeps the
+   ASHER green palette above; this is scoped to the selected channel only. */
+body[data-chat-channel="messenger"] .message-row.inbound .bubble { background: #F0F2F5; border-color: #E4E6EB; color: #050505 }
+body[data-chat-channel="messenger"] .message-row.inbound .message-sender { color: #65676B }
+body[data-chat-channel="messenger"] .message-row.outbound .bubble { background: #0084FF; border-color: #0084FF; color: #FFFFFF }
+body[data-chat-channel="messenger"] .message-row.outbound .message-sender { color: #1877F2 }
+body[data-chat-channel="messenger"] .message-row.outbound .bubble small { color: rgba(255,255,255,.82) }
+body[data-chat-channel="messenger"] .message-row.outbound:has(.bot-badge) .bubble { background: #E4E6EB; border-color: #E4E6EB; color: #050505 }
+body[data-chat-channel="messenger"] .message-row.outbound:has(.bot-badge) .bubble small { color: #65676B }
 .pill { background: var(--good-soft); color: var(--good) }
 .pill.yellow { background: var(--warn-soft); color: var(--warn) }
 .pill.red, .pill.critical, .sla-count { background: var(--urgent-tint); color: var(--urgent) }
@@ -449,6 +470,17 @@ nav button.active, .conversation-item.selected { background: var(--accent-soft);
 .case-alerts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px }
 .delivery-error { color: var(--urgent); font-weight: 600 }
 .notice:not(.error) { background: var(--rule-soft); color: var(--ink) }
+
+/* Facebook Messenger style: ลูกค้าเทาอ่อน / Asher น้ำเงิน */
+.message-row.inbound .bubble { background: var(--messenger-inbound); border-color: var(--messenger-inbound-line); color: var(--messenger-inbound-text) }
+.message-row.inbound .message-sender { color: var(--muted) }
+.message-row.inbound .bubble small { color: var(--muted) }
+.message-row.outbound .bubble { background: var(--messenger-outbound); border-color: var(--messenger-outbound); color: var(--messenger-outbound-text) }
+.message-row.outbound .message-sender { color: var(--messenger-outbound) }
+.message-row.outbound .bubble small { color: var(--messenger-outbound-meta) }
+.message-row.outbound:has(.bot-badge) .bubble { background: var(--messenger-outbound); border-color: var(--messenger-outbound); color: var(--messenger-outbound-text) }
+.message-row.outbound:has(.bot-badge) .message-sender { color: var(--messenger-outbound) }
+.message-row.system .bubble { background: var(--system-bubble); border-color: var(--system-line); color: var(--muted) }
 .sla-count { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; border-radius: 999px; margin-left: 5px; padding: 1px 5px; font-size: 10px; font-weight: 600 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -511,7 +543,7 @@ nav button.active {
 
 /* ─────────── พื้นผิวที่เหลือ เอาพาสเทลออก ─────────── */
 .bubble { box-shadow: none }
-.bubble.out { background: var(--bubble-out); border-color: var(--bubble-out) }
+.bubble.out { background: var(--messenger-outbound); border-color: var(--messenger-outbound) }
 .canned button { background: var(--paper); border-color: var(--rule) }
 .appointment { background: var(--paper); border: 1px solid var(--rule) }
 .notice:not(.error) { background: var(--rule-soft); color: var(--ink) }
@@ -800,6 +832,8 @@ nav button.active {
 }
 .channel-badge.line { background: #06C755 }
 .channel-badge.fb   { background: #0866FF }
+.channel-badge.tiktok { background: #111111 }
+.channel-badge.unknown { background: #777777 }
 
 .chat-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px }
 

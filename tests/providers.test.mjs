@@ -9,6 +9,38 @@ test('LINE signatures use unmodified bytes and base64; Messenger uses prefixed h
  assert.equal(verifySignature(Buffer.concat([body,Buffer.from(' ')]),createHmac('sha256',secret).update(body).digest('base64'),secret,'line'),false)
  assert.equal(verifySignature(body,'',secret,'line'),false)
 })
+test('Instagram uses Meta HMAC signature and validates its destination',()=>{
+ const body=Buffer.from(JSON.stringify({object:'instagram',entry:[{id:'ig-account'}]})),secret='instagram-app-secret'
+ const sig='sha256='+createHmac('sha256',secret).update(body).digest('hex')
+ assert.equal(verifySignature(body,sig,secret,'instagram'),true)
+ assert.equal(verifySignature(body,'sha256=wrong',secret,'instagram'),false)
+ assert.equal(matchesDestination('instagram',JSON.parse(body),{account_id:'ig-account'}),true)
+ assert.equal(matchesDestination('instagram',JSON.parse(body),{account_id:'other'}),false)
+})
+test('Instagram inbound message normalizes customer identity and suppresses echoes',()=>{
+ const config={account_id:'ig-account',inbox_id:'inbox-ig'}
+ const body={object:'instagram',entry:[{id:'ig-account',messaging:[
+   {sender:{id:'ig-customer'},recipient:{id:'ig-account'},timestamp:1757836800000,message:{mid:'ig-mid-1',text:'สนใจห้อง'}},
+   {sender:{id:'ig-account'},recipient:{id:'ig-customer'},timestamp:1757836801000,message:{mid:'ig-mid-2',text:'ตอบแล้ว',is_echo:true}}
+ ]}]}
+ const all=normalizeEvents('instagram',body,config)
+ assert.equal(all.length,2)
+ assert.equal(all[0].event_type,'message')
+ assert.equal(all[0].source_type,'user')
+ assert.equal(all[0].external_id,'ig-customer')
+ assert.equal(all[0].inbox_id,'inbox-ig')
+ assert.equal(all[1].event_type,'echo')
+ assert.equal(all[1].external_id,'ig-customer')
+ assert.deepEqual(normalizeWebhook('instagram',body,config).map(x=>x.event_type),['message','echo'])
+})
+test('Instagram sends text through graph.instagram.com using Instagram user token',async()=>{
+ const c=capture()
+ const r=await deliver({kind:'send',channel:'instagram',target:'ig-customer',last_inbound_at:new Date().toISOString(),payload:{type:'text',text:'สวัสดี'}},
+   {account_id:'ig-account',api_version:'v23.0',access_token:'ig-user-token'},c.fetcher)
+ assert.equal(r.status,'sent')
+ assert.equal(c.seen.url,'https://graph.instagram.com/v23.0/ig-account/messages')
+ assert.deepEqual(c.seen.body,{recipient:{id:'ig-customer'},message:{text:'สวัสดี'}})
+})
 test('provider echo is not an inbound customer response',()=>{
  const data={object:'page',entry:[{id:'page',messaging:[{sender:{id:'u'},timestamp:1000,message:{mid:'m',is_echo:true,text:'bot'}}]}]}
  assert.deepEqual(normalizeWebhook('messenger',data,{account_id:'page'}),[])
@@ -363,6 +395,20 @@ test('ช่องทางที่ยังไม่รองรับ ต้�
  const r=await deliver({kind:'send',channel:'sms',target:'0812345678'},{},async()=>{throw new Error('ต้องไม่ถูกเรียก')})
  assert.equal(r.status,'failed')
  assert.equal(r.error,'channel_not_supported')
+})
+
+test('TikTok ไม่ตกเข้า Messenger adapter',async()=>{
+ const raw=Buffer.from('{}'), secret='local-test'
+ const metaSignature='sha256='+createHmac('sha256',secret).update(raw).digest('hex')
+ assert.equal(verifySignature(raw,metaSignature,secret,'tiktok'),false)
+ assert.equal(matchesDestination('tiktok',{object:'page',entry:[{id:'acct'}]},{account_id:'acct'}),false)
+ assert.throws(()=>normalizeEvents('tiktok',{object:'page',entry:[]},{account_id:'acct',app_id:'app'}),/wrong_destination/)
+ assert.throws(()=>renderPayload('tiktok',{type:'text',text:'hello'},''),/channel_not_supported/)
+ for(const kind of ['send','typing']){
+  const result=await deliver({kind,channel:'tiktok',target:'customer'},{access_token:'token'},()=>{throw Error('network must not be called')})
+  assert.equal(result.status,'failed')
+  assert.match(result.error,/tiktok_not_configured|channel_not_supported/)
+ }
 })
 
 test('ผลลัพธ์จากปลายทางแปลเป็นสถานะของคิวถูกต้องทุกช่องทาง',async()=>{

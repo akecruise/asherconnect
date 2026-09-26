@@ -7,12 +7,16 @@ test('customer inbound is left and uses channel/customer identity', () => {
   assert.equal(messageSide('contact'), 'inbound')
   assert.equal(messageSenderLabel({ sender_type: 'contact' }, { display_name: 'ศิริพร' }, 'line'), 'ศิริพร')
   assert.equal(messageSenderLabel({ sender_type: 'contact' }, {}, 'messenger'), 'ลูกค้า Messenger')
+  assert.equal(messageSenderLabel({ sender_type: 'contact' }, { external_id: 'PSID-1234' }, 'messenger'), 'ลูกค้า Messenger ···1234')
+  assert.equal(messageSenderLabel({ sender_type: 'contact' }, { display_name: 'ลูกค้าใหม่', external_id: 'PSID-5678' }, 'messenger'), 'ลูกค้า Messenger ···5678')
 })
 
 test('human outbound is right and uses immutable sender snapshot, never assignee', () => {
   assert.equal(messageSide('agent'), 'outbound')
   assert.equal(messageSenderLabel({ sender_type: 'agent', responder_display_name: 'Golf Phitcha', sender_name: 'Nan' }), 'Golf Phitcha')
   assert.equal(messageSenderLabel({ sender_type: 'agent' }), 'ไม่ระบุผู้ตอบ')
+  assert.equal(messageSenderLabel({ sender_type: 'agent' }, {}, 'tiktok'), 'ตอบผ่าน TikTok — ไม่ทราบผู้ตอบ')
+  assert.equal(messageSenderLabel({ sender_type: 'agent', responder_display_name: 'Nan' }, {}, 'tiktok'), 'Nan')
 })
 
 test('bot outbound is explicitly Asher Bot with bot delivery status', () => {
@@ -48,9 +52,9 @@ test('shared renderer keeps attachments and mobile layout hooks', async () => {
   assert.match(app, /message-row '\+side|message-row \+side/)
   assert.match(css, /@media \(max-width: 640px\)/)
   assert.match(css, /\.message-content \{ max-width: 88% \}/)
-  assert.match(css, /\.message-row\.inbound \.bubble \{ background: var\(--customer-bubble\)/)
-  assert.match(css, /\.message-row\.outbound \.bubble \{ background: var\(--asher-bubble\)/)
-  assert.match(css, /\.message-row\.outbound:has\(\.bot-badge\) \.bubble \{ background: var\(--bot-bubble\)/)
+  assert.match(css, /\.message-row\.inbound \.bubble \{ background: var\(--messenger-inbound\)/)
+  assert.match(css, /\.message-row\.outbound \.bubble \{ background: var\(--messenger-outbound\)/)
+  assert.match(css, /\.message-row\.outbound:has\(\.bot-badge\) \.bubble \{ background: var\(--messenger-outbound\)/)
 })
 
 test('send path uses the actual actor and leaves conversation ownership unchanged', async () => {

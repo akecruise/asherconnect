@@ -18,7 +18,7 @@ export function thDate(date) {
   return d.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: '2-digit' })
 }
 
-const CHANNEL_LABEL = { line: 'LINE', messenger: 'Messenger', line_group: 'กลุ่ม LINE' }
+const CHANNEL_LABEL = { line: 'LINE', messenger: 'Messenger', tiktok: 'TikTok', line_group: 'กลุ่ม LINE' }
 const label = ch => CHANNEL_LABEL[ch] ?? ch
 
 export function buildDailyDigest(report = {}) {

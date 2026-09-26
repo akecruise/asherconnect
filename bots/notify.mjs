@@ -101,8 +101,11 @@ export function notifyTargets(payload = {}, env = process.env) {
                config: { telegram_bot_token: env.TELEGRAM_BOT_TOKEN } })
   }
   if (isLead && env.RESEND_API_KEY && env.LEAD_EMAIL_TO) {
-    out.push({ channel: 'email', target: env.LEAD_EMAIL_TO,
-               config: { resend_api_key: env.RESEND_API_KEY, email_from: env.LEAD_EMAIL_FROM } })
+    const recipients = String(env.LEAD_EMAIL_TO).split(',').map(email => email.trim()).filter(Boolean)
+    for (const target of recipients) {
+      out.push({ channel: 'email', target,
+                 config: { resend_api_key: env.RESEND_API_KEY, email_from: env.LEAD_EMAIL_FROM } })
+    }
   }
   return out
 }

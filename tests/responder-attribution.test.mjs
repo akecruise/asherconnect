@@ -22,3 +22,13 @@ test('Inbox UI renders responder snapshot and explicit historical fallback', asy
   assert.match(presentation, /responder_display_name/)
   assert.match(app, /stamp=m\.sent_at\|\|m\.created_at/)
 })
+
+test('responder backfill worker is bounded, idempotent, and scheduled', async () => {
+  const sql = await readFile(new URL('sql/202609241000_responder_backfill_worker.sql', root), 'utf8')
+  assert.match(sql, /CREATE OR REPLACE FUNCTION inbox\.backfill_responder_attribution/) 
+  assert.match(sql, /m\.responder_user_id IS NULL/)
+  assert.match(sql, /LIMIT p_batch_size/)
+  assert.match(sql, /pg_try_advisory_xact_lock/)
+  assert.match(sql, /responder-attribution-backfill/)
+  assert.match(sql, /\*\/|--/) // migration remains reviewable as SQL, not generated code
+})

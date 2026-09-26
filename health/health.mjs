@@ -114,7 +114,7 @@ export function createHealth(opts = {}) {
   //   = ขึ้นแดงหลอก (เหตุผลเดียวกับ checkToken ใน server.mjs)
   async function probeTokens() {
     const channels = await cfg.getChannels().catch(() => []);
-    return Promise.all(channels.filter((c) => c.accessToken).map((c) =>
+    return Promise.all(channels.filter((c) => c.accessToken && ['line', 'messenger'].includes(c.type)).map((c) =>
       timed(`Token ${c.key}`, async () => {
         const res = c.type === 'line'
           ? await fetch('https://api.line.me/v2/bot/info', {
