@@ -27,6 +27,7 @@ import { fetchProfile } from './lib/profile.mjs'
 import { mediaTasks, storagePath, enrichMessageMedia, MEDIA_MAX_BYTES } from './lib/media.mjs'
 import { validateOutboundImages, OUTBOUND_IMAGE_MAX_BYTES } from './lib/outbound-media.mjs'
 import { createMediaHandler } from './lib/media-http.mjs'
+import { createQuickReplyMediaHandler } from './lib/quick-reply-media.mjs'
 import { createMediaLibrary, planSendItems } from './lib/media-library.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
@@ -1750,6 +1751,14 @@ const handleMedia = createMediaHandler({
   }),
 })
 
+const handleQuickReplyMedia = createQuickReplyMediaHandler({
+  sessions, rpcDirect, origin, fail,
+  fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+    headers: { apikey: anon, Authorization: `Bearer ${service}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  }),
+})
+
 const mediaLibrary = createMediaLibrary({
   rpcDirect, fail, origin,
   uploadObject: uploadMediaObject, copyObject: copyMediaObject,
@@ -1854,6 +1863,7 @@ async function route(req, res, url) {
   }
 
   if (url.pathname.startsWith('/media/')) return handleMedia(req, res, url)
+  if (url.pathname.startsWith('/quick-reply-media/')) return handleQuickReplyMedia(req, res, url)
   if (url.pathname.startsWith('/library-media/')) return mediaLibrary.handleFile(req, res, url, await sessions.access(req))
 
   return handleStatic(req, res, url)
