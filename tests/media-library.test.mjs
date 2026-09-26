@@ -136,3 +136,10 @@ test('handleFile: path นอกแบบหรือฐานไม่อนุ
   await assert.rejects(lib.handleFile(req, {}, new URL(`https://x/library-media/${LIBRARY_FOLDER}/${A}.jpg`), 't'), e => e.status === 404)
   assert.equal(fetched, 0)
 })
+
+test('units: ส่งต่อไป unit_availability ด้วย token ผู้ใช้ และตัดความยาวโครงการ', async () => {
+  const { lib, calls } = harness({ unit_availability: [] })
+  await lib.command('user-token', 'media_library_units', { project: 'naii' })
+  await lib.command('user-token', 'media_library_units', {})
+  assert.deepEqual(calls.rpc.map(c => [c.token, c.fn, c.body.p_project]), [['user-token', 'unit_availability', 'naii'], ['user-token', 'unit_availability', null]])
+})

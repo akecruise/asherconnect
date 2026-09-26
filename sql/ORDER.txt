@@ -283,3 +283,7 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 037 (media pipeline) + 038 (quick replies) + asher-web 20260916154809_quick_reply
 #   ALTER inbox.media_asset แบบเพิ่มเท่านั้น ไม่แตะ connect_private.api
 202609261000_media_library.sql
+
+# ── ห้องว่าง/ราคาสดจาก Asher CRM ──
+# ★ ต้องอยู่หลัง 202609261000_media_library (ใช้ inbox.media_library_role)
+202609261100_unit_availability.sql

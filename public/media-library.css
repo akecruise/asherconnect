@@ -62,3 +62,11 @@ button.image-library-tile:hover,button.image-library-tile:focus-visible{border-c
   .media-library-page{padding:12px}
   .media-library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* แท็บห้องว่าง */
+.unit-list{display:grid;gap:4px;margin:8px 0}
+.unit-project{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:8px 0 4px;border-bottom:1px solid var(--rule)}
+.unit-summary{font-size:12px;color:var(--muted)}
+.unit-row{display:flex;align-items:center;gap:8px;padding:6px 4px;border-radius:8px;font-size:13px;cursor:pointer}
+.unit-row:hover{background:var(--rule-soft,#f2f2f4)}
+.unit-row input{width:auto;min-height:0}

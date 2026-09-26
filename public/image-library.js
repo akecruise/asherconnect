@@ -171,5 +171,55 @@
     container.append(body); showGrid(); load()
   }
 
-  window.asherImageLibrary = { render, uploadForm, card, filters, api, categoryName, projectName, thumbOf, CATEGORIES, PROJECTS, EDITORS, el }
+
+  // แท็บ "ห้องว่าง" — อ่านสดจาก Asher CRM ไม่มีตัวเลขปลอม: ราคา 0/ว่าง = "สอบถามราคา"
+  const baht = n => Number(n).toLocaleString('th-TH', { maximumFractionDigits: 0 }) + ' บาท'
+  const unitLine = u => [`${u.floor || ''} ห้อง ${u.unit_number}`.trim(), u.bedrooms ? `${u.bedrooms} ห้องนอน` : u.type, u.area_sqm ? `${u.area_sqm} ตร.ม.` : null, u.view ? `วิว${u.view}` : null, u.price ? baht(u.price) : 'สอบถามราคา'].filter(Boolean).join(' · ')
+  function renderUnits (container, { close, openTab }) {
+    const ctx = typeof window.asherComposerContext === 'function' ? window.asherComposerContext() : {}
+    const state = { project: ctx.project || '' }
+    const picked = new Set()
+    const body = el('div', { class: 'image-library-body unit-panel' })
+    const project = el('select', { 'aria-label': 'โครงการ' }, el('option', { value: '', text: 'ทุกโครงการ' }), el('option', { value: 'naii', text: 'Asher Naii' }), el('option', { value: 'vibe', text: 'Asher Vibe' }), el('option', { value: 'nine', text: 'Asher Nine' }))
+    project.value = state.project
+    const list = el('div', { class: 'unit-list' })
+    const insert = el('button', { type: 'button', class: 'primary', text: 'แทรกในข้อความ', disabled: true })
+    const photos = el('button', { type: 'button', class: 'subtle', text: 'ดูรูปห้อง' })
+    const count = el('small', { class: 'muted' })
+    let data = []
+    const refresh = () => { insert.disabled = !picked.size; count.textContent = picked.size ? `เลือก ${picked.size} ห้อง` : 'เลือกห้องเพื่อแทรกรายการลงข้อความ' }
+    const paint = () => {
+      list.replaceChildren()
+      if (!data.length) { list.append(el('div', { class: 'template-empty', text: 'ไม่พบโครงการ' })); return }
+      data.forEach(p => {
+        list.append(el('div', { class: 'unit-project' }, el('strong', { text: p.name }), el('span', { class: 'unit-summary', text: p.total ? `ว่าง ${p.available} / ${p.total} ยูนิต` : 'ยังไม่มีข้อมูลยูนิตใน Asher CRM' })))
+        if (p.total && !p.units.some(u => u.price)) list.append(el('p', { class: 'image-library-hint', text: 'ยังไม่มีราคาใน CRM — แสดงเป็น "สอบถามราคา"' }))
+        p.units.forEach(u => {
+          const key = p.code + ':' + u.unit_number
+          const box = el('input', { type: 'checkbox' }); box.checked = picked.has(key)
+          box.addEventListener('change', () => { box.checked ? picked.add(key) : picked.delete(key); refresh() })
+          list.append(el('label', { class: 'unit-row' }, box, el('span', { text: unitLine(u) })))
+        })
+      })
+      refresh()
+    }
+    const load = async () => {
+      list.replaceChildren(el('div', { class: 'template-empty', text: 'กำลังโหลดจาก Asher CRM…' }))
+      try { data = await api('media_library_units', { project: state.project }) } catch (e) { list.replaceChildren(el('div', { class: 'template-empty error', text: e.message })); return }
+      picked.clear(); paint()
+    }
+    project.addEventListener('change', () => { state.project = project.value; load() })
+    insert.addEventListener('click', () => {
+      const message = document.getElementById('message'); if (!message) return
+      const today = new Date().toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short' })
+      const blocks = data.map(p => { const rows = p.units.filter(u => picked.has(p.code + ':' + u.unit_number)); return rows.length ? `ห้องว่าง ${p.name} (ข้อมูล ณ ${today})\n` + rows.map(u => '• ' + unitLine(u)).join('\n') : '' }).filter(Boolean)
+      message.value = (message.value.trim() ? message.value.trimEnd() + '\n\n' : '') + blocks.join('\n\n')
+      message.dispatchEvent(new Event('input', { bubbles: true })); message.focus(); close()
+    })
+    photos.addEventListener('click', () => openTab && openTab('library'))
+    body.append(el('div', { class: 'quick-replies-tools' }, project), list, el('div', { class: 'image-library-footer' }, count, el('span', { class: 'image-library-footer-actions' }, photos, insert)))
+    container.append(body); load()
+  }
+
+  window.asherImageLibrary = { render, renderUnits, uploadForm, card, filters, api, categoryName, projectName, thumbOf, CATEGORIES, PROJECTS, EDITORS, el }
 })()
