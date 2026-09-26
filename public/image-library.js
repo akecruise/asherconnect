@@ -2,7 +2,7 @@
    กับหน้าเมนู /media-library · ด่านสิทธิ์จริงอยู่ที่ inbox.media_* ในฐาน
    ที่นี่ซ่อนปุ่มตามบทบาทเพื่อความสะอาดตาเท่านั้น */
 (function () {
-  const CATEGORIES = [['', 'ทั้งหมด'], ['room', 'ห้อง'], ['plan', 'แปลน'], ['facility', 'ส่วนกลาง'], ['location', 'ทำเล'], ['promo', 'โปรโมชั่น'], ['other', 'อื่น ๆ']]
+  const CATEGORIES = [['', 'ทั้งหมด'], ['room', 'ห้อง'], ['plan', 'แปลน'], ['facility', 'ส่วนกลาง (facility)'], ['exterior', 'ภายนอกอาคาร (exterior)'], ['location', 'ทำเล'], ['promo', 'โปรโมชั่น'], ['other', 'อื่น ๆ']]
   const PROJECTS = [['', 'ทุกโครงการ'], ['naii', 'Asher Naii'], ['vibe', 'Asher Vibe']]
   const EDITORS = ['marketing', 'manager', 'admin']
   const FULL_EDGE = 2048, PREVIEW_EDGE = 480

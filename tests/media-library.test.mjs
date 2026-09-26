@@ -45,6 +45,7 @@ test('meta: ชื่อบังคับ, โครงการ/หมวด�
   assert.throws(() => libraryMeta({ title: ' ' }), /ตั้งชื่อ/)
   assert.throws(() => libraryMeta({ title: 'x', project: 'other' }), /โครงการ/)
   assert.throws(() => libraryMeta({ title: 'x', category: 'floorplan' }), /หมวด/)
+  assert.equal(libraryMeta({ title: 'x', category: 'exterior' }).category, 'exterior')
   const m = libraryMeta({ title: ' แปลน ', project: 'Naii', category: 'plan', expires_at: '2026-12-31', bot_enabled: 'yes' })
   assert.deepEqual(m, { title: 'แปลน', project: 'naii', category: 'plan', expires_at: '2026-12-31T00:00:00.000Z', bot_enabled: false })
 })

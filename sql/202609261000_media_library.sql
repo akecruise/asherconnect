@@ -13,6 +13,7 @@
 --
 -- ที่มาของทางเลือก (docs/quick-reply/PLAN.md D1/D4):
 --   - หมวดรูปเป็นชุดปิดของคลังเอง ไม่ใช้ category ของ quick_reply (คนละความหมาย)
+--     room ห้อง · plan แปลน · facility ส่วนกลาง · exterior ภายนอกอาคาร · location ทำเล · promo · other
 --   - sales อัปโหลดได้ แต่รูปเข้าสถานะ pending จน marketing/manager/admin อนุมัติ
 --   - use_count/last_used_at เก็บที่แถวรูป (อ่านเร็ว) ส่วนรายการส่งจริงอยู่ที่ media_asset_send
 --     ซึ่งใช้ทำป้าย "ส่งแล้ว" ต่อบทสนทนา
@@ -52,7 +53,7 @@ alter table inbox.media_asset alter column category set not null;
 
 alter table inbox.media_asset drop constraint if exists media_asset_category_check;
 alter table inbox.media_asset add constraint media_asset_category_check
-  check (category in ('room','plan','facility','location','promo','other'));
+  check (category in ('room','plan','facility','exterior','location','promo','other'));
 alter table inbox.media_asset drop constraint if exists media_asset_status_check;
 alter table inbox.media_asset add constraint media_asset_status_check
   check (status in ('pending','approved'));
