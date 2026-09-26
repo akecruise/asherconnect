@@ -10,8 +10,11 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { chunkText } from './reports/reply-digest.mjs'
+import { verifyTikTokSignature, matchesTikTokDestination, normalizeTikTokWebhook, sendTikTokText } from './lib/tiktok.mjs'
 
 export function verifySignature(raw, supplied, secret, channel) {
+  if (channel === 'tiktok') return verifyTikTokSignature(raw, supplied, secret)
+  if (!['line', 'messenger', 'instagram'].includes(channel)) return false
   if (!supplied || !secret) return false
   const expected = createHmac('sha256', secret).update(raw).digest(channel === 'line' ? 'base64' : 'hex')
   const value = channel === 'line' ? supplied : supplied.replace(/^sha256=/, '')
@@ -28,6 +31,12 @@ export function verifySignature(raw, supplied, secret, channel) {
  */
 export function matchesDestination(channel, body, config) {
   if (channel === 'line') return body?.destination === config.account_id
+  if (channel === 'tiktok') return matchesTikTokDestination(body, config)
+  if (channel === 'instagram') {
+    if (body?.object !== 'instagram') return false
+    return (body.entry || []).some(entry => entry.id === config.account_id)
+  }
+  if (channel !== 'messenger') return false
   if (body?.object !== 'page') return false
   return (body.entry || []).some(entry => entry.id === config.account_id)
 }
@@ -60,7 +69,7 @@ export function matchesDestination(channel, body, config) {
  *
  * ที่ยังไม่รับคือ join (บอทถูกเชิญเข้ากลุ่ม) — ยังไม่มีอะไรต้องทำนอกจาก log
  */
-const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral', 'group_command'])
+const RECEIVE_TYPES = new Set(['message', 'echo', 'postback', 'follow', 'unfollow', 'referral', 'group_command', 'message_deleted'])
 
 const iso = ms => new Date(ms ?? Date.now()).toISOString()
 
@@ -81,7 +90,70 @@ const iso = ms => new Date(ms ?? Date.now()).toISOString()
  *   join           บอทถูกเชิญเข้ากลุ่ม (LINE)
  */
 export function normalizeEvents(channel, body, config) {
-  return channel === 'line' ? lineEvents(body, config) : messengerEvents(body, config)
+  if (channel === 'line') return lineEvents(body, config)
+  if (channel === 'messenger') return messengerEvents(body, config)
+  if (channel === 'instagram') return instagramEvents(body, config)
+  if (channel === 'tiktok') return normalizeTikTokWebhook(body, config)
+  throw new Error('channel_not_supported')
+}
+
+function instagramEvents(body, config) {
+  if (body.object !== 'instagram') throw new Error('wrong_object')
+  const out = []
+  for (const entry of body.entry || []) {
+    if (entry.id !== config.account_id) continue
+    for (const e of entry.messaging || []) {
+      const sender = e.sender?.id
+      const recipient = e.recipient?.id
+      const message = e.message
+      if (!sender || !recipient) continue
+      if (e.read || e.delivery || e.reaction) continue
+      const echo = message?.is_echo === true
+      const owner = echo ? sender : recipient
+      const customer = echo ? recipient : sender
+      if (String(owner) !== String(config.account_id) || !customer || String(customer) === String(config.account_id)) continue
+      const base = {
+        inbox_id: config.inbox_id,
+        account_id: entry.id,
+        page_id: String(config.account_id),
+        platform: 'instagram',
+        customer_psid: String(customer),
+        occurred_at: iso(e.timestamp),
+        reply_token: null,
+        is_redelivery: false,
+      }
+      if (message?.is_self) continue
+      if (message?.mid) {
+        if (message.is_deleted) {
+          out.push({ ...base, event_type: 'message_deleted', external_id: customer,
+            event_id: `deleted:${message.mid}`, provider_message_id: message.mid })
+          continue
+        }
+        out.push({ ...base, event_type: echo ? 'echo' : 'message', external_id: customer,
+          event_id: message.mid, app_id: message.app_id == null ? null : String(message.app_id),
+          source_type: echo ? 'account' : 'user', content_type: message.text ? 'text' : 'attachment',
+          text: message.text || `[แนบ: ${message.attachments?.[0]?.type ?? 'unknown'}]`,
+          attribution: { attachments: message.attachments || [], is_self: message.is_self === true } })
+        continue
+      }
+      const withUser = { ...base, event_type: 'message', external_id: customer,
+        customer_psid: customer, source_type: 'user', event_id: null }
+      const referral = e.referral || message?.referral || null
+      if (message) {
+        out.push({ ...withUser, content_type: message.text ? 'text' : 'attachment',
+          text: message.text || '[ลูกค้าส่งสื่อแนบ]',
+          attribution: { attachments: message.attachments || [], referral } })
+      } else if (e.postback) {
+        out.push({ ...withUser, event_type: 'postback', event_id: e.postback.mid || `pb:${entry.id}:${sender}:${e.timestamp}`,
+          content_type: 'postback', text: `[กดปุ่ม] ${e.postback.title || e.postback.payload || ''}`.trim(),
+          attribution: { postback: e.postback, referral } })
+      } else if (referral) {
+        out.push({ ...withUser, event_type: 'referral', event_id: `ref:${entry.id}:${sender}:${e.timestamp}`,
+          content_type: 'referral', text: `[คลิก referral]`, attribution: { referral } })
+      }
+    }
+  }
+  return out
 }
 
 function lineEvents(body, config) {
@@ -254,6 +326,9 @@ export function normalizeWebhook(channel, body, config) {
  * ของที่ไม่รู้จักตกลงมาเป็นข้อความล้วนเสมอ ดีกว่าส่งไม่ออกแล้วลูกค้าไม่ได้ยินอะไรเลย
  */
 export function renderPayload(channel, payload, fallbackText) {
+  if (!['line', 'line_group', 'messenger', 'instagram'].includes(channel)) {
+    throw new Error('channel_not_supported')
+  }
   const p = payload && typeof payload === 'object' && payload.type ? payload : { type: 'text', text: fallbackText }
   const line = channel === 'line' || channel === 'line_group'
 
@@ -275,7 +350,8 @@ export function renderPayload(channel, payload, fallbackText) {
   }
 
   const message = p.type === 'image' && p.url
-    ? { attachment: { type: 'image', payload: { url: p.url, is_reusable: true } } }
+    // is_reusable is a Messenger option; Instagram documents only { url }
+    ? { attachment: { type: 'image', payload: channel === 'instagram' ? { url: p.url } : { url: p.url, is_reusable: true } } }
     : { text: p.text ?? fallbackText }
   if (Array.isArray(p.quick_replies) && p.quick_replies.length) {
     message.quick_replies = p.quick_replies.slice(0, 13).map(q => ({
@@ -309,7 +385,7 @@ export function payloadText(payload, fallbackText = '') {
 // ส่วนช่องทางแจ้งทีม (group/telegram/email) ยิงซ้ำแล้วแค่ทีมเห็นสองรอบ — ยอมได้ ดีกว่าไม่เห็นเลย
 const outcome = (status, channel) => {
   if (status === 429) return 'retry'
-  if (status >= 500) return channel === 'messenger' ? 'uncertain' : 'retry'
+  if (status >= 500) return ['messenger', 'instagram'].includes(channel) ? 'uncertain' : 'retry'
   return 'failed'
 }
 
@@ -347,10 +423,12 @@ export async function deliver(job, config = {}, fetcher = fetch) {
   const base = { job_id: job.id ?? null, message_id: job.message_id ?? null, lease_id: job.lease_id ?? null }
   const fail = (error, status = 'failed') => ({ ...base, status, error })
 
+  if (!['line', 'line_group', 'messenger', 'instagram', 'tiktok', 'telegram', 'email'].includes(channel)) return fail('channel_not_supported')
   if (!target) return fail('recipient_not_configured')
 
   try {
-    if (kind === 'typing') return await sendTyping(base, channel, target, config, fetcher)
+    if (kind === 'typing') return ['line', 'messenger'].includes(channel)
+      ? await sendTyping(base, channel, target, config, fetcher) : fail('channel_not_supported')
 
     switch (channel) {
       case 'line':
@@ -358,6 +436,10 @@ export async function deliver(job, config = {}, fetcher = fetch) {
         return await sendLine(job, base, channel, target, config, fetcher)
       case 'messenger':
         return await sendMessenger(job, base, kind, target, config, fetcher)
+      case 'instagram':
+        return await sendInstagram(job, base, kind, target, config, fetcher)
+      case 'tiktok':
+        return kind === 'send' ? await sendTikTokText(job, config, fetcher) : fail('channel_not_supported')
       case 'telegram':
         return await sendTelegram(job, base, target, config, fetcher)
       case 'email':
@@ -368,7 +450,7 @@ export async function deliver(job, config = {}, fetcher = fetch) {
   } catch (e) {
     // ปลายทางไม่ตอบ หรือหมดเวลา — แยกไม่ได้ว่าของถึงหรือไม่ถึง
     // Messenger ยิงซ้ำแล้วลูกค้าอาจได้สองครั้ง ที่เหลือยิงซ้ำได้
-    return { ...base, status: channel === 'messenger' && kind === 'send' ? 'uncertain' : 'retry',
+    return { ...base, status: ['messenger', 'instagram'].includes(channel) && kind === 'send' ? 'uncertain' : 'retry',
              error: `delivery_confirmation_unavailable: ${e.message}` }
   }
 }
@@ -422,6 +504,27 @@ async function sendMessenger(job, base, kind, target, config, fetcher) {
     })
     if (!response.ok) return { ...base, status: outcome(response.status, 'messenger'), error: `provider_http_${response.status}` }
     const data = await response.json()
+    providerId = data.message_id ?? providerId
+  }
+  return { ...base, status: 'sent', provider_id: providerId }
+}
+
+async function sendInstagram(job, base, kind, target, config, fetcher) {
+  if (kind === 'send' && (!job.last_inbound_at || Date.now() - Date.parse(job.last_inbound_at) > 86400000)) {
+    return { ...base, status: 'failed', error: 'instagram_24h_window_closed' }
+  }
+  if (!config.access_token) return { ...base, status: 'failed', error: 'instagram_token_missing' }
+  const url = `https://graph.instagram.com/${config.api_version || 'v23.0'}/${encodeURIComponent(config.account_id)}/messages`
+  let providerId = null
+  for (const message of renderPayloads('instagram', job.payload, job.text)) {
+    const response = await fetcher(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: target }, message }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!response.ok) return { ...base, status: outcome(response.status, 'instagram'), error: `provider_http_${response.status}` }
+    const data = await response.json().catch(() => ({}))
     providerId = data.message_id ?? providerId
   }
   return { ...base, status: 'sent', provider_id: providerId }

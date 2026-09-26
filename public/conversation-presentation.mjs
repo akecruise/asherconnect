@@ -9,10 +9,18 @@ export function messageSide(senderType) {
 export function messageSenderLabel(message, contact = {}, channel = '') {
   if (message?.sender_type === 'bot') return 'Asher Bot'
   if (message?.sender_type === 'agent') {
-    return message.responder_display_name || message.sender_name || 'ไม่ระบุผู้ตอบ'
+    return message.responder_display_name || message.sender_name ||
+      (channel === 'tiktok' ? 'ตอบผ่าน TikTok — ไม่ทราบผู้ตอบ' : 'ไม่ระบุผู้ตอบ')
   }
   if (message?.sender_type === 'contact') {
-    return contact.display_name || contact.external_id || (channel === 'line' ? 'ลูกค้า LINE' : 'ลูกค้า Messenger')
+    const name = (contact.display_name ?? '').trim()
+    if (name && name !== 'ลูกค้าใหม่') return name
+    const externalId = (contact.external_id ?? '').trim()
+    if (externalId) {
+      const channelName = ({ line: 'LINE', messenger: 'Messenger', instagram: 'Instagram', tiktok: 'TikTok' }[channel] ?? 'แชท')
+      return `ลูกค้า ${channelName} ···${externalId.slice(-4)}`
+    }
+    return ({ line: 'ลูกค้า LINE', messenger: 'ลูกค้า Messenger', instagram: 'ลูกค้า Instagram', tiktok: 'ลูกค้า TikTok' }[channel] ?? 'ลูกค้า')
   }
   return 'ระบบ'
 }

@@ -128,7 +128,7 @@ function rankTemplates(list){
 //   เพราะเคยมีของหลุดเข้าฐานจากตอนที่หน้าจอเอาคำนี้ไปใส่ช่องแก้ชื่อแล้วกดบันทึก
 //   ถ้าไม่ดัก ลูกค้าคนนั้นจะชื่อ "ลูกค้าใหม่" ตลอดไปและหา external id ดูไม่ได้เลย
 const NO_NAME = 'ลูกค้าใหม่'
-const CHANNEL_WORD = { line: 'LINE', messenger: 'Messenger', instagram: 'Instagram' }
+const CHANNEL_WORD = { line: 'LINE', messenger: 'Messenger', instagram: 'Instagram', tiktok: 'TikTok' }
 // ★ ไม่โชว์ id เต็มบนการ์ดอีกแล้ว — userId ของ LINE ยาว 33 ตัว ตัดแล้วเหลือ "U666f06…"
 //   ซึ่งแยกคนไม่ออกและกินที่ทั้งแถว · id เต็มย้ายไปอยู่ในหน้ารายละเอียดพร้อมปุ่มคัดลอก
 function customerName(name, externalId, channel){
@@ -291,7 +291,7 @@ function renderList(){
     const shown=customerName(item.display_name,item.external_id,item.channel);
     const avatarBox=avatar(item.picture_url,shown);
     // ★ badge ช่องทางอยู่มุมล่างขวาของ avatar ตามสเปก ไม่ใช่ pill แยกในแถวข้อความแบบเดิม
-    avatarBox.append(text('span','','channel-badge '+({line:'line',messenger:'fb',instagram:'ig'}[item.channel]||'unknown')));
+    avatarBox.append(text('span','','channel-badge '+({line:'line',messenger:'fb',instagram:'ig',tiktok:'tiktok'}[item.channel]||'unknown')));
     b.append(text('div','','chat-row-avatar')); b.lastChild.append(avatarBox);
 
     const body=text('div','','chat-row-body');
@@ -430,8 +430,8 @@ function renderChatHeadExtras(who){
  tag.textContent=name
  tag.hidden=!name
 }
-function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=CHANNEL_WORD[detail.channel]||'ไม่รองรับ';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
-async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||crypto.randomUUID();pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value='';selectedImages=[];renderImagePreview()}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(action==='send'?'กำลังอัปโหลด/ส่งข้อความและรูป… สถานะจะแสดงใต้ข้อความ':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);note(e.message,true);$('dialog-error').textContent=e.message}finally{setBusy(false)}}
+function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};document.body.dataset.chatChannel=detail.channel||'';const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=CHANNEL_WORD[detail.channel]||'ไม่รองรับ';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
+async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||data.request_id||crypto.randomUUID();const hasFiles=action==='send'&&((Array.isArray(data.files)&&data.files.length>0)||(Array.isArray(data.media_ids)&&data.media_ids.length>0));pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value='';selectedImages=[];renderImagePreview()}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(hasFiles?'อัปโหลดรูปสำเร็จ กำลังส่ง… สถานะจะแสดงใต้ข้อความ':action==='send'?'กำลังส่งข้อความ…':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);const message=hasFiles&&e.code==='media_upload_failed'?'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่':e.message;note(message,true);$('dialog-error').textContent=message}finally{setBusy(false)}}
 let dialogAction,dialogData
 function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
 function stage(code){if(!detail||code===detail.lead?.stage_code)return;if(code==='appointment')return appointment();if(code==='booking'){if(!detail.units.length){note('ยังไม่มีห้องพร้อมจองใน ERP กรุณาให้ผู้ดูแลเพิ่มห้องก่อน',true);return}dialog('ยืนยันการจองห้อง',[{name:'unit_id',label:'ห้อง',options:detail.units.map(u=>({value:u.id,label:u.number+' · '+Number(u.price).toLocaleString()+' บาท'}))},{name:'amount',label:'ราคาสุทธิ (บาท)',type:'number',min:1,step:'.01'},{name:'deposit',label:'เงินจอง (บาท)',type:'number',min:0,step:'.01'}],'stage',{stage:code});return}if(code==='sale'){dialog('ยืนยันปิดการขาย',[{name:'reference',label:'เลขที่สัญญา / เอกสารอ้างอิง',maxLength:200}],'stage',{stage:code});return}dialog('ยืนยันสถานะ '+stageNames[code],[],'stage',{stage:code})}
@@ -486,14 +486,17 @@ $('bot-toggle').addEventListener('click',async()=>{
  }catch(e){note(e.message,true);btn.disabled=false}
 })
  const previewBox=document.createElement('div');previewBox.id='image-preview';previewBox.className='image-preview';previewBox.hidden=true;$('message').before(previewBox)
- const imageInput=document.createElement('input');imageInput.id='image-files';imageInput.type='file';imageInput.accept='.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp';imageInput.multiple=true;imageInput.hidden=true;document.body.append(imageInput)
+ const imageInput=document.createElement('input');imageInput.id='image-files';imageInput.type='file';imageInput.accept='image/*,.jpg,.jpeg,.png,.webp,.heic,.heif';imageInput.multiple=true;imageInput.hidden=true;document.body.append(imageInput)
  function renderImagePreview(){previewBox.replaceChildren();previewBox.hidden=!selectedImages.length;selectedImages.forEach((file,index)=>{const item=text('div','','image-preview-item');const img=document.createElement('img');img.src=file.library?file.thumb:URL.createObjectURL(file);img.alt=file.library?file.title:file.name;item.append(text('span',String(index+1),'image-preview-order'));const remove=text('button','×','image-preview-remove');remove.type='button';remove.title='ลบรูปนี้';remove.addEventListener('click',()=>{selectedImages.splice(index,1);renderImagePreview();permissions()});item.append(img,remove);previewBox.append(item)})}
  $('attach').disabled=false;$('attach').addEventListener('click',()=>imageInput.click())
- imageInput.addEventListener('change',e=>{const incoming=[...e.target.files];e.target.value='';const max=detail?.channel==='line'&&$('message').value.trim()?4:5;if(selectedImages.length+incoming.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง${max===4?' เมื่อมีข้อความร่วมด้วย':''}`,true);return}const bad=incoming.find(file=>!/\.(jpe?g|png|webp)$/i.test(file.name)||!['image/jpeg','image/png','image/webp'].includes(file.type));if(bad){note('รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP เท่านั้น',true);return}if(incoming.some(file=>file.size>10*1024*1024)){note('รูปแต่ละไฟล์ต้องมีขนาดไม่เกิน 10 MB',true);return}selectedImages.push(...incoming);renderImagePreview()})
+ function imageMimeFromBytes(bytes){if(bytes.length>=3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)return'image/jpeg';if(bytes.length>=8&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71&&bytes[4]===13&&bytes[5]===10&&bytes[6]===26&&bytes[7]===10)return'image/png';if(bytes.length>=12&&String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP')return'image/webp';return''}
+ function imageExtension(mime){return mime==='image/jpeg'?'jpg':mime==='image/png'?'png':mime==='image/webp'?'webp':''}
+ async function inspectImage(file){const bytes=new Uint8Array(await file.arrayBuffer());const mime=imageMimeFromBytes(bytes);const name=String(file.name||'').toLowerCase();const declared=String(file.type||'').toLowerCase().split(';')[0].trim();if(/\.(heic|heif)$/.test(name)||declared==='image/heic'||declared==='image/heif')throw new Error('HEIC/HEIF ยังไม่รองรับ กรุณาเลือกรูป JPG, PNG หรือ WEBP');if(!mime)throw new Error('ไฟล์ไม่ใช่รูป JPG, PNG หรือ WEBP ที่ถูกต้อง');return {file,mime,bytes}}
+ imageInput.addEventListener('change',async e=>{const incoming=[...e.target.files];e.target.value='';const max=detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5;if(selectedImages.length+incoming.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง${max===4?' เมื่อมีข้อความร่วมด้วย':''}`,true);return}if(incoming.some(file=>file.size>10*1024*1024)){note('รูปแต่ละไฟล์ต้องมีขนาดไม่เกิน 10 MB',true);return}try{await Promise.all(incoming.map(inspectImage));selectedImages.push(...incoming);renderImagePreview()}catch(error){note(error.message,true)}})
  window.asherComposerContext=()=>({conversationId:selected,channel:detail?.channel||null,project:(($('chat-project')?.textContent||'').toLowerCase().match(/naii|vibe/)||[''])[0],role:boot?.user?.role||'',testOnly:!!boot?.user?.test_only,canSend:!busy&&!!selected&&!$('message').disabled,count:selectedImages.length,max:detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5})
  window.asherAttachLibraryImages=(assets,{replace=false}={})=>{if(!selected||$('message').disabled){note('กรุณาเปิดแชตที่ตอบได้ก่อนเลือกรูป',true);return false}const base=replace?selectedImages.filter(x=>!x.library):selectedImages;const known=new Set(base.filter(x=>x.library).map(x=>x.id));const add=assets.filter(a=>a&&a.id&&!known.has(a.id)).map(a=>({library:true,id:a.id,title:a.title||'',thumb:a.thumb||(a.preview_path||a.storage_path?'/library-media/'+(a.preview_path||a.storage_path):String(a.public_url||'').replace(/^(https?:\/\/[^/]+)?\/quick-reply-media\//,'/library-media/'))}));const max=detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5;if(base.length+add.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง`,true);return false}selectedImages=[...base,...add];renderImagePreview();permissions();return true}
- async function filePayload(file){const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return {name:file.name,type:file.type,data:btoa(binary)}}
- $('reply').addEventListener('submit',async e=>{e.preventDefault();const value=$('message').value.trim();if(!value&&!selectedImages.length){note('กรุณาพิมพ์ข้อความหรือแนบรูปอย่างน้อย 1 รูป',true);return}const uploads=selectedImages.filter(x=>!x.library);const files=await Promise.all(uploads.map(filePayload));const media_ids=selectedImages.filter(x=>x.library).map(x=>x.id);const media_order=selectedImages.map(x=>x.library?'m:'+x.id:'f:'+uploads.indexOf(x));mutate('send',{text:value,files,media_ids,media_order,answer_id:$('message').dataset.answerHubId||undefined})})
+ async function filePayload(file){const bytes=new Uint8Array(await file.arrayBuffer());const mime=imageMimeFromBytes(bytes);const extension=imageExtension(mime);const original=String(file.name||'');const name=/\.[^.]+$/.test(original)?original:`${original||'image'}.${extension}`;let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return {name,type:mime,data:btoa(binary)}}
+ $('reply').addEventListener('submit',async e=>{e.preventDefault();const value=$('message').value.trim();if(!value&&!selectedImages.length){note('กรุณาพิมพ์ข้อความหรือแนบรูปอย่างน้อย 1 รูป',true);return}const correlationId=crypto.randomUUID();try{const uploads=selectedImages.filter(x=>!x.library);const files=await Promise.all(uploads.map(filePayload));const media_ids=selectedImages.filter(x=>x.library).map(x=>x.id);const media_order=selectedImages.map(x=>x.library?'m:'+x.id:'f:'+uploads.indexOf(x));console.info('[media_pipeline]',{phase:'PICK',correlation_id:correlationId,count:files.length+media_ids.length,files:files.map(file=>({name:file.name,mime:file.type,bytes:Math.floor(file.data.length*3/4)}))});mutate('send',{text:value,files,media_ids,media_order,request_id:correlationId,answer_id:$('message').dataset.answerHubId||undefined})}catch(error){note('อัปโหลดรูปไม่สำเร็จ กรุณาเลือกไฟล์รูปใหม่',true)}})
 $('lead-form').addEventListener('input',()=>dirty=true)
 $('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,follow_up_at:utc($('followup').value)})})
 $('claim').addEventListener('click',()=>mutate('claim'))
@@ -518,15 +521,14 @@ function shortChannel(c){ return c.name||c.key||'' }
 //
 // ★ ชื่อย่อใช้บนชิป ชื่อเต็มอยู่ใน title/aria-label เสมอ
 //   แถบนี้กว้างจำกัด ถ้าใช้ชื่อเต็มจะขึ้นบรรทัดใหม่หรือถูกตัด แล้วอ่านไม่รู้เรื่องทั้งคู่
-const shortLabels={all:'ทั้งหมด',unassigned:'ยังไม่ตอบ'}
-// ★ ชิปตัวกรองของหน้านี้เหลือ 4 อันแบบเรียบ (ทั้งหมด/ยังไม่ตอบ + โครงการ) ตามสเปกใหม่
+const shortLabels={all:'ทั้งหมด',unassigned:'ยังไม่มีคนรับ'}
+// ★ ชิปตัวกรองของหน้านี้เหลือ 4 อันแบบเรียบ (ทั้งหมด/ยังไม่มีคนรับ + โครงการ) ตามสเปกใหม่
 //   ของเดิมมีถึง 8 ตัวกรอง (mine/unassigned/waiting/sla/today/followup/closed/all) และมีเมนู "เพิ่มเติม"
 //   ไม่ได้ลบตัวกรองพวกนั้นออกจากฐาน แค่หน้าจอนี้เลือกแสดงแค่ที่สเปกขอ
 //
-// ★ "ยังไม่ตอบ" แม็ปกับ filter เดิมชื่อ 'unassigned' (ยังไม่มีคนรับ) ไม่ใช่ case_status
-//   เหตุผล: มันคือคีย์เดียวที่ inbox.queue_counts() มีตัวเลขให้แล้ว และในระบบคิวรวม
-//   (shared queue ไม่มีเจ้าของเคส) เคสที่ยังไม่มีคนรับกับเคสที่ยังไม่ถูกตอบเป็นเซตที่ทับกันเกือบสนิท
-//   ถ้าจะให้ตรงกับ case_status='new'|'late' เป๊ะ ต้องเพิ่มตัวนับใหม่ฝั่งฐาน — ยังไม่ทำในรอบนี้
+// ★ filter 'unassigned' หมายถึงยังไม่มีผู้รับเคส ไม่ใช่ยังไม่มีการตอบลูกค้า
+//   สถานะการตอบจริงอยู่ที่ item.case_status และแสดงบนการ์ดด้วย slaTag():
+//   'รอ X นาที'/'เกิน X นาที' = ลูกค้ายังรอคำตอบ, ว่าง = เซลส์ตอบแล้ว/เคสปิด
 const STATUS_CHIPS=['all','unassigned']
 // รหัสโครงการจริงจาก core.project.code — เทียบจาก boot.projects ตอน render ไม่ฮาร์ดโค้ด id
 const PROJECT_CHIPS=[['proj-naii','Naii','asher-naii'],['proj-vibe','Vibe','asher-vibe']]
@@ -547,7 +549,7 @@ function pickFilter(key){const next=filter===key?'all':key
 
 function projectIdFor(code){return boot?.projects?.find(p=>p.code===code)?.id ?? null}
 
-// ★ สีแดงใช้เฉพาะตอนมีของค้างจริง (count>0) บนชิป "ยังไม่ตอบ" เท่านั้น — ชิปอื่นไม่มีวันเป็นสีแดง
+// ★ สีแดงใช้เฉพาะตอนมีเคสที่ยังไม่มีผู้รับ (count>0) บนชิปนี้เท่านั้น
 function chipFor(key,label,n){
  const on=filter===key
  const b=text('button','','chip'+(on?' selected':'')+(n>0&&key==='unassigned'?' hot-alert':''))
@@ -577,7 +579,7 @@ async function refreshCounts(){
  renderUnreadBadge()
 }
 
-// ตัวเลขบนไอคอนแชท — ใช้ตัวเดียวกับชิป "ยังไม่ตอบ" จะได้ไม่มีวันขัดกันเอง
+// ตัวเลขบนไอคอนแชท — ใช้ตัวเดียวกับชิป "ยังไม่มีคนรับ" จะได้ไม่มีวันขัดกันเอง
 function renderUnreadBadge(){
  const badge=$('nav-unread');if(!badge)return
  const n=Number(counts.unassigned)||0
@@ -823,6 +825,7 @@ function renderAdminHealth(sys){
  const ch=sys.channels??{}
  cards.append(ahChannelCard('LINE',ch.line))
  cards.append(ahChannelCard('Messenger',ch.messenger))
+ cards.append(ahChannelCard('TikTok @ashercondo',ch.tiktok))
  const w=sys.workers??{},wi=w.inbound??{},wo=w.outbound??{}
  cards.append(ahCard('Worker ขาเข้า',wi.status??'unknown',[
   ['สำเร็จล่าสุด',ahAgo(wi.lastSuccessAt)],

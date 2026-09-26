@@ -7,5 +7,15 @@
     "key": "vibe-messenger", "name": "Vibe Facebook", "channel": "messenger", "enabled": false,
     "inbox_id": "UUID_FROM_INBOX_TABLE", "account_id": "FACEBOOK_PAGE_ID", "api_version": "v23.0",
     "secret": "", "access_token": "", "verify_token": ""
+  },
+  {
+    "key": "asher-instagram", "name": "Instagram ASHER", "channel": "instagram", "enabled": false,
+    "inbox_id": "UUID_FROM_INBOX_TABLE", "account_id": "INSTAGRAM_PROFESSIONAL_ACCOUNT_ID", "login_type": "instagram",
+    "api_version": "v23.0", "secret": "", "access_token": "", "verify_token": ""
+  },
+  {
+    "key": "asher-tiktok", "name": "TikTok @ashercondo", "channel": "tiktok", "enabled": false,
+    "inbox_id": "", "app_id": "", "account_id": "", "secret": "",
+    "access_token": "", "refresh_token": ""
   }
 ]

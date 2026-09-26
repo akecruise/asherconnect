@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
+const DOCKER = process.env.DOCKER_BIN || 'docker'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const PORT = Number(process.env.HTTP_TEST_PORT || 3299)
@@ -32,6 +33,9 @@ const LINE_SECRET = 'secret-line-' + randomUUID()
 const META_SECRET = 'secret-meta-' + randomUUID()
 const PAGE_ID = '100000000000001'
 const VERIFY_TOKEN = 'verify-' + randomUUID()
+const IG_SECRET = 'secret-instagram-' + randomUUID()
+const IG_ACCOUNT = '17841426509548035'
+const IG_VERIFY_TOKEN = 'verify-instagram-' + randomUUID()
 
 // บัญชีที่เซิร์ฟเวอร์ในเทสต์ทุกตัวทำงานในนามของมัน — ตั้งค่าใน main() ก่อนยกตัวแรก
 let account = null
@@ -50,7 +54,7 @@ async function settle(timeout = 30000) {
   const until = Date.now() + timeout
   while (Date.now() < until) {
     const left = await one(`select count(*) from connect_private.webhook_log
-                             where channel_key in ('line-test','fb-test') and status in ('pending','processing')`)
+                             where channel_key in ('line-test','fb-test','ig-test') and status in ('pending','processing')`)
     if (Number(left) === 0) return true
     await new Promise(r => setTimeout(r, 200))
   }
@@ -59,12 +63,12 @@ async function settle(timeout = 30000) {
 
 // ── คุยกับฐานผ่าน container เพื่อไม่ต้องมี pg client บนเครื่อง
 async function sql(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
+  const { stdout } = await run(DOCKER, ['exec', 'supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres',
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 8 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(line => line.split('|'))
 }
 async function sqlAdmin(text) {
-  const { stdout } = await run('docker', ['exec', 'supabase-db', 'psql', '-U', 'supabase_admin', '-d', 'postgres',
+  const { stdout } = await run(DOCKER, ['exec', 'supabase-db', 'psql', '-U', 'supabase_admin', '-d', 'postgres',
     '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-F', '|', '-c', text], { maxBuffer: 8 << 20 })
   return stdout.trim().split('\n').filter(Boolean).map(line => line.split('|'))
 }
@@ -101,6 +105,8 @@ async function setup() {
     values('line','${project}','LINE ${TAG}','TEST_ONLY',true) returning id`)
   const fbInbox = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
     values('messenger','${project}','Messenger ${TAG}','TEST_ONLY',true) returning id`)
+  const igInbox = await one(`insert into inbox.inbox(channel,project_id,name,credentials_ref,is_active)
+    values('instagram','${project}','Instagram ${TAG}','TEST_ONLY',true) returning id`)
 
   const agent = await one(`select id from auth.users where email='sales.a.test@asher.local'`)
   const contact = await one(`select core.resolve_identity('line','U-${TAG}','${lineInbox}','ลูกค้า ${TAG}','${project}')`)
@@ -110,7 +116,7 @@ async function setup() {
     values('${conv}','contact','ทักมาจากเทสต์ HTTP','${TAG}-in-1')`)
   await sql(`select connect_private.ensure_lead('${conv}')`)
 
-  return { project, lineInbox, fbInbox, agent, contact, conv }
+  return { project, lineInbox, fbInbox, igInbox, agent, contact, conv }
 }
 
 async function teardown(scene) {
@@ -154,7 +160,7 @@ async function teardown(scene) {
     delete from crm.lead where contact_id in (select id from _ct);
     delete from core.contact where display_name like '%${TAG}%' or id in (select id from _ct);
     delete from inbox.inbox where name like '%${TAG}%';
-    delete from connect_private.webhook_log where channel_key in ('line-test','fb-test');
+    delete from connect_private.webhook_log where channel_key in ('line-test','fb-test','ig-test');
     delete from inbox.sales_staff_identity where external_id like '%${TAG}%';
     delete from inbox.sales_staff where name like '%${TAG}%';
     commit;`)
@@ -175,6 +181,9 @@ async function startServer(scene, cfg, extraEnv = {}, port = PORT) {
     { key: 'fb-test', name: 'Messenger ทดสอบ', channel: 'messenger', enabled: true,
       inbox_id: scene.fbInbox, account_id: PAGE_ID, api_version: 'v23.0',
       secret: META_SECRET, access_token: 'token-ปลอม', verify_token: VERIFY_TOKEN },
+    { key: 'ig-test', name: 'Instagram ทดสอบ', channel: 'instagram', enabled: true,
+      inbox_id: scene.igInbox, account_id: IG_ACCOUNT, api_version: 'v23.0',
+      secret: IG_SECRET, access_token: 'token-ปลอม', verify_token: IG_VERIFY_TOKEN },
   ], null, 2))
 
   const child = spawn(process.execPath, [join(root, 'server.mjs')], {
@@ -309,8 +318,33 @@ async function main() {
         `HTTP ${r.status} · ช่องทาง ${ch}`)
     }
     {
+      const bad = await fetch(`${BASE}/webhooks/ig-test?hub.mode=subscribe&hub.verify_token=ผิด&hub.challenge=ig-1234`)
+      const ok = await fetch(`${BASE}/webhooks/ig-test?hub.mode=subscribe&hub.verify_token=${IG_VERIFY_TOKEN}&hub.challenge=ig-1234`)
+      const text = await ok.text()
+      ck(9, 'Instagram verify_token ผิดถูกปฏิเสธ และ token ถูกคืน challenge',
+        bad.status === 403 && ok.status === 200 && text === 'ig-1234',
+        `ผิด ${bad.status} · ถูก ${ok.status} "${text}"`)
+    }
+    {
+      const eventId = `ig-${TAG}-${stamp}`
+      const raw = JSON.stringify({ object: 'instagram', entry: [{ id: IG_ACCOUNT, time: stamp, messaging: [{
+        sender: { id: `IG-${TAG}` }, recipient: { id: IG_ACCOUNT }, timestamp: stamp,
+        message: { mid: eventId, text: 'สนใจห้องจาก Instagram ครับ' } }] }] })
+      const good = await post('/webhooks/ig-test', raw, { 'x-hub-signature-256': 'sha256=' + sign(raw, IG_SECRET, 'hex') })
+      await settle()
+      const channel = await one(`select ci.channel from core.contact_identity ci where ci.external_id='IG-${TAG}'`)
+      const duplicate = await post('/webhooks/ig-test', raw, { 'x-hub-signature-256': 'sha256=' + sign(raw, IG_SECRET, 'hex') })
+      await settle()
+      const count = await one(`select count(*) from inbox.message where external_message_id='${eventId}'`)
+      const badSignature = await post('/webhooks/ig-test', raw, { 'x-hub-signature-256': 'sha256=wrong' })
+      ck(10, 'Instagram รับข้อความ, แยก identity, กันซ้ำ และปฏิเสธ signature ผิด',
+        good.status === 200 && duplicate.status === 200 && badSignature.status === 401 &&
+          channel === 'instagram' && Number(count) === 1,
+        `รับ ${good.status} ซ้ำ ${duplicate.status} ผิดลายเซ็น ${badSignature.status} · ช่องทาง ${channel} · ${count} ข้อความ`)
+    }
+    {
       const r = await post('/webhooks/ไม่มีช่องทางนี้', '{}', {})
-      ck(9, 'ช่องทางที่ไม่ได้ตั้งค่าไว้ไม่รับของ', r.status === 503, `HTTP ${r.status}`)
+      ck(11, 'ช่องทางที่ไม่ได้ตั้งค่าไว้ไม่รับของ', r.status === 503, `HTTP ${r.status}`)
     }
 
     // ── 10-18 ประตูของหน้าจอ ยุคล็อกอินรายบุคคล
@@ -345,7 +379,7 @@ async function main() {
       const r = await commandAs(ses.cookie, 'bootstrap', {})
       const body = JSON.parse(r.body || '{}')
       ck(14, 'bootstrap ด้วยเซสชัน คืนตัวตนของคนล็อกอิน และรายการช่องทาง',
-        r.status === 200 && body.user?.email === user.email && Array.isArray(body.channels) && body.channels.length === 2,
+        r.status === 200 && body.user?.email === user.email && Array.isArray(body.channels) && body.channels.length === 3,
         `HTTP ${r.status}`)
     }
     {
