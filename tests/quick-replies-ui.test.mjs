@@ -47,3 +47,14 @@ test('saved reply cards render an image thumbnail when one is configured', () =>
   assert.match(source, /img\.src = item\.image/)
   assert.match(source, /img\.loading = 'lazy'/)
 })
+
+test('composer has a "ราคาห้องว่าง" button that opens the live CRM units tab with select-all', () => {
+  const html = fs.readFileSync('public/index.html', 'utf8')
+  const qr = fs.readFileSync('public/quick-replies.js', 'utf8')
+  const lib = fs.readFileSync('public/image-library.js', 'utf8')
+  assert.match(html, /id="unit-prices-open"[^>]*>🏷 ราคาห้องว่าง</)
+  assert.match(qr, /getElementById\('unit-prices-open'\)[\s\S]*open\('units'\)/)
+  assert.match(lib, /'เลือกทั้งหมด'/)
+  // NULL price from Asher CRM is shown to customers as "สอบถามราคา", never 0
+  assert.match(lib, /u\.price \? baht\(u\.price\) : 'สอบถามราคา'/)
+})

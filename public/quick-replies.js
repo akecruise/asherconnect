@@ -43,6 +43,8 @@
   window.asherOpenSavedReplies = nextTab => { open(nextTab); button.setAttribute('aria-expanded', 'true') }
   const libraryButton = document.getElementById('image-library-open')
   if (libraryButton) libraryButton.addEventListener('click', () => { if (!menu.hidden && tab === 'library') close(); else open('library') })
+  const unitPricesButton = document.getElementById('unit-prices-open')
+  if (unitPricesButton) unitPricesButton.addEventListener('click', () => { if (!menu.hidden && tab === 'units') close(); else open('units') })
   menu.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); button.focus() } })
-  button.addEventListener('click', () => menu.hidden ? open('replies') : close()); message.addEventListener('keydown', e => { if (e.key === '/' && !message.value) setTimeout(() => open('replies'), 0) }); document.addEventListener('click', e => { if (!menu.hidden && e.target.isConnected && !menu.contains(e.target) && !button.contains(e.target) && !e.target.closest?.('#image-library-open')) close() })
+  button.addEventListener('click', () => menu.hidden ? open('replies') : close()); message.addEventListener('keydown', e => { if (e.key === '/' && !message.value) setTimeout(() => open('replies'), 0) }); document.addEventListener('click', e => { if (!menu.hidden && e.target.isConnected && !menu.contains(e.target) && !button.contains(e.target) && !e.target.closest?.('#image-library-open, #unit-prices-open')) close() })
 })()

@@ -1,8 +1,8 @@
 /* คลังรูป — ขาว/ดำ/เทาตาม apluscondo.com · แดง #8E1116 เฉพาะ error */
 
 /* แถบเครื่องมือช่องตอบ */
-.composer #image-library-open{display:inline-flex;align-items:center;justify-content:center;width:auto;min-height:44px;padding:8px 14px;border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);font-size:14px;font-weight:600;line-height:1.4}
-.composer #image-library-open:hover{border-color:var(--ink)}
+.composer #image-library-open,.composer #unit-prices-open{display:inline-flex;align-items:center;justify-content:center;width:auto;min-height:44px;padding:8px 14px;border:1px solid var(--rule);border-radius:12px;background:var(--surface);color:var(--ink);font-size:14px;font-weight:600;line-height:1.4}
+.composer #image-library-open:hover,.composer #unit-prices-open:hover{border-color:var(--ink)}
 
 /* แท็บของ popover */
 .saved-replies-tabs{display:flex;gap:4px;background:var(--rule-soft,#f2f2f4);padding:3px;border-radius:10px}
@@ -56,7 +56,7 @@ button.image-library-tile:hover,button.image-library-tile:focus-visible{border-c
 .danger-subtle{color:#8E1116;border-color:#8E1116;background:transparent;margin-right:auto}
 
 @media(max-width:767px){
-  .composer #image-library-open{order:0;flex:0 0 auto;margin:0 0 6px}
+  .composer #image-library-open,.composer #unit-prices-open{order:0;flex:0 0 auto;margin:0 0 6px}
   .image-library-form-row{grid-template-columns:1fr}
   .image-library-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
   .media-library-page{padding:12px}

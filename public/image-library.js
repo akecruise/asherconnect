@@ -185,9 +185,11 @@
     const list = el('div', { class: 'unit-list' })
     const insert = el('button', { type: 'button', class: 'primary', text: 'แทรกในข้อความ', disabled: true })
     const photos = el('button', { type: 'button', class: 'subtle', text: 'ดูรูปห้อง' })
+    const all = el('button', { type: 'button', class: 'subtle', text: 'เลือกทั้งหมด' })
     const count = el('small', { class: 'muted' })
     let data = []
-    const refresh = () => { insert.disabled = !picked.size; count.textContent = picked.size ? `เลือก ${picked.size} ห้อง` : 'เลือกห้องเพื่อแทรกรายการลงข้อความ' }
+    const keys = () => data.flatMap(p => p.units.map(u => p.code + ':' + u.unit_number))
+    const refresh = () => { const total = keys().length; all.disabled = !total; all.textContent = total && picked.size === total ? 'ล้างที่เลือก' : 'เลือกทั้งหมด'; insert.disabled = !picked.size; count.textContent = picked.size ? `เลือก ${picked.size} ห้อง` : 'เลือกห้องเพื่อแทรกรายการลงข้อความ' }
     const paint = () => {
       list.replaceChildren()
       if (!data.length) { list.append(el('div', { class: 'template-empty', text: 'ไม่พบโครงการ' })); return }
@@ -216,8 +218,9 @@
       message.value = (message.value.trim() ? message.value.trimEnd() + '\n\n' : '') + blocks.join('\n\n')
       message.dispatchEvent(new Event('input', { bubbles: true })); message.focus(); close()
     })
+    all.addEventListener('click', () => { const k = keys(); if (picked.size === k.length) picked.clear(); else k.forEach(x => picked.add(x)); paint() })
     photos.addEventListener('click', () => openTab && openTab('library'))
-    body.append(el('div', { class: 'quick-replies-tools' }, project), list, el('div', { class: 'image-library-footer' }, count, el('span', { class: 'image-library-footer-actions' }, photos, insert)))
+    body.append(el('div', { class: 'quick-replies-tools' }, project), list, el('div', { class: 'image-library-footer' }, count, el('span', { class: 'image-library-footer-actions' }, all, photos, insert)))
     container.append(body); load()
   }
 
