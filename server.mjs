@@ -27,6 +27,7 @@ import { fetchProfile } from './lib/profile.mjs'
 import { mediaTasks, storagePath, enrichMessageMedia, MEDIA_MAX_BYTES } from './lib/media.mjs'
 import { validateOutboundImages, OUTBOUND_IMAGE_MAX_BYTES } from './lib/outbound-media.mjs'
 import { createMediaHandler } from './lib/media-http.mjs'
+import { createMediaLibrary, planSendItems } from './lib/media-library.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
@@ -131,7 +132,7 @@ const log = {
 
 const fail = (status, code) => Object.assign(new Error(code), { status })
 
-const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked','ah_not_allowed','ah_not_found','ah_invalid','ah_state_not_allowed','ah_duplicate','ah_missing_required_data','invalid_user','last_admin','self_admin_change'])
+const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked','ah_not_allowed','ah_not_found','ah_invalid','ah_state_not_allowed','ah_duplicate','ah_missing_required_data','invalid_user','last_admin','self_admin_change','media_not_found'])
 
 /**
  * ปฏิเสธ webhook พร้อมบอกเหตุผลลง log
@@ -1001,17 +1002,15 @@ async function uploadMediaObject(path, { bytes, type }) {
   if (!response.ok) throw new Error(`storage_${response.status}`)
 }
 
-async function attachOutboundMedia({ inboxId, messageId, files }) {
-  const media = []
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index]
-    const path = storagePath(inboxId, messageId, index + 1, file.mime)
-    await uploadMediaObject(path, { bytes: file.bytes, type: file.mime })
-    media.push({ path, mime: file.mime, bytes: file.bytes.length })
-  }
-  const attached = await rpcDirect(service, 'media_attach', { p_message_id: messageId, p_media: media })
-  if (!attached) throw new Error('media_attach_missed')
-  return media
+// คัดลอกภายใน bucket (รูปคลัง → path ของข้อความ) — ไม่ต้องดาวน์โหลดแล้วอัปโหลดใหม่
+async function copyMediaObject(sourceKey, destinationKey) {
+  const response = await fetch(`${upstream}/storage/v1/object/copy`, {
+    method: 'POST',
+    headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bucketId: 'inbox-media', sourceKey, destinationKey }),
+    signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
+  })
+  if (!response.ok) throw new Error(`storage_copy_${response.status}`)
 }
 
 async function syncMedia(config, events, received) {
@@ -1529,7 +1528,14 @@ async function handleCommand(req, res) {
   if (typeof input.action !== 'string' || !input.data || typeof input.data !== 'object' || Array.isArray(input.data)) {
     throw fail(400, 'invalid_request')
   }
-  if (input.action !== 'send' && raw.length > 262144) throw fail(413, 'body_too_large')
+  if (!['send', 'media_library_upload'].includes(input.action) && raw.length > 262144) throw fail(413, 'body_too_large')
+
+  // ★ คลังรูป — ด่านสิทธิ์อยู่ที่ inbox.media_* ในฐาน ยิงด้วย token ของคนที่ล็อกอิน
+  if (input.action.startsWith('media_library_')) {
+    const result = await mediaLibrary.command(accessToken, input.action, input.data)
+    if (result === undefined) throw fail(400, 'invalid_request')
+    return json(res, 200, result)
+  }
 
   // ทางไป Edge Function: action ขึ้นต้นด้วย fn: แล้วตามด้วยชื่อในทะเบียน
   // แยกทางกันตั้งแต่ตรงนี้ เพราะคำตอบไม่ผ่านตัวแปลของ connect_api และไม่ควรผ่าน
@@ -1630,6 +1636,8 @@ async function handleCommand(req, res) {
 
   let outboundFiles = []
   let outboundConversation = null
+  let outboundPlan = []
+  let outboundAssets = new Map()
   if (input.action === 'send') {
     // ด่านแรกสุด ก่อนแตะอะไรทั้งนั้น — ในโหมดเงายังมีบอทตัวเดิมคุยกับลูกค้าอยู่
     // ถามฐานก่อนเสมอ (มีตัวกันถี่ 3 วินาทีอยู่แล้ว) เพราะ admin อาจเพิ่งกดปิดไปเมื่อครู่
@@ -1643,19 +1651,38 @@ async function handleCommand(req, res) {
     let files
     try { files = validateOutboundImages(input.data.files || []) }
     catch (e) { throw fail(400, e.message) }
+    let plan
+    try { plan = planSendItems({ mediaIds: input.data.media_ids, fileCount: files.length, order: input.data.media_order }) }
+    catch (e) { throw fail(400, e.message) }
     const text = String(input.data.text || '').trim()
-    if (!text && !files.length) throw fail(400, 'invalid_message')
-    if (detail.channel === 'line' && text && files.length > 4) throw fail(400, 'LINE ส่งข้อความพร้อมรูปได้สูงสุด 4 รูปต่อครั้ง')
+    if (!text && !plan.length) throw fail(400, 'invalid_message')
+    if (detail.channel === 'line' && text && plan.length > 4) throw fail(400, 'LINE ส่งข้อความพร้อมรูปได้สูงสุด 4 รูปต่อครั้ง')
+    if (detail.channel === 'instagram' && (plan.length > 1 || (plan.length && text))) throw fail(400, 'Instagram ส่งได้ครั้งละ 1 รูป และไม่ส่งพร้อมข้อความ')
+    outboundAssets = await mediaLibrary.resolve(accessToken, plan.filter(i => i.kind === 'media').map(i => i.id))
     outboundFiles = files
+    outboundPlan = plan
     outboundConversation = detail
     input.data = { ...input.data, text: text || '[แนบรูปภาพ]' }
     delete input.data.files
+    delete input.data.media_ids
+    delete input.data.media_order
   }
 
   const data = await rpc(accessToken, input.action, input.data)
 
-  if (input.action === 'send' && outboundFiles.length && data?.message_id) {
-    await attachOutboundMedia({ inboxId: outboundConversation.conversation.inbox_id, messageId: data.message_id, files: outboundFiles })
+  if (input.action === 'send' && outboundPlan.length && data?.message_id) {
+    const media = await mediaLibrary.materialize({
+      plan: outboundPlan, assets: outboundAssets, files: outboundFiles, storagePath,
+      inboxId: outboundConversation.conversation.inbox_id, messageId: data.message_id,
+    })
+    const attached = await rpcDirect(service, 'media_attach', { p_message_id: data.message_id, p_media: media })
+    if (!attached) throw new Error('media_attach_missed')
+    if (outboundAssets.size) {
+      // ป้าย "ส่งแล้ว" + use_count — พลาดได้โดยไม่กระทบการส่ง
+      await rpcDirect(accessToken, 'media_record_send', {
+        p_conversation_id: input.data.id, p_media_ids: [...outboundAssets.keys()], p_message_id: data.message_id,
+      }).catch(e => log.warn('media_record_send_failed', { reason: e.message }))
+    }
   }
 
   // ท่อรูป: media เก็บที่คอลัมน์ inbox.message.media โดยไม่แตะ connect_private.api
@@ -1687,6 +1714,7 @@ async function handleCommand(req, res) {
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
 const staticFiles = { '/answer-hub': 'index.html', '/answer-hub.js': 'answer-hub.js', '/answer-hub.css': 'answer-hub.css', '/users.js': 'users.js', '/users.css': 'users.css', '/quick-answer.js': 'quick-answer.js', '/': 'index.html', '/app.js': 'app.js', '/conversation-presentation.mjs': 'conversation-presentation.mjs', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
   '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
+  '/media-library': 'media-library.html', '/media-library.js': 'media-library.js', '/media-library.css': 'media-library.css', '/image-library.js': 'image-library.js',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
   '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css',
   // แผ่นสไตล์กับสคริปต์ของหน้า /admin/health — ตัวหน้าเองเสิร์ฟโดย health.handle
@@ -1716,6 +1744,15 @@ async function handleStatic(req, res, url) {
 // bucket เป็น private และห้ามให้เบราว์เซอร์คุยกับ Storage ตรง ๆ จึงส่งผ่านตรงนี้
 const handleMedia = createMediaHandler({
   sessions, rpcDirect, fail,
+  fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+    headers: { apikey: anon, Authorization: `Bearer ${service}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  }),
+})
+
+const mediaLibrary = createMediaLibrary({
+  rpcDirect, fail, origin,
+  uploadObject: uploadMediaObject, copyObject: copyMediaObject,
   fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
     headers: { apikey: anon, Authorization: `Bearer ${service}` },
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
@@ -1817,6 +1854,7 @@ async function route(req, res, url) {
   }
 
   if (url.pathname.startsWith('/media/')) return handleMedia(req, res, url)
+  if (url.pathname.startsWith('/library-media/')) return mediaLibrary.handleFile(req, res, url, await sessions.access(req))
 
   return handleStatic(req, res, url)
 }

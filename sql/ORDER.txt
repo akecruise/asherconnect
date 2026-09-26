@@ -278,3 +278,8 @@ _ledger.sql
 # ── LINE OA responder names + canonical lifecycle labels ──
 202609252200_line_oa_responder_name.sql
 202609252300_system_preview_label.sql
+
+# ── คลังรูป (Image Library) ของ Sales Workspace ──
+# ★ ต้องอยู่หลัง 037 (media pipeline) + 038 (quick replies) + asher-web 20260916154809_quick_reply
+#   ALTER inbox.media_asset แบบเพิ่มเท่านั้น ไม่แตะ connect_private.api
+202609261000_media_library.sql
