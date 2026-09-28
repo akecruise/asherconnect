@@ -16,6 +16,8 @@ const USERS_VIEW = location.pathname === '/admin/users'
 // Small bridge for the optional Quick Replies module; no credentials or service
 // role data are exposed, only the already-authorized bootstrap result.
 window.asherQuickReplies = () => boot?.quick_replies?.length ? boot.quick_replies : (boot?.canned ?? [])
+// Quick Replies can offer only rooms that are available and already priced.
+window.asherQuoteUnits = () => (detail?.units ?? []).filter(unit => Number(unit.price ?? unit.selling_price ?? unit.list_price ?? 0) > 0)
 const drafts=new Map(),pendingCommands=new Map()
 let selectedImages=[]
 const text=(tag,value,cls)=>{const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
