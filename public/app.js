@@ -72,42 +72,57 @@ window.asherInsertQuickReply = (item, range, { focus = true } = {}) => {
 // รูปเป็นใบเสนอราคาสำเร็จรูปต่อห้องที่เซิร์ฟเวอร์ทำรอไว้แล้ว — กดส่งแล้วขึ้นแชททันที ไม่ต้องรอ CRM วาดรูป
 // ห้องที่ยังไม่มีราคา (รอราคา) ออกใบเสนอราคาไม่ได้ จึงไม่แสดง
 const QUOTE_UNITS_TTL_MS=60_000
-let quoteUnitsCache=null
+// รายการห้องว่างเหมือนกันทุกแชท — แสดงของที่มีอยู่ทันที แล้วค่อยขอใหม่เบื้องหลังเมื่อเก่าเกิน 1 นาที
+let quoteUnitsCache=null,quoteUnitsLoading=null
+function loadQuoteUnits(conversation){
+ quoteUnitsLoading??=api('quotation_units',{id:conversation})
+  .then(units=>{quoteUnitsCache={at:Date.now(),units:units.filter(u=>Number(u.price)>0)};return quoteUnitsCache.units})
+  .finally(()=>{quoteUnitsLoading=null})
+ return quoteUnitsLoading
+}
+function prefetchQuoteUnits(){if(selected&&(!quoteUnitsCache||Date.now()-quoteUnitsCache.at>=QUOTE_UNITS_TTL_MS))loadQuoteUnits(selected).catch(()=>{})}
 async function exportAvailableUnitsPng(){
  if(!detail||!selected||busy)return
  const conversation=selected
  dialog('ส่งใบเสนอราคา',[{name:'unit_id',label:'ห้องว่าง',options:[{value:'',label:'กำลังโหลดห้องว่างจาก CRM…'}]}],'quotation_png',{submitLabel:'ส่งใบเสนอราคาเข้าแชท'})
  const select=$('dialog-fields').querySelector('select[name="unit_id"]')
- select.disabled=true;$('dialog-submit').disabled=true
  const stillOpen=()=>$('dialog').open&&dialogAction==='quotation_png'&&selected===conversation
- try{
-  const fresh=quoteUnitsCache&&quoteUnitsCache.id===conversation&&Date.now()-quoteUnitsCache.at<QUOTE_UNITS_TTL_MS
-  const units=(fresh?quoteUnitsCache.units:await api('quotation_units',{id:conversation})).filter(u=>Number(u.price)>0)
-  if(!fresh)quoteUnitsCache={id:conversation,at:Date.now(),units}
+ const label=u=>`${u.project_name} · ห้อง ${u.unit_number} · ${u.floor_name||'ไม่ระบุชั้น'} · ${Number(u.price||0).toLocaleString('th-TH')} บาท`
+ const show=units=>{
   if(!stillOpen())return
   if(!units.length){$('dialog').close();note('CRM ยังไม่มีห้องว่างที่มีราคาสำหรับออกใบเสนอราคา',true);return}
-  const label=u=>`${u.project_name} · ห้อง ${u.unit_number} · ${u.floor_name||'ไม่ระบุชั้น'} · ${Number(u.price||0).toLocaleString('th-TH')} บาท`
+  const keep=select.value
   select.replaceChildren(...units.map(u=>{const option=text('option',label(u));option.value=u.id;option.dataset.unitNumber=u.unit_number;return option}))
+  if(keep&&units.some(u=>u.id===keep))select.value=keep
   select.disabled=false;$('dialog-submit').disabled=busy
- }catch(error){if(stillOpen())$('dialog-error').textContent=`โหลดห้องว่างไม่สำเร็จ: ${error.message}`}
+ }
+ const cached=quoteUnitsCache
+ if(cached){show(cached.units);if(Date.now()-cached.at<QUOTE_UNITS_TTL_MS)return}
+ else{select.disabled=true;$('dialog-submit').disabled=true}
+ try{show(await loadQuoteUnits(conversation))}
+ catch(error){if(stillOpen()&&!cached)$('dialog-error').textContent=`โหลดห้องว่างไม่สำเร็จ: ${error.message}`}
 }
 
+// ส่งใบเสนอราคา: ปิดหน้าต่างทันทีแล้วส่งเบื้องหลัง — รูปทำรอไว้แล้ว ไม่ล็อกหน้าจอรอ LINE/Messenger
+const sendingQuotes=new Set()
 async function generateUnitQuotation(unitId){
- if(!detail||!selected||busy||!unitId)return
- const conversation=selected,submit=$('dialog-submit'),submitLabel=submit.textContent
+ if(!detail||!selected||!unitId)return
+ const conversation=selected
  const unitNumber=$('dialog-fields').querySelector(`option[value="${CSS.escape(unitId)}"]`)?.dataset.unitNumber||''
- submit.textContent='กำลังส่ง…'
- setBusy(true)
+ const key=`${conversation}:${unitId}`
+ if(sendingQuotes.has(key))return
+ sendingQuotes.add(key)
+ $('dialog').close()
+ note(`กำลังส่งใบเสนอราคาห้อง ${unitNumber}…`)
  try{
   await api('quotation_unit_png',{id:conversation,unit_id:unitId})
-  $('dialog').close()
   note(`ส่งใบเสนอราคาห้อง ${unitNumber} เข้าแชทแล้ว`)
  }catch(error){
-  $('dialog-error').textContent=error.message==='unit_unavailable'?'ห้องนี้ไม่ว่างแล้ว กรุณาเลือกห้องอื่น':`ส่งใบเสนอราคาไม่สำเร็จ: ${error.message}`
   if(error.message==='unit_unavailable')quoteUnitsCache=null
+  note(error.message==='unit_unavailable'?`ห้อง ${unitNumber} ไม่ว่างแล้ว กรุณาเลือกห้องอื่น`:`ส่งใบเสนอราคาห้อง ${unitNumber} ไม่สำเร็จ: ${error.message}`,true)
   return
- }finally{submit.textContent=submitLabel;setBusy(false)}
- // รูปใบเสนอราคาจะโผล่ในแชทเอง — โหลดแชท/รายการเบื้องหลัง ไม่ล็อกปุ่มรอ
+ }finally{sendingQuotes.delete(key)}
+ // รูปใบเสนอราคาจะโผล่ในแชทเอง — โหลดแชท/รายการเบื้องหลัง
  if(selected===conversation)api('detail',{id:conversation}).then(d=>{if(selected===conversation){detail=d;renderDetail()}}).catch(()=>{})
  loadList().catch(()=>{})
 }
@@ -448,7 +463,7 @@ $('bot-toggle').addEventListener('click',async()=>{
  }catch(e){note(e.message,true);btn.disabled=false}
 })
 $('reply').addEventListener('submit',e=>{e.preventDefault();const value=$('message').value.trim();if(value)mutate('send',{text:value})})
-$('composer-menu-toggle').addEventListener('click',()=>{const menu=$('composer-actions'),open=menu.hidden;menu.hidden=!open;$('composer-menu-toggle').setAttribute('aria-expanded',String(open));$('composer-menu-toggle').setAttribute('aria-label',open?'ปิดเมนูตอบลูกค้า':'เปิดเมนูตอบลูกค้า')})
+$('composer-menu-toggle').addEventListener('click',()=>{const menu=$('composer-actions'),open=menu.hidden;if(open)prefetchQuoteUnits();menu.hidden=!open;$('composer-menu-toggle').setAttribute('aria-expanded',String(open));$('composer-menu-toggle').setAttribute('aria-label',open?'ปิดเมนูตอบลูกค้า':'เปิดเมนูตอบลูกค้า')})
 $('composer-actions').addEventListener('click',e=>{if(!e.target.closest('.composer-action'))return;$('composer-actions').hidden=true;$('composer-menu-toggle').setAttribute('aria-expanded','false');$('composer-menu-toggle').setAttribute('aria-label','เปิดเมนูตอบลูกค้า')})
 $('attach').addEventListener('click',()=>$('outbound-image-input').click())
 $('outbound-image-input').addEventListener('change',async()=>{const input=$('outbound-image-input'),file=input.files?.[0];if(!file)return;if(!['image/png','image/jpeg','image/webp'].includes(file.type)||!file.size||file.size>10*1024*1024){note('รองรับ PNG, JPEG หรือ WebP ขนาดไม่เกิน 10 MB',true);input.value='';return}const button=$('attach');button.disabled=true;note('กำลังอัปโหลดรูป…');try{const response=await fetch('/api/outbound-image',{method:'POST',headers:{'Content-Type':file.type,'X-Filename':encodeURIComponent(file.name)},body:file});const data=await response.json();if(!response.ok)throw new Error(errors[data.error]||'อัปโหลดรูปไม่สำเร็จ');await window.asherSendImage(data.public_url)}catch(e){note(e.message,true)}finally{button.disabled=false;input.value=''}})

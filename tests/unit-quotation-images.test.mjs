@@ -86,3 +86,17 @@ test('a non-PNG response is not stored', async () => {
   await assert.rejects(images.pathFor(A), /not_png/)
   assert.equal(calls.write.length, 0)
 })
+
+test('overlapping warmAll calls share one run and render each unit once', async () => {
+  const id = '11111111-1111-4111-8111-111111111111'
+  let fetches = 0
+  const images = createUnitQuotationImages({
+    listFromCrm: async () => [{ id, quotation_version: 'a'.repeat(24) }],
+    fetchFromCrm: async () => { fetches++; await new Promise(r => setTimeout(r, 20)); return { bytes: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]), version: 'a'.repeat(24) } },
+    listStored: async () => [],
+    writeObject: async () => {},
+  })
+  const [a, b] = await Promise.all([images.warmAll(), images.warmAll()])
+  assert.equal(fetches, 1)
+  assert.deepEqual(a, b)
+})
