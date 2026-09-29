@@ -28,6 +28,7 @@ import { createMediaHandler } from './lib/media-http.mjs'
 import { randomUUID } from 'node:crypto'
 import { createOutboundMediaUrl, safeOutboundPath, verifyOutboundMedia } from './lib/outbound-media.mjs'
 import { createQuotationImageUrl, verifyQuotationImageUrl, verifyQuotationUrl } from './lib/quotation-link.mjs'
+import { createQuotationImageStore } from './lib/quotation-image.mjs'
 // ตัวนำเข้า Saved Replies — zero-dependency ตามบ้านนี้ (image ไม่มีขั้น npm install)
 import { parseImport, previewRows, validateRow, CATEGORIES, MAX_IMPORT_BYTES, MAX_ROWS as MAX_IMPORT_ROWS } from './lib/quick-replies-import.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
@@ -1157,6 +1158,9 @@ async function handleCommand(req, res) {
     if (!quotation?.id) throw fail(503, 'service_unavailable')
     const publicUrl = createQuotationImageUrl(origin, quotation.id, outboundMediaSigningKey)
     if (!publicUrl) throw fail(503, 'service_unavailable')
+    // เก็บรูปไว้ก่อนส่งลิงก์ ตอน LINE/Messenger มาดึงรูปจะได้ไม่ต้องไปถึง CRM
+    // ถ้าเก็บไม่ทัน ยังส่งได้ — ตอนเปิดรูปครั้งแรกจะดึงจาก CRM แล้วเก็บเอง
+    await quotationImages.get(quotation.id).catch(e => log.warn('quotation_image_warm_failed', { reason: e.message }))
     await rpc(accessToken, 'send', { id: input.data.id, text: publicUrl, request_id: quotation.id })
     return json(res, 200, { ...quotation, download_url: publicUrl, sent: true })
   }
@@ -1306,6 +1310,29 @@ async function crmQuotation(path, { method = 'GET', body, actorId, requestId } =
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
   })
 }
+
+const quotationImages = createQuotationImageStore({
+  async readObject(path) {
+    const response = await fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+      headers: { apikey: anon, Authorization: `Bearer ${service}` },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+    })
+    // storage ของ Supabase ตอบ 400 {"statusCode":"404"} เมื่อไม่มีไฟล์ในบางรุ่น
+    if (response.status === 404 || response.status === 400) return null
+    if (!response.ok) throw new Error(`storage_${response.status}`)
+    return Buffer.from(await response.arrayBuffer())
+  },
+  writeObject: (path, bytes) => uploadMediaObject(path, { bytes, type: 'image/png' }),
+  async fetchFromCrm(id) {
+    const response = await crmQuotation(`/api/integrations/connect/quotations/${id}/public-image`)
+    if (!response.ok) {
+      log.warn('crm_public_quotation_image_failed', { status: response.status })
+      throw fail(response.status === 404 ? 404 : 503, response.status === 404 ? 'not_found' : 'service_unavailable')
+    }
+    return Buffer.from(await response.arrayBuffer())
+  },
+  log,
+})
 
 async function outboundImageUpload(req, res) {
   if (req.headers.origin !== origin) throw fail(403, 'invalid_origin')
@@ -1472,16 +1499,11 @@ async function route(req, res, url) {
   if (req.method === 'GET' && /^\/quotation-image\/[0-9a-f-]{36}$/i.test(url.pathname)) {
     const quotationId = url.pathname.split('/')[2]
     if (!verifyQuotationImageUrl(quotationId, url.searchParams.get('expires'), url.searchParams.get('signature'), outboundMediaSigningKey)) throw fail(403, 'not_allowed')
-    const response = await crmQuotation(`/api/integrations/connect/quotations/${quotationId}/public-image`)
-    if (!response.ok) {
-      log.warn('crm_public_quotation_image_failed', { status: response.status })
-      if (response.status === 404) throw fail(404, 'not_found')
-      throw fail(503, 'service_unavailable')
-    }
-    const bytes = Buffer.from(await response.arrayBuffer())
+    const bytes = await quotationImages.get(quotationId)
+    // เลขใบเดียวกันได้รูปเดิมเสมอ — ให้ LINE/เบราว์เซอร์เก็บแคชได้ตลอดอายุลิงก์
     res.writeHead(200, {
       'Content-Type': 'image/png', 'Content-Length': bytes.length,
-      'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, max-age=604800, immutable', 'X-Content-Type-Options': 'nosniff',
     })
     return res.end(bytes)
   }
