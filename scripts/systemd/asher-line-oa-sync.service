@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync LINE Official Account Manager replies into ASHER Connect
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/asher-inbox/app
+Environment=LINE_OA_CHAT_BOT_ID=U0f8a4998da40e9e0fa908abd13be3793
+ExecStart=/usr/bin/flock -n /run/lock/asher-line-oa-sync.lock /usr/bin/node /opt/asher-inbox/app/scripts/line-oa-sync.mjs
+TimeoutStartSec=13min

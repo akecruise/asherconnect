@@ -17,7 +17,6 @@
  */
 
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
 import { createSessions } from './auth.mjs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -25,24 +24,17 @@ import { fileURLToPath } from 'node:url'
 import { verifySignature, matchesDestination, normalizeWebhook, deliver } from './providers.mjs'
 import { fetchProfile } from './lib/profile.mjs'
 import { mediaTasks, storagePath, enrichMessageMedia, MEDIA_MAX_BYTES } from './lib/media.mjs'
-import { validateOutboundImages, OUTBOUND_IMAGE_MAX_BYTES } from './lib/outbound-media.mjs'
-import { createMediaHandler, createPublicMediaHandler } from './lib/media-http.mjs'
-import { buildPublicMediaUrl } from './lib/media-public.mjs'
-import { createQuickReplyMediaHandler } from './lib/quick-reply-media.mjs'
-import { createMediaLibrary, planSendItems } from './lib/media-library.mjs'
+import { createMediaHandler } from './lib/media-http.mjs'
+import { randomUUID } from 'node:crypto'
+import { createOutboundMediaUrl, safeOutboundPath, verifyOutboundMedia } from './lib/outbound-media.mjs'
+import { createQuotationImageUrl, verifyQuotationImageUrl, verifyQuotationUrl } from './lib/quotation-link.mjs'
+// ตัวนำเข้า Saved Replies — zero-dependency ตามบ้านนี้ (image ไม่มีขั้น npm install)
+import { parseImport, previewRows, validateRow, CATEGORIES, MAX_IMPORT_BYTES, MAX_ROWS as MAX_IMPORT_ROWS } from './lib/quick-replies-import.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
 import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
 import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
-import { reviewCode, tagReviewCode } from './bots/reviewcode.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
-import { createHealth } from './health/health.mjs'
-import { createAnswerHubService, buildFlags } from './services/answer-hub/service.mjs'
-import { parseQuickReplyFile, classifyQuickReplies } from './services/answer-hub/quick-reply-import.mjs'
-import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
-import { createUserAdmin } from './services/user-admin/service.mjs'
-import { extractCustomerContact } from './lib/customer-contact-extraction.mjs'
-import { TIKTOK_OAUTH_CALLBACK_PATH, parseTikTokOAuthCallback } from './lib/tiktok-oauth.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -53,39 +45,16 @@ const upstream = process.env.SUPABASE_URL
 const anon = process.env.SUPABASE_ANON_KEY
 const service = process.env.SUPABASE_SERVICE_ROLE_KEY
 if (!upstream || !anon || !service) throw new Error('Supabase configuration required')
-const mediaPublicSecret = process.env.MEDIA_PUBLIC_SECRET || service
+const outboundMediaSigningKey = process.env.OUTBOUND_MEDIA_SIGNING_KEY || service
+const crmUrl = (process.env.ASHER_CRM_URL || '').replace(/\/$/, '')
+const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
+const crmWorkspaceId = process.env.ASHER_CRM_WORKSPACE_ID || ''
 
 let channels = []
 if (process.env.CONNECT_CHANNELS_FILE) channels = JSON.parse(await readFile(process.env.CONNECT_CHANNELS_FILE, 'utf8'))
 // ช่องทางจะ "ใช้งานได้" ก็ต่อเมื่อมีครบทั้งปลายทาง ความลับ และถูกเปิดไว้
 // ขาดอย่างใดอย่างหนึ่งถือว่ายังไม่เชื่อม ดีกว่าปล่อยให้ไปพังตอนยิงจริง
-// Only channels with a verified transport may reach the shared receiver or send queue.
-// A configured TikTok account must stay inert until receiver, queue and CRM integration is complete.
-const implementedChannels = new Set(['line', 'messenger', 'instagram'])
-const tiktokFeatureEnabled = process.env.CONNECT_TIKTOK_ENABLED === 'true'
-const activeChannels = channels.filter(c => implementedChannels.has(c.channel) && c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true
-  && (c.channel !== 'instagram' || (c.login_type === 'instagram' && /^\d+$/.test(c.account_id)
-    && /^v\d+\.\d+$/.test(c.api_version || 'v23.0') && c.verify_token)))
-
-const crmPublisherEnabled = process.env.ASHER_CRM_PUBLISH_ENABLED === 'true' || process.env.ASHER_CRM_PUBLISH_ENABLED === '1'
-// ★ ปิดไว้เป็นค่าตั้งต้น — crm_retry_profile_updates ยังไม่มีในฐานโปรดักชัน
-//   เปิดได้เมื่อ migration ของฝั่งนั้นขึ้นแล้ว ไม่งั้นรอบ publisher จะเสียเที่ยวทุกครั้ง
-const crmProfileRetryEnabled = process.env.ASHER_CRM_PROFILE_RETRY_ENABLED === 'true'
-const crmUrl = (process.env.ASHER_CRM_URL || '').replace(/\/$/, '')
-const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
-const crmProducer = process.env.ASHER_CRM_PRODUCER || 'connect-sandbox'
-const crmWorkspaceId = process.env.ASHER_CRM_WORKSPACE_ID || ''
-const crmPublisherConfigured = Boolean(crmPublisherEnabled && crmUrl && crmToken && crmWorkspaceId)
-// ช่องทาง -> โครงการ: CRM สร้าง Lead ได้ต่อเมื่อ conversation.created พก project_ref
-// ที่ชี้ไป crm_project_refs ซึ่ง active และ verified_at ไม่ว่าง
-const { map: crmProjectMap, invalid: crmProjectMapInvalid } = parseProjectMap(process.env.ASHER_CRM_PROJECT_MAP)
-const CRM_PUBLISH_INTERVAL = Number(process.env.ASHER_CRM_PUBLISH_INTERVAL_MS || 3000)
-const CRM_PUBLISH_BATCH = 20
-const CRM_PUBLISH_LEASE_SECONDS = 60
-let crmPublisherRunning = false
-let crmPublisherLastSuccess = null
-let crmPublisherLastError = null
-let crmPublisherStats = { pending: 0, processing: 0, delivered: 0, dead_letter: 0, last_success_at: null, last_error_at: null, oldest_pending_at: null }
+const activeChannels = channels.filter(c => c.inbox_id && c.account_id && c.secret && c.access_token && c.enabled === true)
 
 const WORKER_INTERVAL = 3000
 // ไม่สำเร็จนานกว่านี้ = ตัวส่งข้อความตาย
@@ -141,7 +110,7 @@ const log = {
 
 const fail = (status, code) => Object.assign(new Error(code), { status })
 
-const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked','ah_not_allowed','ah_not_found','ah_invalid','ah_state_not_allowed','ah_duplicate','ah_missing_required_data','invalid_user','last_admin','self_admin_change','media_not_found','media_upload_failed'])
+const safeCodes = new Set(['not_allowed','conversation_not_found','request_id_conflict','already_assigned','case_closed','claim_required','assignee_not_allowed','version_conflict','project_required','invalid_profile','invalid_budget','invalid_interest','invalid_message','channel_disabled','message_not_found','message_not_retryable','invalid_stage','reason_required','future_appointment_required','walk_in_required','invalid_amount','unit_unavailable','sale_reference_required','booking_required','stage_transition_not_allowed','booked_project_locked'])
 
 /**
  * ปฏิเสธ webhook พร้อมบอกเหตุผลลง log
@@ -169,29 +138,14 @@ const webhookFail = (status, code, channel, extra = {}) => {
 const AUTH = 'auth', DATA = 'data'
 
 async function callSupabase(layer, path, { token = anon, method = 'GET', body, headers = {} } = {}) {
-  let response
-  try {
-    response = await fetch(`${upstream}${path}`, {
-      method,
-      headers: { apikey: anon, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
-    })
-  } catch (e) {
-    // ต่อ Supabase ไม่ถึงเลย (ล่ม/คอขาด) ต่างจาก "ตอบกลับมาว่าผิด" คนละอาการ จึงต้องบันทึกแยก
-    // ผลที่ผู้เรียกเห็นเท่าเดิมคือ 503 service_unavailable ส่วนเหตุผลจริงอยู่ใน log กับ flow_event
-    log.warn('upstream_failed', { layer, path, status: 0, reason: e.message })
-    flowHealth.log('rpc', { ok: false, detail: `${path} ${e.message}` })
-    throw fail(503, 'service_unavailable')
-  }
+  const response = await fetch(`${upstream}${path}`, {
+    method,
+    headers: { apikey: anon, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
   const data = await response.json().catch(() => ({}))
-  if (response.ok) {
-    if (Date.now() - rpcOkLoggedAt > 60000) {
-      rpcOkLoggedAt = Date.now()
-      flowHealth.log('rpc', { ok: true })
-    }
-    return data
-  }
+  if (response.ok) return data
 
   const reason = data.message ?? data.msg ?? ''
   // เหตุที่เราออกแบบไว้แล้ว ส่งต่อให้หน้าเว็บได้ตรง ๆ ไม่ต้อง log เพราะไม่ใช่ความผิดปกติ
@@ -199,7 +153,6 @@ async function callSupabase(layer, path, { token = anon, method = 'GET', body, h
 
   // ที่เหลือคือของที่ไม่ได้ออกแบบไว้ ต้องเก็บหลักฐานก่อนยุบเป็น code กลาง ๆ
   log.warn('upstream_failed', { layer, path, status: response.status, reason: reason || null })
-  flowHealth.log('rpc', { ok: false, detail: `${path} → ${response.status}` })
   if (layer === AUTH || response.status === 401) throw fail(401, 'session_expired')
   throw fail(response.status === 403 ? 403 : 400, 'request_rejected')
 }
@@ -229,10 +182,10 @@ async function edgeCall(name, body, accessToken) {
 }
 
 const rpc = (token, action, data = {}, worker = false) =>
-  callSupabase(DATA, `/rest/v1/rpc/${worker === 'core' ? action : worker ? 'connect_worker' : 'connect_api'}`, {
+  callSupabase(DATA, `/rest/v1/rpc/${worker ? 'connect_worker' : 'connect_api'}`, {
     token, method: 'POST',
-    body: worker === 'core' ? data : { p_action: action, p_data: data },
-    headers: { 'Content-Profile': worker === 'core' ? 'core' : 'inbox', 'Accept-Profile': worker === 'core' ? 'core' : 'inbox' },
+    body: { p_action: action, p_data: data },
+    headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
   })
 
 // ───────────────────────────────────────────── เซสชันของคนที่ล็อกอิน
@@ -240,14 +193,7 @@ const rpc = (token, action, data = {}, worker = false) =>
 // เก็บเป็นไฟล์นอกโพรเซส เพื่อให้รีสตาร์ต/deploy แล้วคนที่กำลังทำงานอยู่ไม่หลุดพร้อมกันทั้งออฟฟิศ
 // บน VPS โฟลเดอร์นี้ผูกเป็น volume ไว้ใน docker-compose.yml ไม่งั้นสร้าง container ใหม่แล้วหายอยู่ดี
 const sessionDir = process.env.SESSION_DIR || join(root, '.sessions')
-const sessions = createSessions({ authCall, rpc, origin, log, sessionDir, authorize: async s => {
-  const userId = s.user_id ?? (() => { try { return JSON.parse(Buffer.from(s.access_token.split('.')[1], 'base64url')).sub } catch { return null } })()
-  if (!userId) return false
-  const state = await rpc(service, 'user_access_state', { p_user: userId }, 'core')
-  return state?.active === true && state.modules?.includes('connect') &&
-    (!state.revoked_after || (s.issued_at ?? 0) > Date.parse(state.revoked_after))
-} })
-const userAdmin = createUserAdmin({ upstream, serviceKey: service, rpc, sessions })
+const sessions = createSessions({ authCall, rpc, origin, log, sessionDir })
 
 // เรียกฟังก์ชันในฐานตรง ๆ ไม่ผ่านประตู connect_api/connect_worker
 // ใช้กับของที่เป็นเรื่องของชั้นนี้เอง ไม่ใช่คำสั่งของผู้ใช้ เช่นสถานะช่องทาง
@@ -259,148 +205,11 @@ const STATS_ACTIONS = new Set(['stats_overview', 'stats_agents', 'stats_timeline
 //   ที่นี่ทำแค่กันไม่ให้เรียกฟังก์ชันนอกทะเบียน เหมือน STATS_ACTIONS
 const LOG_ACTIONS = new Set(['logs_timeline', 'logs_summary'])
 
-// ทะเบียน RPC ของคลังคำตอบ (Answer Knowledge Hub — docs/answer-hub/) — ชื่อตรงกับ inbox.ah_* ใน sql/
-// ยึดแบบเดียวกับ STATS/LOG: ยิงด้วย token ของคนล็อกอิน ด่านสิทธิ์จริง (sales/manager/admin)
-// อยู่บรรทัดแรกของฟังก์ชันในฐาน (core.current_user_role) ที่นี่กันแค่เรียกนอกทะเบียน
-// ขยายทะเบียนเมื่อไฟล์ sql/ ถัดไปของ answer-hub เพิ่มฟังก์ชัน — แก้ที่เดียวเสมอ
-const AH_ACTIONS = new Set(['ah_editor_options', 'ah_editor_get', 'ah_preview', 'ah_import_preview', 'ah_import_commit', 'ah_learning_list', 'ah_learning_review', 'ah_quick_answer', 'ah_recommend', 'ah_usage_record', 'ah_feedback', 'ah_health', 'ah_list', 'ah_get', 'ah_save', 'ah_approve', 'ah_retire', 'ah_versions', 'ah_source_list', 'ah_source_save', 'ah_resolve', 'ah_binding_list', 'ah_binding_save', 'ah_binding_delete'])
-
 const rpcDirect = (token, fn, body = {}) =>
   callSupabase(DATA, `/rest/v1/rpc/${fn}`, {
     token, method: 'POST', body,
     headers: { 'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
   })
-
-async function refreshCrmPublisherStats() {
-  try {
-    const stats = await rpcDirect(service, 'crm_publish_stats')
-    if (stats && typeof stats === 'object') crmPublisherStats = { ...crmPublisherStats, ...stats }
-  } catch (e) {
-    crmPublisherLastError = new Date().toISOString()
-    log.warn('crm_publisher_stats_failed', { reason: e.message })
-  }
-}
-
-async function crmPublisherWorker() {
-  if (crmPublisherRunning) return
-  if (!crmPublisherConfigured) {
-    if (crmPublisherEnabled || crmUrl || crmToken || crmWorkspaceId) await refreshCrmPublisherStats()
-    return
-  }
-  crmPublisherRunning = true
-  try {
-    if (crmProfileRetryEnabled) {
-      try { await rpcDirect(service, 'crm_retry_profile_updates', { p_limit: CRM_PUBLISH_BATCH }) }
-      catch { log.warn('crm_profile_retry_failed', { code: 'profile_retry_unavailable' }) }
-    }
-    const rows = await rpcDirect(service, 'crm_publish_claim', {
-      p_limit: CRM_PUBLISH_BATCH,
-      p_lease_seconds: CRM_PUBLISH_LEASE_SECONDS,
-    })
-    for (const row of Array.isArray(rows) ? rows : []) {
-      let result = 'delivered'
-      let errorCode = null
-      let errorDetail = null
-      let nextAttemptAt = null
-      // conversation.created เท่านั้นที่พก project_ref — CRM ใช้ตัวนี้ตัดสินว่าจะเปิด Lead ไหม
-      // ไม่มีคู่ที่แมปไว้ = ส่งไปโดยไม่มี project_ref แล้ว CRM ลง project_ref_missing
-      // (ไม่มี Lead แต่ contact/conversation ยังเข้าตามปกติ) ดีกว่าผูก Lead ผิดโครงการ
-      let payload = row.payload
-      if (row.event_type === 'conversation.created') {
-        const projectRef = projectRefFor(crmProjectMap, payload?.account_scope)
-        if (projectRef) {
-          payload = { ...payload, project_ref: projectRef }
-        } else {
-          log.warn('crm_project_map_miss', { account_scope: payload?.account_scope, event_id: row.event_id })
-        }
-      }
-      try {
-        const response = await fetch(`${crmUrl}/internal/events`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${crmToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            event_id: row.event_id,
-            producer: crmProducer,
-            type: row.event_type,
-            schema_version: 1,
-            workspace_id: crmWorkspaceId,
-            aggregate_type: row.aggregate_type,
-            aggregate_id: row.aggregate_id,
-            aggregate_version: 1,
-            occurred_at: row.occurred_at,
-            emitted_at: new Date().toISOString(),
-            correlation_id: row.aggregate_id,
-            causation_id: row.event_id,
-            source_is_test: false,
-            payload,
-          }),
-          signal: AbortSignal.timeout(10000),
-        })
-        if (!response.ok) {
-          result = classifyCrmFailure({ status: response.status })
-          errorCode = `http_${response.status}`
-          errorDetail = (await response.text()).slice(0, 1000)
-        }
-      } catch (e) {
-        result = 'retry'
-        errorCode = e.name === 'TimeoutError' ? 'timeout' : 'network_error'
-        errorDetail = e.message
-      }
-      if (result === 'retry') {
-        const attempts = Number(row.attempts || 1)
-        nextAttemptAt = new Date(Date.now() + crmBackoffMs(attempts)).toISOString()
-      }
-      await rpcDirect(service, 'crm_publish_finish', {
-        p_id: row.id,
-        p_status: result,
-        p_error_code: errorCode,
-        p_error_detail: errorDetail,
-        p_next_attempt_at: nextAttemptAt,
-      })
-      if (result === 'delivered') crmPublisherLastSuccess = new Date().toISOString()
-      if (result === 'dead_letter' || result === 'retry') crmPublisherLastError = new Date().toISOString()
-    }
-    await refreshCrmPublisherStats()
-  } catch (e) {
-    crmPublisherLastError = new Date().toISOString()
-    log.warn('crm_publisher_failed', { reason: e.message })
-  } finally {
-    crmPublisherRunning = false
-  }
-}
-
-// ชั้นบริการคลังคำตอบ (Phase 6) — ประตูเดียวของทุก action ah_* ในตัวจัดการด้านล่าง
-// flags default ปิดหมด (ANSWER_HUB_ENABLED ฯลฯ) — เปิดทีละตัวทาง env / inbox.settings
-const answerHub = createAnswerHubService({
-  callRpc: (token, fn, body) => rpcDirect(token, fn, { p_data: body }),
-  flags: buildFlags({ env: process.env }),
-  log: (event, fields) => log.info(event, fields),
-})
-
-// ───────────────────────────────────────────── ระบบเช็คสถานะ (health/)
-//
-// channelStates() ด้านบนตอบว่า "ช่องทางยังทักได้ไหม" ส่วน health/ ตอบว่า "ท่อทั้งเส้นยังเดินไหม"
-// ตั้งแต่ DNS/TLS ของ Caddy ยันคิวขาออก — เห็นทั้งหมดบน /admin/health (ด่าน manager/admin อยู่ใน SQL)
-// ทุกจุดวิ่งด้วย health.log ซึ่งยิงทิ้ง ไม่ throw ไม่รอ — พังแล้วของเดิมต้องยังเดินต่อ
-// ★ ตั้งชื่อ flowHealth ไม่ใช่ health — ชื่อ health ถูก function health() ด้านล่าง (จุด healthcheck
-//   ของ docker) ใช้อยู่แล้ว สองอย่างนี้ตอบคนละคำถาม: ตัวนี้คือ "ท่อทั้งเส้น" ส่วนอีกตัวคือ "คิวของโพรเซสนี้"
-const flowHealth = createHealth({
-  // ประตูที่ตัวเช็คยิงเข้าหาตัวเอง (ผ่าน Caddy กลับมา) — โดเมนจริงถ้ามี ไม่งั้นคือ origin ที่ตั้งไว้
-  publicUrl: process.env.PUBLIC_URL ?? origin,
-  getChannels: async () => activeChannels.map(c => ({
-    key: c.key,
-    type: c.channel,
-    accessToken: c.access_token,
-  })),
-  // สถานะรวมของโพรเซส (overall/database/workers/queue) — snapshot แนบไปกับคำตอบของหน้า admin
-  getSystemStatus: () => refreshSystemStatus(),
-  // ข้อทดสอบเพิ่มของชั้นโพรเซส ต่อท้าย self-test: worker สองคิว · คิวงาน · โหมดเงา · ตัวแปรที่จำเป็น
-  extraSelfTests: () => systemExtraTests(),
-})
-
-// stage 'rpc' บันทึกความสำเร็จแบบ heartbeat นาทีละครั้งพอ — ทุก claim_job ล่ะครั้งจะกลายเป็น
-// event วันละหมื่นกว่าแถวเปล่า ๆ ส่วนความล้มเหลวบันทึกทุกครั้ง เพราะกฎนับว่า "ล้มกี่ครั้งใน 10 นาที"
-let rpcOkLoggedAt = 0
 
 // ───────────────────────────────────────────── ไฟสถานะของช่องทาง
 //
@@ -427,28 +236,21 @@ let healthCache = null, healthAt = 0, healthPending = null
  * และการต่อไม่ได้ชั่วคราวไม่ควรทำให้ทั้งแถบขึ้นแดง
  */
 async function checkToken(config) {
-  if (!implementedChannels.has(config.channel)) return { ok: null, reason: 'ยังไม่มีตัวตรวจ token สำหรับช่องทางนี้' }
   // ★ Messenger ต้องถามด้วย debug_token ไม่ใช่ /me
   //   token ของเรามีแค่ pages_messaging ส่วน /me?fields=id,name ต้องการ pages_read_engagement
   //   ถามผิดข้อแล้วจะได้ (#100) ทั้งที่ token ยังใช้งานได้ปกติ = ขึ้นแดงหลอก
   //   debug_token ตอบตรงคำถามว่า "ใบนี้ยังมีชีวิตไหม" และไม่ต้องใช้สิทธิ์เพิ่ม
   const url = config.channel === 'line'
     ? 'https://api.line.me/v2/bot/info'
-    : config.channel === 'instagram'
-      ? `https://graph.instagram.com/${config.api_version || 'v23.0'}/me?fields=id`
-      : `https://graph.facebook.com/${config.api_version || 'v23.0'}/debug_token`
-        + `?input_token=${encodeURIComponent(config.access_token)}`
+    : `https://graph.facebook.com/${config.api_version || 'v23.0'}/debug_token`
+      + `?input_token=${encodeURIComponent(config.access_token)}`
   try {
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${config.access_token}` },
       signal: AbortSignal.timeout(HEALTH_TIMEOUT),
     })
     const data = await response.json().catch(() => ({}))
-    if (config.channel === 'instagram' && response.ok && !data.error) {
-      if (data.id === config.account_id) return { ok: true }
-      return { ok: false, reason: 'token ใช้ได้แต่ไม่ใช่ Instagram account ที่ตั้งค่าไว้' }
-    }
-    if (config.channel !== 'line' && config.channel !== 'instagram' && response.ok && !data.error) {
+    if (config.channel !== 'line' && response.ok && !data.error) {
       if (data.data?.is_valid) return { ok: true }
       return { ok: false, reason: `token ใช้ไม่ได้: ${data.data?.error?.message ?? 'Facebook แจ้งว่าใบนี้ใช้ไม่ได้แล้ว'}`.slice(0, 140) }
     }
@@ -476,11 +278,8 @@ async function buildHealth() {
 
   // ★ แสดงเฉพาะช่องทางที่เปิดใช้ — ช่องที่เลิกใช้แล้วไม่ควรกินที่บนแถบหัว
   //   ของที่ปิดอยู่ยังมีข้อมูลเดิมครบในฐาน แค่ไม่ต้องขึ้นหน้าจอ
-  return channels.filter(c => c.enabled === true || c.channel === 'tiktok').map(c => {
+  return channels.filter(c => c.enabled === true).map(c => {
     const base = { name: c.name || c.key, channel: c.channel, enabled: activeChannels.includes(c) }
-    if (c.channel === 'tiktok') return { ...base, state: 'off', last_message_at: null,
-      reason: tiktokFeatureEnabled ? 'ยังรับส่งไม่ได้: รอ receiver/queue/CRM และยืนยันสิทธิ์บัญชี TikTok'
-                                    : 'TikTok ปิดอยู่: รอ receiver/queue/CRM และยืนยันสิทธิ์บัญชี TikTok' }
     if (!base.enabled) return { ...base, state: 'off', last_message_at: null, reason: 'ยังตั้งค่าไม่ครบใน channels.json' }
 
     const h = db?.[c.key] ?? {}
@@ -550,7 +349,6 @@ const TEAM_KINDS = ['notify']
 const SEND_KINDS = ['typing']
 
 let workerRunning = false, workerLastSuccess = null
-let replyWatchdogAt = 0
 // ภาพคิวล่าสุด อ่านนาทีละครั้งพอ — /health ต้องเบาและต้องไม่พังเพราะฐานช้า
 let jobQueue = null, jobQueueAt = 0
 
@@ -591,14 +389,6 @@ async function worker() {
   workerRunning = true
   try {
     await refreshSendMode()
-    // The database function is episode-aware and guarded by an advisory lock,
-    // so this remains safe if more than one Connect process is running.
-    if (Date.now() - replyWatchdogAt >= 60000) {
-      replyWatchdogAt = Date.now()
-      await rpcDirect(service, 'watchdog', { p_now: new Date().toISOString() })
-        .then(result => log.info('reply_watchdog', result))
-        .catch(error => log.warn('reply_watchdog_failed', { reason: error.message }))
-    }
     // วนจนคิวว่าง แต่ไม่เกินรอบละ 20 ชิ้น
     // ไม่จำกัดเลย = คิวยาว ๆ จะกินทั้งรอบแล้วงานอื่นไม่ได้เดิน
     let done = 0
@@ -635,18 +425,9 @@ async function runJob(job) {
   try {
     if (job.source === 'delivery') {
       const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-      const correlationId = String(job.request_id || job.correlation_id || job.message_id || job.id || 'unknown')
-      const prepared = await addOutboundMedia(job)
-      if (prepared.payload?.media?.length) log.info('media_pipeline', { phase: 'SEND', correlation_id: correlationId, message_id: job.message_id, channel: job.channel, count: prepared.payload.media.length })
-      const result = await deliver(prepared, config)
-      if (prepared.payload?.media?.length) log.info('media_pipeline', { phase: 'META', correlation_id: correlationId, message_id: job.message_id, channel: job.channel, ok: result.status === 'sent', status: result.status, reason: result.error ?? null })
-      // ทางส่งหาลูกค้ามีทางเดียวทั้งระบบ (บอทกับเซลส์เข้าคิวเดียวกัน) — จุดเดียวที่บอกได้ว่า "ถึงมือลูกค้าหรือยัง"
-      flowHealth.log('reply_sent', { channel: config?.key ?? null, ref: result.message_id ?? job.message_id,
-                                 ok: result.status === 'sent', detail: result.error ?? null })
+      const result = await deliver(job, config)
       if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
-      const finished = await rpc(service, 'finish', result, true)
-      if (result.status === 'sent') { captureAnswerUsage(job, config?.key); if (job.message_id) captureLearning(job.conversation_id, job.message_id) }
-      return finished
+      return await rpc(service, 'finish', result, true)
     }
     if (job.kind === 'generate') return await runGenerate(job)
     if (job.kind === 'classify') return await runClassify(job)
@@ -659,51 +440,8 @@ async function runJob(job) {
   }
 }
 
-async function signMediaObject(path) {
-  // Do not return Supabase's internal signed URL. In Docker it is commonly
-  // supabase-envoy:8000, which Meta cannot fetch. Connect is the public HTTPS
-  // boundary and streams the private object after verifying this token. The
-  // proxy itself performs the authenticated object read, so this path avoids
-  // an unnecessary second storage request and an internal signed URL.
-  return buildPublicMediaUrl(origin, path, mediaPublicSecret)
-}
-
-async function addOutboundMedia(job) {
-  if (!job.message_id || !job.conversation_id) return job
-  // ★ ประตูของ worker ไม่ใช่ media_of ของผู้ใช้ — ตัวนั้นตรวจ auth.uid() เป็นบรรทัดแรก
-  //   แต่ที่นี่ยิงด้วย service key ซึ่งไม่มีตัวตนผู้ใช้ จึงตกด่านนั้นเสมอ (403)
-  //   แล้วงานส่งจะค้างจนสัญญาเช่าหมดอายุ กลายเป็น stale_lease วนทุกรอบ
-  const map = await rpcDirect(service, 'media_of_worker', { p_conversation_id: job.conversation_id })
-  const media = Array.isArray(map?.[job.message_id]) ? map[job.message_id] : []
-  if (!media.length) return job
-  const images = []
-  for (const item of media) {
-    if (!item?.path || !/^image\/(jpeg|png|webp)$/.test(item.mime || '')) continue
-    images.push({ url: await signMediaObject(item.path) })
-  }
-  return images.length ? { ...job, payload: { type: 'media', text: job.text === '[แนบรูปภาพ]' ? '' : job.text, media: images } } : job
-}
-
 const finishJob = (job, body) =>
   rpc(service, 'finish_job', { job_id: job.id, lease_id: job.lease_id, ...body }, true)
-
-// Learning is deliberately best-effort and only begins after delivery has
-// succeeded. A capture outage must never retry, delay, or alter a human reply.
-const captureLearning = (conversationId, messageId) => {
-  const enabled = ['1', 'true'].includes(String(process.env.ANSWER_HUB_LEARNING_ENABLED ?? '').toLowerCase())
-  if (!enabled || !conversationId) return
-  void rpc(service, 'ah_learning_create', { conversation_id: conversationId, message_id: messageId }, true)
-    .then(result => log.info('learning_candidate_capture', { conversation_id: conversationId, created: Boolean(result?.created) }))
-    .catch(error => log.warn('learning_candidate_capture_failed', { conversation_id: conversationId, reason: error.message }))
-}
-
-// Best-effort usage telemetry; core delivery result is never affected.
-const captureAnswerUsage = (job, channel) => {
-  const answerId = job?.payload?.answer_id
-  if (!answerId) return
-  void rpc(service, 'ah_usage_record', { answer_id: answerId, conversation_id: job.conversation_id, channel }, true)
-    .catch(error => log.warn('answer_usage_record_failed', { reason: error.message }))
-}
 
 // ลูกค้าบล็อกบัญชีเราแล้ว — ติดธงไว้ที่ผู้ติดต่อ จะได้ไม่เสียโควตากับคนที่ไม่ได้ยินเราอีก
 // ล้มตรงนี้ไม่ควรทำให้งานที่เพิ่งส่งไม่สำเร็จกลายเป็นล้มซ้ำ จึงกลืนไว้แต่ต้องบันทึก
@@ -723,22 +461,6 @@ async function runGenerate(job) {
 
   const last = [...(context.history ?? [])].reverse().find(m => m.role === 'user')
   const text = last?.content ?? ''
-  // Phase 15 MVP: a Hub response is allowed only when SQL has already
-  // enforced approved/bot-or-both/bot_auto_answer. Dynamic answers remain on
-  // the human-review path until their bindings can be resolved safely.
-  if (['1', 'true'].includes(String(process.env.ANSWER_HUB_ENABLED ?? '').toLowerCase())
-    && ['1', 'true'].includes(String(process.env.ANSWER_HUB_BOT_ENABLED ?? '').toLowerCase()) && text) {
-    try {
-      const recommended = await rpc(service, 'ah_recommend', { question: text, project_id: context.project?.id, audience: 'bot' }, true)
-      const candidate = recommended?.rows?.find(item => item.answer_type === 'static' && typeof item.body_template === 'string' && item.body_template.trim())
-      if (candidate) {
-        const queued = await rpc(service, 'bot_reply', { conversation_id: job.conversation_id, text: candidate.body_template, offtopic: false }, true)
-        if (!shadow) flowHealth.log('reply_queued', { channel: activeChannels.find(c => c.inbox_id === job.inbox_id)?.key ?? null, ref: queued?.message_id })
-        log.info('answer_hub_bot_replied', { job_id: job.id, answer_id: candidate.id })
-        return finishJob(job, { status: 'done' })
-      }
-    } catch (e) { log.warn('answer_hub_bot_fallback', { job_id: job.id, reason: e.message }) }
-  }
   const known = [
     context.known_phone ? `Customer ALREADY gave phone number: ${context.known_phone}. Do NOT ask for phone again.` : '',
   ].filter(Boolean).join('\n')
@@ -749,13 +471,8 @@ async function runGenerate(job) {
     ctx: { is_new_chat: context.is_new_chat },
   })
 
-  const queued = await rpc(service, 'bot_reply',
+  await rpc(service, 'bot_reply',
     { conversation_id: job.conversation_id, text: reply, offtopic: offTopic }, true)
-  // จับคู่กับ reply_sent ด้วย message_id เพื่อหา "คิวค้าง" — ในโหมดเงาคิวขาออกไม่เดินโดยตั้งใจ
-  // จึงไม่บันทึก ไม่งั้นกฎคิวค้างจะยิงเตือนทุกข้อความของบอททั้งที่เป็นพฤติกรรมปกติของโหมดนั้น
-  if (!shadow) flowHealth.log('reply_queued', {
-    channel: activeChannels.find(c => c.inbox_id === job.inbox_id)?.key ?? null,
-    ref: queued?.message_id })
   await rpc(service, 'store_intent', intentRow(intent, {
     conversation_id: job.conversation_id, message_id: job.message_id, external_id: job.target,
     project: context.project, ad_id: context.ad_id, ad_title: context.ad_title,
@@ -790,21 +507,6 @@ async function runOutbound(job) {
 
   if (job.kind === 'typing') return finishJob(job, await deliver(job, inboxConfig))
 
-  // A customer-reply alert can be claimed just before a human reply arrives.
-  // Re-read the durable episode state immediately before provider I/O so a
-  // cancelled alert is never sent merely because it already had a lease.
-  if (job.kind === 'notify' && job.payload?.alert_id) {
-    const current = await rpcDirect(service, 'reply_alert_current', {
-      p_alert_id: job.payload.alert_id,
-    })
-    if (!current) {
-      log.info('reply_alert_skipped_after_reply', {
-        job_id: job.id, alert_id: job.payload.alert_id,
-      })
-      return finishJob(job, { status: 'skipped', skip_reason: 'human_replied' })
-    }
-  }
-
   // งานที่รู้ปลายทางของตัวเองอยู่แล้ว (เช่นตอบกลับเข้ากลุ่ม LINE) ส่งตรงไปเลย
   // ตัวกระจายของทีมข้างล่างมีไว้สำหรับ channel 'team' ซึ่งแปลว่า "แจ้งใครก็ได้ที่เฝ้าอยู่"
   if (job.channel !== 'team') {
@@ -812,9 +514,7 @@ async function runOutbound(job) {
     if (!target) return finishJob(job, { status: 'skipped', skip_reason: 'no_target' })
     const result = await deliver({ ...job, target, payload }, config)
     if (result.blocked && job.conversation_id) await markBlocked(job.conversation_id)
-    const finished = await finishJob(job, result)
-    if (result.status === 'sent') { captureAnswerUsage(job, inboxConfig.channel); if (job.message_id) captureLearning(job.conversation_id, job.message_id) }
-    return finished
+    return finishJob(job, result)
   }
 
   const targets = notifyTargets(job.payload ?? {}, process.env)
@@ -826,11 +526,6 @@ async function runOutbound(job) {
   const text = formatNotify({ ...job.payload, channel_label: channelLabel(job) }, { inboxUrl: inboxUrlFor(job) })
   const results = await Promise.all(targets.map(t =>
     deliver({ ...job, kind: 'notify', channel: t.channel, target: t.target, payload: { type: 'text', text } }, t.config)))
-
-  // ทาง telegram ของการแจ้งทีมคือท่อเดียวกับที่ระบบเช็คใช้ยิงเตือน มันตายเมื่อไหร่ทั้งระบบจึงต้องรู้ตัว
-  for (const [i, r] of results.entries()) {
-    if (targets[i].channel === 'telegram') flowHealth.log('telegram', { ok: r.status === 'sent', detail: r.error ?? null })
-  }
 
   const sent = results.filter(r => r.status === 'sent')
   if (sent.length) return finishJob(job, { status: 'done', provider_id: sent[0].provider_id ?? null })
@@ -870,11 +565,11 @@ function outboundRoute(job, inboxConfig) {
 
 const channelLabel = job => {
   const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-  return config?.channel === 'line' ? ' LINE' : config?.channel === 'messenger' ? ' Messenger' : config?.channel === 'instagram' ? ' Instagram' : ''
+  return config?.channel === 'line' ? ' LINE' : config?.channel === 'messenger' ? ' Messenger' : ''
 }
 const inboxUrlFor = job => {
   const config = activeChannels.find(c => c.inbox_id === job.inbox_id)
-  return config?.channel === 'line' ? 'https://chat.line.biz/' : config?.channel === 'instagram' ? 'https://www.instagram.com/direct/inbox/' : 'https://business.facebook.com/latest/inbox/all'
+  return config?.channel === 'line' ? 'https://chat.line.biz/' : 'https://business.facebook.com/latest/inbox/all'
 }
 
 // ───────────────────────────────────────────────────────── คิวขาเข้า
@@ -887,27 +582,6 @@ const inboxUrlFor = job => {
 // event แรกจะถูกฐานปฏิเสธว่าซ้ำ เหลือทำจริงแค่ที่ยังไม่สำเร็จ
 
 let inboundRunning = false, inboundLastSuccess = null
-
-// Messenger ชื่อที่อ่านได้จาก Page Conversations ต้องผ่าน RPC เฉพาะของมัน
-// เพราะฟังก์ชันนี้เติมชื่อเฉพาะ contact ที่ยังว่าง จึงไม่ทับชื่อที่เซลส์ตั้งเอง
-async function writeProfile(config, externalId, profile) {
-  if (config.channel === 'messenger' && profile.display_name) {
-    await rpcDirect(service, 'sync_contact_profile', {
-      p_data: {
-        channel: config.channel,
-        people: [{ external_id: externalId, name: profile.display_name }],
-      },
-    }).catch(e => log.warn('messenger_profile_backfill_failed', { reason: e.message }))
-  }
-
-  // ยังคงอัปเดตรูป/สถานะผ่าน worker แต่ส่งชื่อเป็น null สำหรับ Messenger
-  // เพื่อให้ฐานเป็นผู้คุมกฎ "ชื่อที่เซลส์ตั้งเองห้ามถูกทับ"
-  await rpc(service, 'profile_update', {
-    channel: config.channel, account_key: config.inbox_id, external_id: externalId,
-    display_name: config.channel === 'messenger' ? null : profile.display_name,
-    picture_url: profile.picture_url, status: profile.status,
-  }, true)
-}
 
 // เติมชื่อ/รูปลูกค้าจากแพลตฟอร์ม — ทำหลังบันทึกข้อความเสร็จแล้วเท่านั้น
 //
@@ -934,7 +608,10 @@ async function syncProfiles(config, events) {
         : { type: 'user' }
 
       const p = await fetchProfile({ channel: config.channel, externalId: id, config, source, deps: { log } })
-      await writeProfile(config, id, p)
+      await rpc(service, 'profile_update', {
+        channel: config.channel, account_key: config.inbox_id, external_id: id,
+        display_name: p.display_name, picture_url: p.picture_url, status: p.status,
+      }, true)
     } catch (err) {
       // คนเดียวพังไม่ควรทำให้คนที่เหลือในก้อนเดียวกันไม่ได้ชื่อ
       log.warn('profile_sync_failed', { channel: config.key, reason: err.message })
@@ -970,7 +647,10 @@ async function refreshProfiles() {
         deps: { log },
       })
       if (p.status === 'ok') ok++; else if (p.status === 'not_found') notFound++; else failed++
-      await writeProfile(config, row.external_id, p).catch(() => { failed++ })
+      await rpc(service, 'profile_update', {
+        channel: row.channel, account_key: row.account_key, external_id: row.external_id,
+        display_name: p.display_name, picture_url: p.picture_url, status: p.status,
+      }, true).catch(() => { failed++ })
       // หน่วงเท่ากับสคริปต์ backfill เพื่อไม่ให้ชนโควตาของ LINE/Meta
       await new Promise(r => setTimeout(r, 200))
     }
@@ -1037,17 +717,6 @@ async function uploadMediaObject(path, { bytes, type }) {
   if (!response.ok) throw new Error(`storage_${response.status}`)
 }
 
-// คัดลอกภายใน bucket (รูปคลัง → path ของข้อความ) — ไม่ต้องดาวน์โหลดแล้วอัปโหลดใหม่
-async function copyMediaObject(sourceKey, destinationKey) {
-  const response = await fetch(`${upstream}/storage/v1/object/copy`, {
-    method: 'POST',
-    headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bucketId: 'inbox-media', sourceKey, destinationKey }),
-    signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
-  })
-  if (!response.ok) throw new Error(`storage_copy_${response.status}`)
-}
-
 async function syncMedia(config, events, received) {
   const jobs = events.flatMap((event, i) => mediaTasks(event, received[i]))
   if (!jobs.length) return
@@ -1094,26 +763,7 @@ async function processInbound(job) {
   try {
     const events = normalizeWebhook(config.channel, job.payload, config)
     const received = []
-    for (const event of events) {
-      if (event.event_type === 'message_deleted') {
-        received.push(await rpcDirect(service, 'instagram_message_deleted', {
-          p_inbox_id: config.inbox_id, p_external_id: event.external_id,
-          p_message_id: event.provider_message_id,
-        }))
-        continue
-      }
-      // เฉพาะข้อความของลูกค้าที่ผ่าน normalize แล้วเท่านั้น — echo/ข้อความของแอดมิน
-      // คำสั่งในกลุ่ม และเนื้อหา Answer Hub ไม่ถูกดึงชื่อ/เบอร์
-      const signal = event.event_type === 'message' && event.source_type === 'user'
-        ? extractCustomerContact(event.text)
-        : { name: null, phone: null }
-      const enriched = {
-        ...event,
-        ...(signal.name ? { extracted_name: signal.name } : {}),
-        ...(signal.phone ? { extracted_phone: signal.phone } : {}),
-      }
-      received.push(await rpc(service, 'receive', tagReviewCode(enriched, config, META_REVIEW_CODE), true))
-    }
+    for (const event of events) received.push(await rpc(service, 'receive', event, true))
     await finish({ status: 'done', events_count: events.length })
     log.info('webhook_processed', { channel: job.channel_key, log_id: job.id, events: events.length })
     // ★ ยิงทิ้งไว้ ไม่ await — ข้อความลงฐานเสร็จไปแล้ว โปรไฟล์เป็นของแถมที่ขาดได้
@@ -1164,6 +814,18 @@ async function inboundWorker() {
 const RSS_WARN_MB = 140
 let rssWarnedAt = 0
 
+// เลขรุ่น schema จากทะเบียน inbox.sql_applied (sql/039) — ดึงแบบข้างหลังและแคชไว้
+// เพราะ /health ต้องเร็วและห้ามล้มเพราะฐาน: ตัวเลขช้าไปหนึ่งรอบ (30 วิ) ไม่เป็นไร
+let schemaVersion = null
+let schemaVersionAt = 0
+function refreshSchemaVersion() {
+  if (Date.now() - schemaVersionAt < 300000) return
+  schemaVersionAt = Date.now()
+  rpcDirect(service, 'schema_version_latest').then(v => {
+    if (v !== null && v !== undefined) schemaVersion = Number(v)
+  }).catch(() => { /* ยังไม่ลง 039 = ยังไม่มีเลขให้รายงาน */ })
+}
+
 function health() {
   const mem = process.memoryUsage()
   const rssMb = Math.round(mem.rss / 1048576)
@@ -1173,190 +835,20 @@ function health() {
     log.warn('memory_high', { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 })
   }
   const idle = since => Date.now() - (since ? Date.parse(since) : startedAt)
+  refreshSchemaVersion()
   const idleFor = idle(workerLastSuccess), inboundIdleFor = idle(inboundLastSuccess)
   const outboundOk = shadow || !activeChannels.length || idleFor <= WORKER_STALE_MS
   const inboundOk = !activeChannels.length || inboundIdleFor <= WORKER_STALE_MS
-  // สถานะรวมใช้ของที่คำนวณไว้แล้วเท่านั้น (refreshSystemStatus เดินเป็นรอบของตัวเอง)
-  // /health ต้องเบาและห้ามรอใคร — ครั้งแรกก่อนรอบแรกจะยังไม่มีคำตอบ จึงรายงาน unknown ไปก่อนได้
-  const sys = sysCache
-  return { ok: outboundOk && inboundOk, status: sys?.overall ?? 'unknown',
-           service: 'asher-connect', shadow, shadowDefault, authentication: 'individual',
-           checkedAt: sys?.checkedAt ?? null, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-           version: APP_VERSION, environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-           database: sys?.database ?? null, channels: sys?.channels ?? null,
-           workers: sys?.workers ?? null, queue: sys?.queue ?? null, shadowMode: shadow,
+  return { ok: outboundOk && inboundOk, service: 'asher-connect', shadow, shadowDefault, authentication: 'individual',
            workerLastSuccess, idleFor, inboundLastSuccess, inboundIdleFor,
+           schemaVersion,
            activeChannels: activeChannels.length, edgeFunctions, projects,
            // หน่วยเป็น MB เพราะไบต์ดิบไม่มีใครอ่านออกตอนตีสาม
            // rss คือของที่ docker วัดจริง ส่วน heapUsed คือของที่ V8 ถืออยู่
            memory: { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 },
-           crmPublisher: {
-             enabled: crmPublisherEnabled,
-             profileRetryEnabled: crmProfileRetryEnabled,
-             configured: crmPublisherConfigured,
-             status: !crmPublisherEnabled ? 'disabled' : crmPublisherConfigured ? 'healthy' : 'misconfigured',
-             pending: Number(crmPublisherStats.pending || 0),
-             processing: Number(crmPublisherStats.processing || 0),
-             delivered: Number(crmPublisherStats.delivered || 0),
-             deadLetter: Number(crmPublisherStats.dead_letter || 0),
-             lastSuccessAt: crmPublisherLastSuccess || crmPublisherStats.last_success_at || null,
-             lastErrorAt: crmPublisherLastError || crmPublisherStats.last_error_at || null,
-             oldestPendingAt: crmPublisherStats.oldest_pending_at || null,
-           },
            // สวิตช์ของบอทต้องมองเห็นจากข้างนอกเสมอ
            // ไม่งั้น "บอทไม่ตอบ" กับ "บอทถูกปิดไว้" จะแยกกันไม่ออกตอนมีคนถามว่าทำไมเงียบ
            bot: jobQueue }
-}
-
-// ───────────────────────────────────────────── สถานะรวมของระบบ (Admin System Status)
-//
-// คำตอบเดียวของทั้งระบบว่า HEALTHY / DEGRADED / DOWN — คำนวณ "ที่นี่" เท่านั้น
-// หน้าเว็บห้ามสรุปเอง (หลักการเดียวกับด่านสิทธิ์: การซ่อนปุ่มคือความสะอาดตา ตัวเลขจริงต้องมาจาก backend)
-//
-//   DOWN     ฐานข้อมูลใช้ไม่ได้ หรือ inbound worker เงียบเกินเกณฑ์ critical — ข้อความลูกค้าหายแน่ ๆ
-//   DEGRADED บางส่วนผิดปกติแต่ยังให้บริการได้ (ช่องทางตาย, worker ขาออกเงียบ, คิวค้างเกินเกณฑ์)
-//   HEALTHY  ทุกชิ้นส่วนที่สำคัญยังเดิน
-//
-// เกณฑ์นาทีอ่านจากกฎ worker_age/pending-* ใน inbox.monitor_rule (admin แก้จากหน้าเว็บ มีผลทันที)
-// ช่องทางเงียบ "ไม่ใช่" ความเสียหาย — แยก enabled/reachable/recent activity ให้ชัดตามจริง
-const APP_VERSION = process.env.APP_VERSION ?? null
-const SYS_TTL = 15000
-let sysCache = null, sysAt = 0, sysPending = null
-
-function workerState(idleForMs, thresholds, enabled) {
-  const ageMin = idleForMs / 60000
-  const base = { lastSuccessAt: null, ageMin: Math.round(ageMin * 10) / 10, warnMin: thresholds.warn, critMin: thresholds.crit }
-  if (!enabled) return { ...base, status: 'disabled' }
-  if (ageMin >= thresholds.crit) return { ...base, status: 'down' }
-  if (ageMin >= thresholds.warn) return { ...base, status: 'degraded' }
-  return { ...base, status: 'healthy' }
-}
-
-async function computeSystemStatus() {
-  const checkedAt = new Date().toISOString()
-
-  // ฐานข้อมูล: ยิง health_ping จริง (ตรวจว่าตอบ ไม่ใช่ดูว่าพอร์ตเปิด)
-  const t0 = Date.now()
-  let dbErr = null
-  try { await rpcDirect(service, 'health_ping') } catch (e) { dbErr = e.message }
-  const database = { status: dbErr ? 'down' : 'healthy', latencyMs: dbErr ? null : Date.now() - t0,
-                     lastSuccessAt: dbErr ? null : new Date().toISOString(), error: dbErr }
-
-  // เกณฑ์นาทีจากตารางกฎ — อ่านไม่ได้ก็ใช้ค่าตั้งต้นเดิมของระบบ ไม่พาทั้งหน้าล้ม
-  let th = { inbound_worker: { warn: 1, crit: 5 }, outbound_worker: { warn: 1, crit: 5 }, queue_age: { warn: 3, crit: 10 } }
-  try { th = { ...th, ...(await rpcDirect(service, 'health_thresholds')) } } catch (e) {
-    log.warn('health_thresholds_unreadable', { reason: e.message })
-  }
-
-  // worker: อายุความสำเร็จล่าสุดของสองคิว — โหมดเงากับหน้างานไม่มีช่องทาง ขาออกเงียบคือเรื่องปกติ
-  const h = health()
-  const workers = {
-    inbound: { ...workerState(h.inboundIdleFor, th.inbound_worker, activeChannels.length > 0),
-               lastSuccessAt: inboundLastSuccess },
-    outbound: { ...workerState(h.idleFor, th.outbound_worker, activeChannels.length > 0 && !shadow),
-                lastSuccessAt: workerLastSuccess, shadow: shadow },
-  }
-
-  // ช่องทาง: สถานะจริงจาก channelStates (token + ข้อความล่าสุด) — เงียบ ≠ เสีย จึงแยกเกณฑ์ไว้คนละชั้น
-  let channels = { tiktok: { name: 'TikTok ASHER', enabled: false, reachable: false,
-                             status: 'disabled', lastWebhookAt: null,
-                             detail: 'ยังไม่ตั้งค่า TikTok Business Messaging API' } }
-  try {
-    for (const c of await channelStates()) {
-    if (!['line', 'messenger', 'instagram', 'tiktok'].includes(c.channel)) continue
-      channels[c.channel] = {
-        name: c.name, enabled: c.enabled, reachable: c.enabled && c.state !== 'off',
-        status: !c.enabled ? 'disabled' : c.state === 'ok' || c.state === 'idle' ? 'healthy'
-              : c.state === 'down' ? 'down' : 'unknown',
-        lastWebhookAt: c.last_message_at ?? null, detail: c.reason ?? null,
-      }
-    }
-  } catch (e) {
-    log.warn('system_channels_failed', { reason: e.message })
-  }
-
-  // คิว: ตัวเลขจาก connect_private.job ที่มีอยู่แล้ว — คิวค้างนานเกินเกณฑ์ถือว่าเสื่อม ไม่ใช่ล่ม
-  let queue = { pending: null, processing: null, failed: null, oldest_min: null, status: 'unknown' }
-  try {
-    const q = await rpcDirect(service, 'health_queue')
-    const age = q.oldest_min ?? 0
-    queue = { ...q, status: age >= th.queue_age.crit ? 'degraded' : age >= th.queue_age.warn ? 'warn' : 'healthy' }
-  } catch (e) {
-    log.warn('health_queue_unreadable', { reason: e.message })
-  }
-
-  const channelDown = Object.values(channels).some(c => c.status === 'down')
-  const overall =
-    database.status === 'down' || workers.inbound.status === 'down' ? 'down'
-    : channelDown || workers.outbound.status !== 'healthy' || workers.inbound.status !== 'healthy'
-      || queue.status !== 'healthy' ? 'degraded'
-    : 'healthy'
-
-  return { overall, checkedAt, uptimeSec: Math.round((Date.now() - startedAt) / 1000), version: APP_VERSION,
-           environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-           database, channels, workers, queue, shadowMode: shadow, shadowDefault }
-}
-
-// รอบคำนวณของตัวเอง (15 วินาที) — คำขอไหนมาถี่กว่านั้นใช้ของเดิม ใครมาตอนกำลังคำนวณรอผลตัวแรก
-// คำนวณไม่สำเร็จไม่เป็นไร รอบหน้าลองใหม่ ของเก่ายังตอบได้
-function refreshSystemStatus() {
-  if (sysPending) return sysPending
-  if (Date.now() - sysAt < SYS_TTL) return Promise.resolve(sysCache)
-  sysPending = computeSystemStatus()
-    .then(r => { sysCache = r; sysAt = Date.now(); return r })
-    .catch(e => log.warn('system_status_failed', { reason: e.message }))
-    .finally(() => { sysPending = null })
-  return sysPending
-}
-
-// คำตอบเต็มสำหรับหน้า admin — สถานะสด (บังคับคำนวณใหม่) บวกกฎ/เหตุการณ์จาก snapshot ของฐาน
-async function fullSystemStatus(userToken) {
-  const system = await refreshSystemStatus()
-  let snapshot = null
-  try { snapshot = await rpcDirect(userToken, 'health_snapshot') } catch (e) {
-    log.warn('system_snapshot_failed', { reason: e.message })
-  }
-  return { ...system, rules: snapshot?.rules ?? [], stats: snapshot?.stats ?? [],
-           events: snapshot?.events ?? [], pending: snapshot?.pending ?? null,
-           workspace: snapshot?.workspace ?? null, can_edit: snapshot?.can_edit ?? false,
-           tls_days: snapshot?.tls_days ?? null }
-}
-
-// ข้อทดสอบฝั่งโพรเซสสำหรับปุ่ม Run Self-Test — รายงานแค่ configured/missing/healthy/stale
-// ★ ห้ามมีค่าตัวแปรออกไปเป็นไม้ตาย ไม่ว่าจะ secret หรือ URL ภายใน
-async function systemExtraTests() {
-  const t0 = Date.now()
-  const tests = []
-  const h = health()
-
-  let th = { inbound_worker: { warn: 1, crit: 5 }, outbound_worker: { warn: 1, crit: 5 }, queue_age: { warn: 3, crit: 10 } }
-  try { th = { ...th, ...(await rpcDirect(service, 'health_thresholds')) } } catch { /* ใช้ค่าตั้งต้น */ }
-
-  const ageOf = ms => Math.round(ms / 6000) / 10
-  tests.push({ name: 'Inbound Worker', ok: h.inboundIdleFor <= WORKER_STALE_MS, ms: 0,
-               detail: !activeChannels.length ? 'ไม่มีช่องทางเปิดใช้'
-                     : `สำเร็จล่าสุด ${ageOf(h.inboundIdleFor)} นาทีที่แล้ว (เกณฑ์ ${th.inbound_worker.warn}/${th.inbound_worker.crit} นาที)` })
-  tests.push({ name: 'Outbound Worker', ok: h.idleFor <= WORKER_STALE_MS, ms: 0,
-               detail: shadow ? 'โหมดเงา: ตั้งใจไม่ส่งออก จึงไม่นับว่าเงียบ'
-                     : !activeChannels.length ? 'ไม่มีช่องทางเปิดใช้'
-                     : `สำเร็จล่าสุด ${ageOf(h.idleFor)} นาทีที่แล้ว (เกณฑ์ ${th.outbound_worker.warn}/${th.outbound_worker.crit} นาที)` })
-  try {
-    const q = await rpcDirect(service, 'health_queue')
-    tests.push({ name: 'Queue', ok: true, ms: 0,
-                 detail: `pending ${q.pending} · processing ${q.processing} · failed ${q.failed}` +
-                         (q.oldest_min != null ? ` · เก่าสุด ${q.oldest_min} นาที` : '') })
-  } catch (e) {
-    tests.push({ name: 'Queue', ok: false, ms: 0, detail: 'อ่านตัวเลขคิวไม่ได้' })
-  }
-  tests.push({ name: 'Shadow Mode', ok: true, ms: 0,
-               detail: shadow ? 'ON — รับเข้าอย่างเดียว ไม่ส่งออกหาลูกค้า' : 'OFF — ส่งจริง' })
-  // ตัวแปรที่จำเป็น: รายงานแค่ชื่อว่า configured/missing — ไม่มีค่า
-  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']
-  const missing = required.filter(k => !process.env[k])
-  if (!channels.length && !process.env.CONNECT_CHANNELS_FILE) missing.push('CONNECT_CHANNELS_FILE')
-  tests.push({ name: 'Environment', ok: missing.length === 0, ms: 0,
-               detail: missing.length ? `missing: ${missing.join(', ')}` : `configured ครบ ${required.length} รายการ` })
-  return tests.map(t => ({ ...t, ms: t.ms || Date.now() - t0 }))
 }
 
 // ───────────────────────────────────────────────────────── ตัวช่วย HTTP
@@ -1364,39 +856,6 @@ async function systemExtraTests() {
 const json = (res, status, value) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(value))
-}
-
-function tiktokOAuthPage(res, status, title, message) {
-  const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
-  res.writeHead(status, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
-    'Referrer-Policy': 'no-referrer',
-  })
-  res.end(`<!doctype html><meta charset="utf-8"><title>${escape(title)}</title><style>body{font:16px system-ui,sans-serif;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#18212b}h1{font-size:1.4rem}</style><h1>${escape(title)}</h1><p>${escape(message)}</p>`)
-}
-
-// TikTok redirects here after authorization.  This is deliberately a safe,
-// inert landing point: no code is exchanged or persisted until the receiver,
-// outbound queue, token refresh, and CRM flow are implemented together.
-async function handleTikTokOAuthCallback(req, res, url) {
-  if (req.method !== 'GET') throw fail(405, 'method_not_allowed')
-  const result = parseTikTokOAuthCallback(url)
-  if (result.status === 'denied') {
-    console.warn('[tiktok oauth] authorization denied', {
-      error: result.error,
-      state_present: result.state_present,
-    })
-    return tiktokOAuthPage(res, 400, 'TikTok authorization was not completed', 'The TikTok authorization request was cancelled or denied.')
-  }
-  if (result.status === 'missing_code') {
-    return tiktokOAuthPage(res, 400, 'Invalid TikTok callback', 'No authorization code was provided.')
-  }
-  console.info('[tiktok oauth] authorization callback received; integration remains disabled', {
-    state_present: result.state_present,
-    token_stored: false,
-  })
-  return tiktokOAuthPage(res, 200, 'TikTok authorization received', 'ASHER Connect has received the callback, but TikTok messaging is not enabled yet. No token was stored.')
 }
 
 async function readBody(req, limit = 262144) {
@@ -1442,7 +901,7 @@ async function handleWebhook(req, res, url) {
   }
 
   // Messenger ยืนยันปลายทางด้วย GET ครั้งเดียวตอนตั้งค่า ต้องตอบ challenge กลับเป็น text ล้วน
-  if (req.method === 'GET' && ['messenger', 'instagram'].includes(config.channel)) {
+  if (req.method === 'GET' && config.channel === 'messenger') {
     if (url.searchParams.get('hub.mode') !== 'subscribe' || !config.verify_token || url.searchParams.get('hub.verify_token') !== config.verify_token) {
       throw webhookFail(403, 'invalid_verification', key)
     }
@@ -1474,7 +933,6 @@ async function handleWebhook(req, res, url) {
                 reason: 'invalid_signature', bytes: raw.length,
                 ua: req.headers['user-agent'] ?? null, shape: เค้าโครง },
     }).catch(e => log.warn('webhook_reject_log_failed', { channel: key, reason: e.message }))
-    flowHealth.log('signature_fail', { channel: key, ok: false })
 
     throw webhookFail(401, 'invalid_signature', key, {
       ส่งลายเซ็นมาด้วย: Boolean(signature),
@@ -1514,8 +972,6 @@ async function handleWebhook(req, res, url) {
       payload: hits.length ? rest : body }, true)
   log.info('webhook_accepted', { channel: key, log_id: logged.log_id,
                                  ...(hits.length ? { test_reset: hits.length } : {}) })
-  // จุดหมายของกฎ "ไม่มีข้อความเข้า" — ช่องทางไหนเงียบผิดปกติ ตัวเลขบน /admin/health จะหยุดก่อนใครจะรู้ตัว
-  flowHealth.log('webhook', { channel: key, ref: logged.log_id })
   return json(res, 200, { accepted: true, log_id: logged.log_id })
 }
 
@@ -1530,14 +986,6 @@ async function handleWebhook(req, res, url) {
 // ★ ต้องตรงทั้งข้อความเท่านั้น — "test ระบบ" เป็นข้อความลูกค้าปกติ
 //   ถ้าจับแบบขึ้นต้นด้วย test ลูกค้าจริงที่พิมพ์คำนี้จะโดนรีเซ็ตแชทตัวเอง
 const TEST_USER_IDS = testUserIds()
-
-// ───────────────────────────────────────────── Meta App Review
-//
-// ผู้ตรวจสอบ (test_only) ต้องทดสอบ pages_messaging ด้วยบัญชี Messenger จริง
-// พิมพ์ข้อความขึ้นต้นด้วยรหัสนี้จาก asher-messenger เท่านั้น = ติดธง is_test ให้บทสนทนา
-// เพื่อไม่ให้ปนกับงานขายจริง — คนละกลไกกับ TEST_USER_IDS ข้างบน (นั่นคือรีเซ็ตแชทให้บอทเริ่มใหม่
-// ส่วนนี้คือกันบอทตอบ/ไม่นับสถิติ ดู sql/202609191500_review_code.sql)
-const META_REVIEW_CODE = reviewCode()
 
 async function runTestResets(hits, config, key) {
   for (const hit of hits) {
@@ -1558,39 +1006,11 @@ async function runTestResets(hits, config, key) {
   }
 }
 
-async function enrichResponderAttribution(accessToken, action, data, conversationId) {
-  if (!['detail', 'messages'].includes(action) || !Array.isArray(data?.messages) || !conversationId) return data
-  const ids = data.messages.map(m => m?.id).filter(Boolean)
-  if (!ids.length) return data
-  try {
-    const rows = await rpcDirect(accessToken, 'message_responder_snapshot', {
-      p_conversation_id: conversationId,
-      p_message_ids: ids,
-    })
-    const byId = new Map((Array.isArray(rows) ? rows : []).map(row => [row.id, row]))
-    data.messages = data.messages.map(message => ({ ...message, ...(byId.get(message.id) || {}) }))
-  } catch (e) {
-    // Historical messages remain usable; the UI's explicit fallback is safer
-    // than deriving a responder from the assignee or a current profile.
-    log.warn('responder_attribution_lookup_failed', { reason: e.message })
-  }
-  return data
-}
-
 async function handleCommand(req, res) {
   const accessToken = await sessions.access(req)
-  const raw = await readBody(req, 32 * 1024 * 1024)
-  const input = JSON.parse(raw.toString('utf8'))
+  const input = JSON.parse((await readBody(req)).toString('utf8'))
   if (typeof input.action !== 'string' || !input.data || typeof input.data !== 'object' || Array.isArray(input.data)) {
     throw fail(400, 'invalid_request')
-  }
-  if (!['send', 'media_library_upload'].includes(input.action) && raw.length > 262144) throw fail(413, 'body_too_large')
-
-  // ★ คลังรูป — ด่านสิทธิ์อยู่ที่ inbox.media_* ในฐาน ยิงด้วย token ของคนที่ล็อกอิน
-  if (input.action.startsWith('media_library_')) {
-    const result = await mediaLibrary.command(accessToken, input.action, input.data)
-    if (result === undefined) throw fail(400, 'invalid_request')
-    return json(res, 200, result)
   }
 
   // ทางไป Edge Function: action ขึ้นต้นด้วย fn: แล้วตามด้วยชื่อในทะเบียน
@@ -1600,14 +1020,6 @@ async function handleCommand(req, res) {
   //   ไม่ได้ผ่านประตู connect_api เพราะเป็นการอ่านของชั้นนี้เอง ไม่ใช่คำสั่งที่ต้องลง audit
   if (input.action === 'queue_counts') {
     return json(res, 200, await rpcDirect(accessToken, 'queue_counts', { p_search: String(input.data.search ?? '') }))
-  }
-
-  // Read-only preview for the episode-aware customer-reply monitor.
-  // The RPC applies the same can_read boundary as the existing inbox list.
-  if (input.action === 'pending_reply_preview') {
-    const args = { p_limit: input.data.limit || 200 }
-    if (input.data.now) args.p_now = input.data.now
-    return json(res, 200, await rpcDirect(accessToken, 'pending_reply_preview', args))
   }
 
   // ★ หน้าสถิติ — ทางเดียวกันกับ queue_counts คือยิงด้วย token ของคนที่ล็อกอิน
@@ -1626,60 +1038,58 @@ async function handleCommand(req, res) {
     return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
   }
 
-  // ★ คลังคำตอบ (Phase 6) — เดินผ่าน Answer Service เป็นชั้นกลางเท่านั้น
-  //   ด่านสิทธิ์จริงอยู่ในฟังก์ชัน inbox.ah_* ของฐาน (sales อ่าน approved · manager แก้ ·
-  //   admin อนุมัติ/ปลดใช้) · service เพิ่ม: flags (default ปิด), error model ANSWER_*,
-  //   validity/bot rules, orchestrate resolve+render — รายละเอียด services/answer-hub/service.mjs
-  if (AH_ACTIONS.has(input.action)) {
-    return json(res, 200, await answerHub.handle(input.action, accessToken, input.data ?? {}))
-  }
-
   // Quick Reply management uses dedicated security-definer RPCs. The browser
   // only sends the user's session token; role checks remain in Supabase.
   if (input.action === 'quick_replies_list') {
+    // หน้า admin ขอเห็นรายการที่ปิดใช้งานด้วย — สิทธิ์ admin ตรวจที่นี่และที่ qr_list_all อีกชั้น
+    if (input.data.include_inactive) {
+      const who = await rpc(accessToken, 'bootstrap')
+      if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
+      return json(res, 200, await rpcDirect(accessToken, 'qr_list_all', { p_query: input.data.query || null, p_category: input.data.category || null }))
+    }
     return json(res, 200, await rpcDirect(accessToken, 'qr_list', { p_project: null, p_query: input.data.query || null, p_category: input.data.category || null }))
   }
   if (input.action === 'quick_reply_upsert') {
     const who = await rpc(accessToken, 'bootstrap')
     if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
-    return json(res, 200, await rpcDirect(accessToken, 'qr_upsert', { p_data: input.data }))
+    const data = { ...input.data }
+    // ไฟล์แนบจากหน้า admin เป็น URL/พาธ → เก็บที่ quick_reply.image_url (sql/038)
+    // ของที่ไม่ใช่รูปยังไม่มีที่พักจริง (media_asset จำกัด image/) จึงปฏิเสธให้อ่านออก
+    if (Array.isArray(data.attachments)) {
+      const urls = data.attachments.map(a => safeAssetUrl(a.public_url ?? a.url ?? '')).filter(Boolean)
+      if (data.attachments.length && !urls.length) throw fail(400, 'attachment_image_only')
+      data.image_url = urls[0] ?? ''
+      delete data.attachments
+    }
+    if (data.category != null && String(data.category).trim() !== '' && !CATEGORIES.has(String(data.category).trim())) throw fail(400, 'category_not_allowed')
+    if (typeof data.title === 'string' && data.title.trim().length > 160) throw fail(400, 'invalid_input')
+    if (typeof data.body === 'string' && data.body.length > 10000) throw fail(400, 'invalid_input')
+    return json(res, 200, await rpcDirect(accessToken, 'qr_upsert', { p_data: data }))
   }
   if (input.action === 'quick_reply_toggle') {
     const who = await rpc(accessToken, 'bootstrap')
     if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
     return json(res, 200, await rpcDirect(accessToken, 'qr_toggle', { p_id: input.data.id, p_active: input.data.active, p_bot_enabled: null }))
   }
-  if (input.action === 'quick_reply_import_preview' || input.action === 'quick_reply_import_apply') {
+  // Sale เลือก Quick Reply ใส่ composer — บันทึก usage แบบยิงทิ้ง ต้องไม่เคยพา composer ล้ม
+  // (ฝั่งหน้าจอ .catch(() => {}) อยู่แล้ว ที่นี่ก็แค่เดินหน้าให้ RPC ตัดสินสิทธิ์เอง)
+  if (input.action === 'quick_reply_use') {
+    return json(res, 200, await rpcDirect(accessToken, 'qr_use', { p_id: input.data.id, p_conversation_id: input.data.conversation_id || null }))
+  }
+  // บันทึกผล import หลัง admin ตัดสินใจต่อแถว — validate ซ้ำที่นี่ ไม่เชื่อหน้าจอ
+  if (input.action === 'quick_reply_import') {
     const who = await rpc(accessToken, 'bootstrap')
     if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
-    const parsed = parseQuickReplyFile({ filename: input.data.filename, content: input.data.content })
-    const existing = await rpcDirect(accessToken, 'qr_list', { p_project: null, p_query: null, p_category: null })
-    const classified = classifyQuickReplies(parsed.rows, existing)
-    const summary = {
-      total: classified.length + parsed.invalid.length,
-      ready: classified.filter(x => x.status === 'NEW').length,
-      update: classified.filter(x => x.status === 'UPDATE').length,
-      duplicate: classified.filter(x => x.status === 'SKIP').length,
-      inactive: classified.filter(x => !x.active).length,
-      errors: parsed.invalid.length,
-    }
-    if (input.action === 'quick_reply_import_preview') return json(res, 200, { summary, rows: classified, invalid: parsed.invalid })
-    if (parsed.invalid.length) throw fail(400, 'invalid_import_rows')
-    const result = { imported: 0, updated: 0, skipped: 0, errors: [], inactive: classified.filter(x => !x.active).map(x => x.shortcut) }
-    for (const row of classified) {
-      if (row.status === 'SKIP') { result.skipped++; continue }
-      try {
-        await rpcDirect(accessToken, 'qr_upsert', { p_data: {
-          id: row.id || '', project: 'all', title: row.title, shortcut: row.shortcut,
-          category: row.category, body: row.body, sort_order: row.sort_order,
-          active: row.active, intents: [], source: row.source, image_url: row.image_url,
-        } })
-        if (row.status === 'UPDATE') result.updated++; else result.imported++
-      } catch (error) {
-        result.errors.push({ row: row._row, shortcut: row.shortcut, code: 'import_row_failed' })
-      }
-    }
-    return json(res, 200, { summary, result })
+    const rows = Array.isArray(input.data.rows) ? input.data.rows : []
+    if (!rows.length || rows.length > MAX_IMPORT_ROWS) throw fail(400, 'invalid_input')
+    const prepared = rows.map((row, index) => {
+      const base = validateRow(row, Number.isInteger(row.row_number) ? row.row_number - 2 : index)
+      const decision = ['skip', 'create', 'update'].includes(row.decision) ? row.decision : 'skip'
+      const target = decision === 'update' && typeof row.target_id === 'string' ? row.target_id : null
+      return { ...base, decision, ...(target ? { target_id: target } : {}) }
+    })
+    if (prepared.some(r => r.decision !== 'skip' && r.errors.length)) throw fail(400, 'invalid_input')
+    return json(res, 200, { summary: await rpcDirect(accessToken, 'qr_import_apply', { p_rows: prepared }) })
   }
 
   if (input.action.startsWith('fn:')) {
@@ -1690,11 +1100,6 @@ async function handleCommand(req, res) {
     return res.end(reply.text)
   }
 
-  let outboundFiles = []
-  let outboundConversation = null
-  let outboundPlan = []
-  let outboundAssets = new Map()
-  const correlationId = String(input.data.request_id || randomUUID())
   if (input.action === 'send') {
     // ด่านแรกสุด ก่อนแตะอะไรทั้งนั้น — ในโหมดเงายังมีบอทตัวเดิมคุยกับลูกค้าอยู่
     // ถามฐานก่อนเสมอ (มีตัวกันถี่ 3 วินาทีอยู่แล้ว) เพราะ admin อาจเพิ่งกดปิดไปเมื่อครู่
@@ -1705,50 +1110,74 @@ async function handleCommand(req, res) {
     const list = await rpc(accessToken, 'bootstrap')
     if (!list.user) throw fail(403, 'not_allowed')
     if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
-    let files
-    try { files = validateOutboundImages(input.data.files || []) }
-    catch (e) { throw fail(400, e.message) }
-    let plan
-    try { plan = planSendItems({ mediaIds: input.data.media_ids, fileCount: files.length, order: input.data.media_order }) }
-    catch (e) { throw fail(400, e.message) }
-    const text = String(input.data.text || '').trim()
-    if (!text && !plan.length) throw fail(400, 'invalid_message')
-    if (detail.channel === 'line' && text && plan.length > 4) throw fail(400, 'LINE ส่งข้อความพร้อมรูปได้สูงสุด 4 รูปต่อครั้ง')
-    if (detail.channel === 'instagram' && (plan.length > 1 || (plan.length && text))) throw fail(400, 'Instagram ส่งได้ครั้งละ 1 รูป และไม่ส่งพร้อมข้อความ')
-    outboundAssets = await mediaLibrary.resolve(accessToken, plan.filter(i => i.kind === 'media').map(i => i.id))
-    outboundFiles = files
-    outboundPlan = plan
-    outboundConversation = detail
-    if (outboundFiles.length) log.info('media_pipeline', { phase: 'UPLOAD', correlation_id: correlationId, message_id: null, count: outboundFiles.length, files: outboundFiles.map(file => ({ name: file.name, mime: file.mime, bytes: file.bytes.length })) })
-    input.data = { ...input.data, text: text || '[แนบรูปภาพ]' }
-    delete input.data.files
-    delete input.data.media_ids
-    delete input.data.media_order
+  }
+
+  if (input.action === 'send_image') {
+    await refreshSendMode()
+    if (shadow) throw fail(503, 'shadow_mode')
+    const detail = await rpc(accessToken, 'messages', { id: input.data.id })
+    const list = await rpc(accessToken, 'bootstrap')
+    if (!list.user) throw fail(403, 'not_allowed')
+    if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
+    const raw = safeAssetUrl(input.data.url)
+    const url = raw?.startsWith('/media/')
+      ? createOutboundMediaUrl(origin, raw.slice('/media/'.length), outboundMediaSigningKey)
+      : raw
+    if (!url) throw fail(400, 'invalid_message')
+    return json(res, 200, await rpcDirect(accessToken, 'send_image', { p_conversation_id: input.data.id, p_url: url }))
+  }
+
+  if (input.action === 'quotation_png') {
+    const [detail, who] = await Promise.all([
+      rpc(accessToken, 'messages', { id: input.data.id }),
+      rpc(accessToken, 'bootstrap'),
+    ])
+    if (!who.user?.id) throw fail(403, 'not_allowed')
+    await assertConversationSendable(accessToken, detail, who)
+    const requestId = typeof input.data.request_id === 'string' ? input.data.request_id : randomUUID()
+    const response = await crmQuotation('/api/integrations/connect/quotations', {
+      method: 'POST',
+      requestId,
+      body: {
+        workspace_id: crmWorkspaceId,
+        actor_subject_id: who.user.id,
+        conversation_id: input.data.id,
+        unit_id: input.data.unit_id,
+        recipient_name: detail.contact?.display_name || 'ลูกค้า',
+      },
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      log.warn('crm_quotation_failed', { status: response.status, code: result.error?.code ?? null })
+      if (response.status === 404 || result.error?.code === 'unit_not_available') throw fail(409, 'unit_unavailable')
+      if (response.status === 403) throw fail(403, 'not_allowed')
+      throw fail(503, 'service_unavailable')
+    }
+    const quotation = result.data
+    if (!quotation?.id) throw fail(503, 'service_unavailable')
+    const publicUrl = createQuotationImageUrl(origin, quotation.id, outboundMediaSigningKey)
+    if (!publicUrl) throw fail(503, 'service_unavailable')
+    await rpc(accessToken, 'send', { id: input.data.id, text: publicUrl, request_id: quotation.id })
+    return json(res, 200, { ...quotation, download_url: publicUrl, sent: true })
+  }
+
+  if (input.action === 'quotation_units') {
+    const [detail, who] = await Promise.all([
+      rpc(accessToken, 'messages', { id: input.data.id }),
+      rpc(accessToken, 'bootstrap'),
+    ])
+    if (!detail?.conversation?.id || !who.user?.id) throw fail(403, 'not_allowed')
+    const response = await crmQuotation('/api/integrations/connect/quotation-units', { actorId: who.user.id })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      log.warn('crm_quotation_units_failed', { status: response.status, code: result.error?.code ?? null })
+      if (response.status === 403) throw fail(403, 'not_allowed')
+      throw fail(503, 'service_unavailable')
+    }
+    return json(res, 200, Array.isArray(result.data) ? result.data : [])
   }
 
   const data = await rpc(accessToken, input.action, input.data)
-
-  if (input.action === 'send' && outboundPlan.length && data?.message_id) {
-    let media
-    try {
-      media = await mediaLibrary.materialize({
-        plan: outboundPlan, assets: outboundAssets, files: outboundFiles, storagePath,
-        inboxId: outboundConversation.conversation.inbox_id, messageId: data.message_id,
-      })
-      const attached = await rpcDirect(service, 'media_attach', { p_message_id: data.message_id, p_media: media })
-      if (!attached) throw new Error('media_attach_missed')
-    } catch (error) {
-      log.warn('media_pipeline_failed', { phase: 'STORE', correlation_id: correlationId, message_id: data.message_id, reason: error.message })
-      throw fail(502, 'media_upload_failed')
-    }
-    log.info('media_pipeline', { phase: 'STORE', correlation_id: correlationId, message_id: data.message_id, count: media.length })
-    if (outboundAssets.size) {
-      // ป้าย "ส่งแล้ว" + use_count — พลาดได้โดยไม่กระทบการส่ง
-      await rpcDirect(accessToken, 'media_record_send', {
-        p_conversation_id: input.data.id, p_media_ids: [...outboundAssets.keys()], p_message_id: data.message_id,
-      }).catch(e => log.warn('media_record_send_failed', { reason: e.message }))
-    }
-  }
 
   // ท่อรูป: media เก็บที่คอลัมน์ inbox.message.media โดยไม่แตะ connect_private.api
   // (เหตุผลใน sql/037) — ตรงนี้จึงเติมเข้าคำตอบของ detail ก่อนส่งกลับหน้าจอ
@@ -1756,7 +1185,6 @@ async function handleCommand(req, res) {
   await enrichMessageMedia(input.action, data, input.data?.id, id =>
     rpcDirect(accessToken, 'media_of', { p_conversation_id: id })
       .catch(e => { log.warn('media_lookup_failed', { reason: e.message }); return null }))
-  await enrichResponderAttribution(accessToken, input.action, data, input.data?.id)
 
   if (input.action === 'bootstrap') {
     data.channels = await channelStates()
@@ -1775,15 +1203,191 @@ async function handleCommand(req, res) {
   return json(res, 200, data)
 }
 
+// ──────────────────────────────── Quick Replies: ทางอัปโหลดของหน้า /quick-replies
+// สองทางนี้ส่งไฟล์ ไม่ใช่ JSON จึงตรวจ origin เอง (origin คือด่านกัน CSRF ตัวจริงของบ้านนี้)
+// สิทธิ์ admin ตรวจสองชั้นเสมอ: ที่นี่ (bootstrap) และที่ฐาน (qr_list_all เป็น security definer)
+
+// ลิงก์รูปที่เก็บลง quick_reply.image_url: https ภายนอก หรือพาธ /media/ ที่ตัวเองเสิร์ฟ
+// (CHECK ในฐาน sql/038 กันไว้อีกชั้น — ตรงนี้กันก่อนให้ error อ่านออก)
+const safeAssetUrl = value => {
+  const text = String(value ?? '').trim()
+  if (/^\/media\/[A-Za-z0-9._/-]+$/.test(text)) return text
+  return httpsOnly(text)
+}
+const httpsOnly = value => { try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && !/[\r\n]/.test(value) ? url.href : null } catch { return null } }
+
+const QR_IMPORT_LIMIT = MAX_IMPORT_BYTES + 65536 // เผื่อตัวครอบ multipart
+const QR_ATTACHMENT_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf' }
+const OUTBOUND_IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+
+// แยกไฟล์จาก multipart/form-data — หน้า admin ส่ง field เดียวชื่อ file
+function multipartFile(req, body) {
+  const boundary = /boundary=("?)([^";]+)\1/i.exec(req.headers['content-type'] ?? '')?.[2]
+  if (!boundary) throw fail(400, 'invalid_multipart')
+  const parts = body.split(Buffer.from(`--${boundary}`))
+  for (const part of parts.slice(1, -1)) {
+    const split = part.indexOf('\r\n\r\n')
+    if (split < 0) continue
+    const head = part.subarray(0, split).toString('utf8')
+    if (!/content-disposition:[^\r]*filename\*?=/i.test(head)) continue
+    let data = part.subarray(split + 4)
+    if (data.subarray(-2).toString() === '\r\n') data = data.subarray(0, -2)
+    const raw = /filename\*=(?:[^']*''){1,3}([^;\r]+)|filename="?([^";\r]+)"?/i.exec(head)
+    const name = raw?.[1] ?? raw?.[2] ?? ''
+    let filename = name
+    try { filename = decodeURIComponent(name) } catch { /* ชื่อไฟล์ถมว์อยู่แล้ว ใช้ตามเดิม */ }
+    return { data, filename: filename.replace(/[\r\n\0]/g, '').trim() || 'upload.csv' }
+  }
+  throw fail(400, 'file_missing')
+}
+
+async function requireAdmin(accessToken) {
+  const who = await rpc(accessToken, 'bootstrap')
+  if (who.user?.role !== 'admin') throw fail(403, 'not_allowed')
+}
+
+// Upload → Parse → Validate → ตรวจซ้ำกับของจริงในฐาน (active + inactive)
+// การตัดสินใจ skip/update เป็นของ admin บนหน้าจอ ที่นี่เตรียมข้อมูลให้ตัดสินเท่านั้น
+async function quickReplyImportPreview(req, res) {
+  if (req.headers.origin !== origin) throw fail(403, 'invalid_origin')
+  const accessToken = await sessions.access(req)
+  const body = await readBody(req, QR_IMPORT_LIMIT)
+  await requireAdmin(accessToken)
+  const { data, filename } = multipartFile(req, body)
+  let rows
+  try { rows = parseImport(data, filename) } catch (e) { return json(res, e.status || 400, { error: 'invalid_file', message: e.message }) }
+  const existing = await rpcDirect(accessToken, 'qr_list_all')
+  return json(res, 200, { rows: previewRows(rows, Array.isArray(existing) ? existing : []) })
+}
+
+// อัปโหลดรูป/เอกสารแนบ — เก็บ bucket เดียวกับท่อสื่อแนบ (private)
+// คืนพาธ /media/… เสมอ เพราะเบราว์เซอร์เข้าถึงได้ทางเดียวคือผ่าน handleMedia ที่คุมสิทธิ์ด้วยเซสชัน
+async function quickReplyAttachment(req, res) {
+  if (req.headers.origin !== origin) throw fail(403, 'invalid_origin')
+  const accessToken = await sessions.access(req)
+  const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
+  const ext = QR_ATTACHMENT_TYPES[type]
+  if (!ext) throw fail(415, 'unsupported_media_type')
+  const bytes = await readBody(req, 10 * 1024 * 1024 + 1024)
+  if (!bytes.length) throw fail(400, 'empty_file')
+  await requireAdmin(accessToken)
+  const filename = (() => { try { return decodeURIComponent(req.headers['x-filename'] ?? '') } catch { return String(req.headers['x-filename'] ?? '') } })().replace(/[\r\n\0]/g, '').slice(0, 120) || 'attachment'
+  const path = `qr/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}.${ext}`
+  const response = await fetch(`${upstream}/storage/v1/object/inbox-media/${path}`, {
+    method: 'POST',
+    headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': type, 'x-upsert': 'true' },
+    body: bytes,
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
+  if (!response.ok) throw fail(502, `storage_${response.status}`)
+  return json(res, 200, { public_url: `/media/${path}`, file_name: filename, mime_type: type })
+}
+
+async function assertConversationSendable(accessToken, detail, who) {
+  await refreshSendMode()
+  if (shadow) throw fail(503, 'shadow_mode')
+  const account = who ?? await rpc(accessToken, 'bootstrap')
+  if (!account.user) throw fail(403, 'not_allowed')
+  if (!activeChannels.some(c => c.channel === detail.channel)) throw fail(503, 'channel_not_configured')
+}
+
+async function crmQuotation(path, { method = 'GET', body, actorId, requestId } = {}) {
+  if (!crmUrl || !crmToken || !crmWorkspaceId) throw fail(503, 'service_unavailable')
+  return fetch(`${crmUrl}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${crmToken}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(requestId ? { 'Idempotency-Key': requestId } : {}),
+      'X-Asher-Workspace-Id': crmWorkspaceId,
+      ...(actorId ? { 'X-Asher-Actor-Id': actorId } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
+}
+
+async function outboundImageUpload(req, res) {
+  if (req.headers.origin !== origin) throw fail(403, 'invalid_origin')
+  const accessToken = await sessions.access(req)
+  const who = await rpc(accessToken, 'bootstrap')
+  if (!['sales','senior_sales','manager','admin'].includes(who.user?.role)) throw fail(403, 'not_allowed')
+  const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
+  const ext = OUTBOUND_IMAGE_TYPES[type]
+  if (!ext) throw fail(415, 'unsupported_media_type')
+  const bytes = await readBody(req, 10 * 1024 * 1024 + 1024)
+  if (!bytes.length) throw fail(400, 'empty_file')
+  const path = `outbound/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}.${ext}`
+  const response = await fetch(`${upstream}/storage/v1/object/inbox-media/${path}`, {
+    method: 'POST',
+    headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': type, 'x-upsert': 'false' },
+    body: bytes,
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
+  if (!response.ok) throw fail(502, `storage_${response.status}`)
+  return json(res, 200, { public_url: `/media/${path}`, mime_type: type })
+}
+
+async function outboundMedia(req, res, url) {
+  if (req.method !== 'GET') throw fail(405, 'method_not_allowed')
+  const path = safeOutboundPath(url.pathname.slice('/outbound-media/'.length))
+  if (!path || !verifyOutboundMedia(path, url.searchParams.get('expires'), url.searchParams.get('signature'), outboundMediaSigningKey)) throw fail(403, 'not_allowed')
+  const response = await fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+    headers: { apikey: anon, Authorization: `Bearer ${service}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
+  if (!response.ok) throw fail(response.status === 404 ? 404 : 502, 'media_unavailable')
+  const type = response.headers.get('content-type') || 'application/octet-stream'
+  if (!type.startsWith('image/')) throw fail(415, 'unsupported_media_type')
+  const bytes = Buffer.from(await response.arrayBuffer())
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' })
+  return res.end(bytes)
+}
+
+async function staffLibraryMedia(req, res, url) {
+  if (req.method !== 'GET') throw fail(405, 'method_not_allowed')
+  const accessToken = await sessions.access(req)
+  const who = await rpc(accessToken, 'bootstrap')
+  if (!['sales','senior_sales','manager','admin'].includes(who.user?.role)) throw fail(403, 'not_allowed')
+  const path = safeOutboundPath(url.pathname.slice('/media/'.length))
+  if (!path) throw fail(404, 'not_found')
+  const response = await fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+    headers: { apikey: anon, Authorization: `Bearer ${service}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
+  if (!response.ok) throw fail(response.status === 404 ? 404 : 502, 'media_unavailable')
+  const type = response.headers.get('content-type') || 'application/octet-stream'
+  const bytes = Buffer.from(await response.arrayBuffer())
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' })
+  return res.end(bytes)
+}
+
+async function quickReplyMedia(req, res, url) {
+  if (req.method !== 'GET') throw fail(405, 'method_not_allowed')
+  const path = safeOutboundPath(url.pathname.slice('/quick-reply-media/'.length))
+  if (!path) throw fail(404, 'not_found')
+  const asset = await rpcDirect(service, 'quick_reply_media_lookup', { p_path: path })
+  if (!asset) throw fail(404, 'not_found')
+  const response = await fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
+    headers: { apikey: anon, Authorization: `Bearer ${service}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+  })
+  if (!response.ok) throw fail(response.status === 404 ? 404 : 502, 'media_unavailable')
+  const type = asset.mime || response.headers.get('content-type') || 'application/octet-stream'
+  if (!type.startsWith('image/')) throw fail(415, 'unsupported_media_type')
+  const bytes = Buffer.from(await response.arrayBuffer())
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' })
+  return res.end(bytes)
+}
+
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
-const staticFiles = { '/answer-hub': 'index.html', '/answer-hub.js': 'answer-hub.js', '/answer-hub.css': 'answer-hub.css', '/users.js': 'users.js', '/users.css': 'users.css', '/quick-answer.js': 'quick-answer.js', '/': 'index.html', '/app.js': 'app.js', '/conversation-presentation.mjs': 'conversation-presentation.mjs', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
-  '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
-  '/media-library': 'media-library.html', '/media-library.js': 'media-library.js', '/media-library.css': 'media-library.css', '/image-library.js': 'image-library.js',
+const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
+  '/privacy': 'privacy.html', '/meta-reviewer-avatar.png': 'meta-reviewer-avatar.png',
+  '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/media-library.js': 'media-library.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
+  '/quick-replies.css': 'quick-replies.css', '/quick-replies-admin.css': 'quick-replies-admin.css',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
-  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css',
-  // แผ่นสไตล์กับสคริปต์ของหน้า /admin/health — ตัวหน้าเองเสิร์ฟโดย health.handle
-  '/health.css': 'health.css', '/health.js': 'health.js' }
+  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css' }
 
 async function handleStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw fail(405, 'method_not_allowed')
@@ -1814,121 +1418,79 @@ const handleMedia = createMediaHandler({
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
   }),
 })
-const handlePublicMedia = createPublicMediaHandler({
-  secret: mediaPublicSecret,
-  fail,
-  fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
-    headers: { apikey: anon, Authorization: `Bearer ${service}` },
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
-  }),
-})
-
-const handleQuickReplyMedia = createQuickReplyMediaHandler({
-  sessions, rpcDirect, origin, fail,
-  fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
-    headers: { apikey: anon, Authorization: `Bearer ${service}` },
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
-  }),
-})
-
-const mediaLibrary = createMediaLibrary({
-  rpcDirect, fail, origin,
-  uploadObject: uploadMediaObject, copyObject: copyMediaObject,
-  fetchObject: path => fetch(`${upstream}/storage/v1/object/authenticated/inbox-media/${path}`, {
-    headers: { apikey: anon, Authorization: `Bearer ${service}` },
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
-  }),
-})
 
 async function route(req, res, url) {
-  // หน้า /admin/health ใช้เปลือกเดียวกับแอปหลัก (header/sidebar/เซสชันคุกกี้เดิม — ไม่มีล็อกอินแยกอีกแล้ว)
-  // เสิร์ฟ index.html เหมือน "/" ล็อกอินเป็นหน้าที่ของ app.js (bootstrap ไม่ผ่าน → ฟอร์มเดิม → กลับมาหน้าเดิม)
-  // ★ ต้องตัดมาก่อน flowHealth.handle ไม่งั้นหน้า standalone (health.html + password grant แยก) ชิงไปเสิร์ฟ
-  if (url.pathname === '/admin/health' && req.method === 'GET') return handleStatic(req, res, new URL('/', origin))
-  if (url.pathname === '/admin/users' && req.method === 'GET') {
-    let token
-    try { token = await sessions.access(req) } catch (e) { if (e.status !== 401) throw e }
-    if (token) await userAdmin.actor(token)
-    return handleStatic(req, res, new URL('/', origin))
-  }
-  // Canonical CRM deep link: serve the SPA shell so refresh/auth can resolve it.
-  if (req.method === 'GET' && /^\/conversations\/[^/]+$/.test(url.pathname)) return handleStatic(req, res, new URL('/', origin))
-  // ประตูของระบบเช็ค: /healthz สำหรับ monitor ภายนอก · /api/health/* (เส้นเก่าของตัวเช็ค ยังใช้กับเทสต์ SQL)
-  // ด่านสิทธิ์ของหน้านี้อยู่ใน SQL (health_can_view) ไม่ได้พึ่งการซ่อนทางเข้า
-  if (await flowHealth.handle(req, res)) return
   if (url.pathname === '/health' && req.method === 'GET') {
     const state = health()
     return json(res, state.ok ? 200 : 503, state)
   }
   if (url.pathname.startsWith('/webhooks/')) return handleWebhook(req, res, url)
-  if (url.pathname === TIKTOK_OAUTH_CALLBACK_PATH) return handleTikTokOAuthCallback(req, res, url)
 
-  if (url.pathname === TIKTOK_OAUTH_CALLBACK_PATH) return handleTikTokOAuthCallback(req, res, url)
+  if (req.method === 'GET' && /^\/quotation-pdf\/[0-9a-f-]{36}$/i.test(url.pathname)) {
+    const accessToken = await sessions.access(req)
+    const who = await rpc(accessToken, 'bootstrap')
+    if (!who.user?.id) throw fail(403, 'not_allowed')
+    const quotationId = url.pathname.split('/')[2]
+    const response = await crmQuotation(`/api/integrations/connect/quotations/${quotationId}/pdf`, { actorId: who.user.id })
+    if (!response.ok) {
+      log.warn('crm_quotation_download_failed', { status: response.status })
+      if (response.status === 404) throw fail(404, 'not_found')
+      if (response.status === 403) throw fail(403, 'not_allowed')
+      throw fail(503, 'service_unavailable')
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    res.writeHead(200, {
+      'Content-Type': 'application/pdf',
+      'Content-Length': bytes.length,
+      'Content-Disposition': response.headers.get('content-disposition') || `inline; filename="quotation-${quotationId}.pdf"`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    return res.end(bytes)
+  }
+
+  if (req.method === 'GET' && /^\/quotation-document\/[0-9a-f-]{36}$/i.test(url.pathname)) {
+    const quotationId = url.pathname.split('/')[2]
+    if (!verifyQuotationUrl(quotationId, url.searchParams.get('expires'), url.searchParams.get('signature'), outboundMediaSigningKey)) throw fail(403, 'not_allowed')
+    const response = await crmQuotation(`/api/integrations/connect/quotations/${quotationId}/public-pdf`)
+    if (!response.ok) {
+      log.warn('crm_public_quotation_download_failed', { status: response.status })
+      if (response.status === 404) throw fail(404, 'not_found')
+      throw fail(503, 'service_unavailable')
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    res.writeHead(200, {
+      'Content-Type': 'application/pdf',
+      'Content-Length': bytes.length,
+      'Content-Disposition': response.headers.get('content-disposition') || `inline; filename="quotation-${quotationId}.pdf"`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    return res.end(bytes)
+  }
+
+  if (req.method === 'GET' && /^\/quotation-image\/[0-9a-f-]{36}$/i.test(url.pathname)) {
+    const quotationId = url.pathname.split('/')[2]
+    if (!verifyQuotationImageUrl(quotationId, url.searchParams.get('expires'), url.searchParams.get('signature'), outboundMediaSigningKey)) throw fail(403, 'not_allowed')
+    const response = await crmQuotation(`/api/integrations/connect/quotations/${quotationId}/public-image`)
+    if (!response.ok) {
+      log.warn('crm_public_quotation_image_failed', { status: response.status })
+      if (response.status === 404) throw fail(404, 'not_found')
+      throw fail(503, 'service_unavailable')
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    res.writeHead(200, {
+      'Content-Type': 'image/png', 'Content-Length': bytes.length,
+      'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+    })
+    return res.end(bytes)
+  }
 
   if (url.pathname.startsWith('/api/')) {
-    const userRoute = /^\/api\/admin\/users(?:\/([0-9a-f-]{36})(?:\/(reset-password|revoke-sessions|disable|enable|audit))?)?$/i.exec(url.pathname)
-    if (userRoute) {
-      if (req.method !== 'GET') checkOrigin(req)
-      const token = await sessions.access(req)
-      const actorId = await userAdmin.actor(token)
-      const [, targetId, action] = userRoute
-      const requestId = randomUUID()
-      if (req.method === 'GET' && !targetId) return json(res, 200, await userAdmin.list(actorId, url.searchParams))
-      if (req.method === 'GET' && targetId && action === 'audit') return json(res, 200, await userAdmin.audit(actorId, targetId))
-      if (req.method === 'POST' && !targetId) {
-        const input = JSON.parse((await readBody(req, 8192)).toString('utf8'))
-        return json(res, 201, await userAdmin.save(actorId, null, input, requestId))
-      }
-      if (req.method === 'PATCH' && targetId && !action) {
-        const input = JSON.parse((await readBody(req, 8192)).toString('utf8'))
-        return json(res, 200, await userAdmin.save(actorId, targetId, input, requestId))
-      }
-      if (req.method === 'POST' && targetId && action === 'reset-password') {
-        const input = JSON.parse((await readBody(req, 4096)).toString('utf8'))
-        return json(res, 200, await userAdmin.reset(actorId, targetId, input, requestId))
-      }
-      if (req.method === 'POST' && targetId && action === 'revoke-sessions')
-        return json(res, 200, await userAdmin.revoke(actorId, targetId, requestId))
-      if (req.method === 'POST' && targetId && (action === 'enable' || action === 'disable')) {
-        const user = await userAdmin.get(actorId, targetId)
-        return json(res, 200, await userAdmin.save(actorId, targetId,
-          { ...user, is_active: action === 'enable' }, requestId))
-      }
-      throw fail(405, 'method_not_allowed')
-    }
-    // ── Admin System Status: ด่านสิทธิ์อยู่ที่ health_can_view() ในฐาน (manager ขึ้นไป)
-    //    ที่นี่ด่านเดียวคือเซสชันต้องถูกต้อง — ใครยิงตรง ๆ โดยไม่ล็อกอินตายที่ sessions.access
-    if (url.pathname === '/api/admin/system-health' && req.method === 'GET') {
-      const token = await sessions.access(req)
-      if (!(await rpcDirect(token, 'health_can_view'))) throw fail(403, 'not_allowed')
-      return json(res, 200, await fullSystemStatus(token))
-    }
-    if (url.pathname === '/api/admin/system-health/test' && req.method === 'POST') {
-      checkOrigin(req)
-      const token = await sessions.access(req)
-      if (!(await rpcDirect(token, 'health_can_view'))) throw fail(403, 'not_allowed')
-      const steps = await flowHealth.selftest()
-      const passed = steps.filter(s => s.ok).length
-      return json(res, 200, { ok: passed === steps.length, passed, failed: steps.length - passed,
-        tests: steps.map(s => ({ name: s.name, result: s.ok ? 'PASS' : 'FAIL', ms: s.ms ?? 0, detail: s.detail ?? null })) })
-    }
-    // บันทึกกฎแจ้งเตือนผ่านเซสชันเดิมของหน้าจอ (เดิมหน้า standalone ใช้ token Supabase แยก)
-    // ด่าน "ดู" อยู่ที่ health_can_view — ด่าน "แก้" อยู่ใน health_rule_save เอง (admin เท่านั้น ตรวจค่าใน SQL ต่อ)
-    if (url.pathname === '/api/admin/health-rule' && req.method === 'POST') {
-      checkOrigin(req)
-      const token = await sessions.access(req)
-      if (!(await rpcDirect(token, 'health_can_view'))) throw fail(403, 'not_allowed')
-      const b = JSON.parse((await readBody(req)).toString('utf8'))
-      await rpcDirect(token, 'health_rule_save', {
-        p_id: b.id, p_enabled: b.enabled ?? null, p_params: b.params ?? null, p_level: b.level ?? null,
-        p_notify: b.notify ?? null, p_hour_from: b.hour_from ?? null, p_hour_to: b.hour_to ?? null,
-      })
-      // ประเมินกฎทันทีแทนรอ tick รอบหน้า — health_tick เป็น service_only จึงต้องยิงด้วย service key
-      // (health.mjs ก็เรียกแบบไม่ใส่ token ผู้ใช้ด้วยเหตุผลเดียวกัน)
-      await rpcDirect(service, 'health_tick')
-      return json(res, 200, { ok: true })
-    }
     if (req.method !== 'POST') throw fail(405, 'method_not_allowed')
+    if (url.pathname === '/api/quick-replies/import/preview') return quickReplyImportPreview(req, res)
+    if (url.pathname === '/api/quick-replies/attachment') return quickReplyAttachment(req, res)
+    if (url.pathname === '/api/outbound-image') return outboundImageUpload(req, res)
     checkOrigin(req)
     if (url.pathname === '/api/login') return json(res, 200, await sessions.login(req, res, JSON.parse((await readBody(req, 4096)).toString('utf8'))))
     if (url.pathname === '/api/logout') return json(res, 200, await sessions.logout(req, res))
@@ -1936,10 +1498,10 @@ async function route(req, res, url) {
     return handleCommand(req, res)
   }
 
-  if (url.pathname.startsWith('/media/public/')) return handlePublicMedia(req, res, url)
+  if (url.pathname.startsWith('/media/qr/') || url.pathname.startsWith('/media/outbound/')) return staffLibraryMedia(req, res, url)
   if (url.pathname.startsWith('/media/')) return handleMedia(req, res, url)
-  if (url.pathname.startsWith('/quick-reply-media/')) return handleQuickReplyMedia(req, res, url)
-  if (url.pathname.startsWith('/library-media/')) return mediaLibrary.handleFile(req, res, url, await sessions.access(req))
+  if (url.pathname.startsWith('/quick-reply-media/')) return quickReplyMedia(req, res, url)
+  if (url.pathname.startsWith('/outbound-media/')) return outboundMedia(req, res, url)
 
   return handleStatic(req, res, url)
 }
@@ -1950,7 +1512,9 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Referrer-Policy', 'no-referrer')
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+  // img-src เปิด https: ได้เพราะ thumbnail ของ Quick Reply ที่ import จาก Facebook เป็น URL ภายนอก
+  // (แท็ก img ตั้ง referrerpolicy=no-referrer ให้แล้ว) — script/connect ยังคุมติด self เหมือนเดิม
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
   try {
     await route(req, res, new URL(req.url, origin))
   } catch (error) {
@@ -1970,21 +1534,6 @@ server.headersTimeout = 10000
 
 const workerTimer = setInterval(worker, WORKER_INTERVAL); workerTimer.unref()
 const inboundTimer = setInterval(inboundWorker, WORKER_INTERVAL); inboundTimer.unref()
-const crmPublisherTimer = setInterval(crmPublisherWorker, CRM_PUBLISH_INTERVAL); crmPublisherTimer.unref()
-if (crmPublisherConfigured) {
-  // แมปโครงการพังต้องเห็นตั้งแต่ตอนบูต ไม่ใช่ไปรู้ตอน Lead ไม่ขึ้นอีกสามวัน
-  if (crmProjectMapInvalid.length > 0) {
-    log.warn('crm_project_map_invalid', { entries: crmProjectMapInvalid.length })
-  }
-  if (crmProjectMap.size === 0) {
-    log.warn('crm_project_map_empty', { hint: 'ASHER_CRM_PROJECT_MAP ว่าง — conversation.created จะไม่มี project_ref และ CRM จะไม่เปิด Lead' })
-  } else {
-    log.info('crm_project_map_loaded', { channels: crmProjectMap.size })
-  }
-  crmPublisherWorker().catch(e => log.warn('crm_publisher_start_failed', { reason: e.message }))
-} else if (crmPublisherEnabled) {
-  log.warn('crm_publisher_misconfigured', { urlConfigured: Boolean(crmUrl), tokenConfigured: Boolean(crmToken), workspaceConfigured: Boolean(crmWorkspaceId) })
-}
 // ของดิบมีข้อความลูกค้าจริงอยู่ในนั้น เก็บ 30 วันตามที่ตั้งไว้ในฝั่งฐาน
 // เดินวันละสี่ครั้งก็พอ ไม่ใช่งานที่ต้องตรงเวลา ขอแค่ไม่มีวันที่ลืมทำ
 const sweepTimer = setInterval(() => {
@@ -2000,25 +1549,13 @@ const sessionTimer = setInterval(() => {
     .catch(e => log.warn('session_sweep_failed', { reason: e.message }))
 }, 600000); sessionTimer.unref()
 
-// ตัวเช็ควิ่งเป็นรอบเอง (ทุกนาที: ประตู+ฐาน · ทุกชั่วโมง: TLS+token · ประเมินกฎแล้วยิง Telegram)
-// ปิดได้ด้วย CONNECT_HEALTH=off เช่นตอนรันชุดทดสอบ — ไม่งั้นมาจะยิงออกนอกเครื่องเอง
-if (process.env.CONNECT_HEALTH !== 'off') flowHealth.start()
-
-// สถานะรวมคำนวณเป็นรอบของตัวเอง — /health กับหน้า admin หยิบของที่คำนวณไว้เสมอ ไม่มีใครไปบล็อกใคร
-// รอบแรกหลังบูต 1.5 วินาที กัน status ค้าง unknown จนครบ 15 วินาทีแรก
-setTimeout(refreshSystemStatus, 1500).unref()
-const sysTimer = setInterval(refreshSystemStatus, SYS_TTL); sysTimer.unref()
-
 server.listen(port, '0.0.0.0', () => console.log(`ASHER Connect listening on ${port}; ${activeChannels.length} active channel(s)${shadow ? ' · โหมดเงา: รับเข้าอย่างเดียว ไม่ส่งออก' : ''} · ล็อกอินรายบุคคล`))
 
 process.on('SIGTERM', () => {
   clearInterval(workerTimer)
   clearInterval(inboundTimer)
-  clearInterval(crmPublisherTimer)
   clearInterval(sweepTimer)
   clearInterval(sessionTimer)
-  clearInterval(sysTimer)
-  flowHealth.stop()
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 20000).unref()
 })

@@ -1,0 +1,96 @@
+/* APLUS Connect — หน้าจัดการ Quick Replies (/quick-replies)
+   สีและฟอนต์ใช้ค่าเดียวกับธีมใน public/app.css (IBM Plex Sans Thai · ink/paper/rule ·
+   แดงแบรนด์ #8E1116 สงวนไว้เฉพาะข้อผิดพลาด ตามกติกาธีมเดิม)
+   ★ ห้ามต่อ :root บล็อกใหม่ท้ายไฟล์ — แก้ค่าในบล็อกเดียวนี้ (ธีมตัวหลังชนะเสมอ ทำให้ "แก้แล้วหน้าไม่เปลี่ยน") */
+:root {
+  color-scheme: light;
+  font-family: "IBM Plex Sans Thai", "Noto Sans Thai", ui-sans-serif, system-ui, "Segoe UI", Tahoma, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--paper);
+  --paper: #F2F2F5;
+  --surface: #FFFFFF;
+  --ink: #1F2024;
+  --muted: #64656C;
+  --faint: #83848B;
+  --rule: #DFE0E4;
+  --rule-soft: #E9E9EC;
+  --accent: #1F2024;
+  --accent-hover: #3A3B40;
+  --accent-soft: #F2F2F5;
+  --on-accent: #FFFFFF;
+  --focus: #9A9BA2;
+  --urgent: #8E1116;
+  --pill-green-bg: #F0FDF4;
+  --pill-green-fg: #166534;
+  --pill-gray-bg: #F3F4F6;
+  --pill-gray-fg: #64656C;
+  --dialog-shadow: 0 20px 100px #1F202426;
+  --scrim: #211719B3;
+}
+* { box-sizing: border-box }
+body { margin: 0 }
+header { background: var(--surface); border-bottom: 1px solid var(--rule); padding: 20px 4%; display: flex; align-items: center; gap: 24px }
+a { color: var(--muted); text-decoration: none }
+a:hover { color: var(--ink) }
+.brand { font-size: 23px; font-weight: 800; letter-spacing: -1px; color: var(--ink) }
+.brand small { display: block; font-size: 9px; letter-spacing: 4px; color: var(--faint) }
+#user { margin-left: auto; font-size: 12px; color: var(--faint) }
+main { max-width: 1320px; margin: 40px auto; padding: 0 24px }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 24px }
+h1 { font-size: 32px; margin: 5px 0 }
+h2 { font-size: 22px; margin: 0 }
+.eyebrow { font-size: 11px; letter-spacing: 2px; color: var(--faint); font-weight: 700 }
+.heading p { color: var(--muted) }
+.actions, .toolbar, .fields, .attachment-head, .dialog-head, footer { display: flex; gap: 12px; align-items: center }
+.panel { padding: 22px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px }
+.toolbar { flex-wrap: wrap }
+.toolbar input { flex: 1; min-width: 220px }
+input, textarea, select, button { font: inherit }
+input, textarea, select { border: 1px solid var(--rule); border-radius: 7px; padding: 10px; background: var(--surface); color: inherit }
+button { cursor: pointer; border: 1px solid var(--rule); border-radius: 7px; padding: 10px 14px; color: var(--ink); background: var(--surface); font-weight: 600 }
+button:hover { background: var(--accent-soft) }
+button:not(.primary):hover { border-color: var(--accent); color: var(--accent) }
+button:disabled { opacity: .5; cursor: not-allowed }
+.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); border-radius: 999px; font-weight: 600 }
+.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover) }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px }
+.muted, small, .counter { color: var(--muted); font-size: 12px }
+#notice:empty { display: none }
+.error { color: var(--urgent) }
+.reply { display: grid; grid-template-columns: 70px minmax(150px,1fr) 110px 110px 85px 220px; gap: 16px; padding: 20px 0; border-top: 1px solid var(--rule-soft); align-items: center }
+.thumbnail { width: 60px; height: 60px; object-fit: cover; border-radius: 10px; background: var(--rule-soft); display: grid; place-items: center; font-size: 24px; color: var(--faint) }
+.reply h3 { font-size: 15px; margin: 7px 0 }
+.preview { white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; color: var(--muted); line-height: 1.55 }
+.shortcut { font-family: monospace; color: var(--ink); background: var(--rule-soft); padding: 3px 6px; border-radius: 4px }
+.badge { display: inline-block; padding: 4px 8px; border-radius: 20px; font-size: 11px; background: var(--pill-green-bg); color: var(--pill-green-fg) }
+.badge.inactive { background: var(--pill-gray-bg); color: var(--pill-gray-fg) }
+.row-actions { display: flex; gap: 5px; flex-wrap: wrap }
+.row-actions button { font-size: 12px; padding: 7px 8px }
+.metric { display: grid; gap: 6px }
+.empty { text-align: center; padding: 60px 15px; color: var(--muted) }
+dialog { border: 0; border-radius: 16px; padding: 26px; width: min(680px, calc(100% - 24px)); max-height: 90vh; color: inherit; box-shadow: var(--dialog-shadow) }
+dialog::backdrop { background: var(--scrim) }
+#importer { width: min(1080px, calc(100% - 24px)) }
+.dialog-head { justify-content: space-between; margin-bottom: 20px }
+label { display: grid; gap: 7px; margin: 14px 0 }
+label input, label textarea { width: 100% }
+.fields { align-items: start }
+.fields > label { flex: 1; min-width: 0 }
+.counter { text-align: right; margin: 0 0 10px }
+.check { display: flex; align-items: center; gap: 8px }
+.check input { width: auto }
+.attachment-head { justify-content: space-between; margin-top: 25px }
+.attachment { display: grid; grid-template-columns: 1fr 100px 44px; gap: 8px; margin: 10px 0 }
+.attachment input { min-width: 0 }
+footer { justify-content: flex-end; margin-top: 25px; border-top: 1px solid var(--rule); padding-top: 20px }
+.upload { padding: 18px; border: 1px dashed var(--faint); background: var(--paper); border-radius: 8px }
+.import-row { border-top: 1px solid var(--rule); padding: 16px 0; display: grid; grid-template-columns: minmax(200px,1fr) 150px 175px; gap: 14px }
+.import-row h3 { margin: 0 0 8px; font-size: 14px }
+.import-row label { margin: 0 }
+.import-row .error { grid-column: 1/-1; margin: 0 }
+.import-row select, .import-row input { width: 100% }
+.attachment-preview { grid-column: 1/-1; max-width: 180px; max-height: 140px; object-fit: contain; border-radius: 8px }
+[hidden] { display: none !important }
+@media(max-width:900px){.heading{align-items:start;flex-direction:column}.reply{grid-template-columns:60px 1fr 100px}.row-actions{grid-column:2/-1}.reply>.metric{grid-row:2}.reply>.metric:nth-of-type(3){grid-column:2}.import-row{grid-template-columns:1fr 1fr}.import-row>div:first-child{grid-column:1/-1}}
+@media(max-width:560px){header{padding:14px 18px;gap:16px}#user{display:none}main{padding:0 14px;margin:24px auto}.panel{padding:14px}.actions{width:100%;flex-wrap:wrap}.actions button{flex:1;white-space:nowrap;padding:10px}h1{font-size:28px}.toolbar>*{width:100%;flex:1 1 100%}.reply{gap:10px;grid-template-columns:50px 1fr}.thumbnail{width:46px;height:46px}.reply>.metric{grid-row:auto;grid-column:2}.reply>.metric:nth-of-type(3){grid-column:2}.fields{display:block}dialog{padding:20px}.import-row{grid-template-columns:1fr}.import-row>div:first-child{grid-column:auto}.attachment{grid-template-columns:1fr 80px 40px}}

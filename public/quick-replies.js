@@ -1,59 +1,94 @@
-/* Optional Quick Replies picker; it never blocks the existing composer. */
-(function () {
-  const style = document.createElement('style'); style.textContent = '.quick-replies-popover{width:min(500px,calc(100vw - 24px));max-height:min(70vh,520px);overflow:auto;padding:10px;z-index:20}.quick-replies-head,.quick-replies-tools{display:flex;align-items:center;gap:8px;margin-bottom:8px}.quick-replies-head{justify-content:space-between;font-size:14px}.quick-replies-tools input{flex:1;min-width:0;width:auto}.quick-replies-tools select{width:155px;min-width:0}.quick-replies-cats{display:flex;gap:5px;overflow-x:auto;margin-bottom:8px}.quick-replies-cats button{white-space:nowrap;padding:5px 8px;font-size:11px}.quick-replies-cats button.active{background:var(--ink);color:var(--surface)}.quick-reply-card{display:grid;grid-template-columns:48px minmax(0,1fr);gap:8px;width:100%;text-align:left;padding:10px;border:1px solid var(--rule);border-radius:10px;margin:6px 0;background:var(--surface);cursor:pointer;transition:background .15s,border-color .15s,box-shadow .15s;touch-action:manipulation}.quick-reply-card:hover,.quick-reply-card:focus-visible,.quick-reply-card.selected{background:var(--rule-soft);border-color:var(--ink);box-shadow:0 2px 8px #0001;outline:none}.quick-reply-icon{font-size:18px;line-height:1.4;text-align:center}.quick-reply-image{width:48px;height:48px;object-fit:cover;border-radius:8px;background:var(--rule-soft)}.quick-reply-copy{min-width:0;display:grid;gap:4px}.quick-reply-title{font-weight:650;line-height:1.35}.quick-reply-preview{color:var(--muted);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;line-height:1.45}.quick-reply-category{justify-self:start;color:var(--muted);border:1px solid var(--rule);border-radius:999px;padding:2px 7px;font-size:11px;line-height:1.2}.quick-replies-cats button:focus-visible{outline:2px solid var(--ink);outline-offset:1px}@media(max-width:767px){.quick-replies-popover{position:fixed;left:8px;right:8px;bottom:70px;width:auto;max-height:65vh}.quick-replies-tools select{width:130px}.quick-reply-card{padding:9px}}'; document.head.append(style)
-  const button = document.getElementById('quick-replies'), message = document.getElementById('message'), composer = document.getElementById('reply')
-  if (!button || !message || !composer) return
-  const menu = document.createElement('section'); menu.id = 'saved-replies-menu'; menu.hidden = true; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'คำตอบด่วน'); composer.append(menu)
-  button.textContent = '💬 คำตอบด่วน'; button.title = 'เลือกคำตอบที่เตรียมไว้'; button.setAttribute('aria-label', 'เปิดคำตอบด่วน'); button.setAttribute('aria-controls', menu.id); button.setAttribute('aria-expanded', 'false')
-  const mobileStyle = document.createElement('style'); mobileStyle.textContent = `
-    #quick-replies{display:inline-flex;align-items:center;justify-content:center;width:auto;min-height:44px;height:auto;padding:8px 14px;border:1px solid #b8ccee;border-radius:12px;background:#edf4ff;color:#164d9e;font-size:14px;font-weight:600;line-height:1.4}
-    #saved-replies-menu[hidden]{display:none}
-    #saved-replies-menu{position:absolute;left:8px;right:8px;bottom:100%;width:auto;max-height:65vh;background:var(--surface,#fff);border:1px solid var(--rule,#ddd);border-radius:16px;box-shadow:0 8px 40px #0003;z-index:100;box-sizing:border-box}
-    #saved-replies-menu .quick-replies-head{flex-wrap:wrap;position:sticky;top:0;background:var(--surface,#fff);padding:4px 0}
-    #saved-replies-menu button,#saved-replies-menu input,#saved-replies-menu select{min-height:44px}
-    #saved-replies-menu input,#saved-replies-menu select{font-size:16px}
-    #saved-replies-menu .quick-replies-cats{flex-wrap:wrap;overflow:visible}
-    #saved-replies-menu .quick-reply-copy{overflow-wrap:anywhere}
-    @media(max-width:767px){.composer #quick-replies{order:0;flex:0 0 auto;margin:0 0 6px}#saved-replies-menu{position:fixed;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));max-height:75dvh;padding:12px}#saved-replies-menu .quick-replies-tools{flex-wrap:wrap}#saved-replies-menu .quick-replies-tools input{flex:1 0 100%;width:100%;box-sizing:border-box}}
-  `; document.head.append(mobileStyle)
-  const quoteStyle = document.createElement('style'); quoteStyle.textContent = '.quote-unit-select{width:100%;min-height:44px;margin:8px 0 12px}.quote-unit-confirm{width:100%;min-height:44px}'; document.head.append(quoteStyle)
-  // app.css intentionally hides the old disabled attachment affordance on
-  // desktop; Quick Replies is active and must remain visible at every width.
-  button.style.display = 'inline-flex'
-  const DISPLAY_TITLES = { NAII_LOC: 'ที่ตั้งโครงการ', NAII_OWNER: 'เจ้าของโครงการ', NAII_BUILDING: 'รูปแบบอาคาร / จำนวนชั้น', NAII_UNITS: 'จำนวนยูนิต', NAII_READY: 'พร้อมอยู่เมื่อไร', NAII_ROOM_TYPES: 'มีห้องแบบไหนบ้าง' }
-  const getQuickReplyDisplayName = item => { const shortcut = String(item.shortcut || '').trim(); return String(DISPLAY_TITLES[shortcut] || item.title || item.name || shortcut || 'Quick reply').trim() }
-  const categories = ['ทั้งหมด', 'ราคา', 'โปรโมชั่น', 'นัดชม', 'ทำเล', 'ห้องว่าง', 'การจอง']
-  const keywords = { ราคา: 'ราคา price บาท ล้าน', โปรโมชั่น: 'โปร promotion ส่วนลด', นัดชม: 'นัด ชม ดูห้อง เยี่ยมชม', ทำเล: 'ทำเล สถานที่ เดินทาง', ห้องว่าง: 'ว่าง ห้อง ยูนิต พร้อมอยู่', การจอง: 'จอง booking มัดจำ' }
-  let query = '', category = 'ทั้งหมด', sort = 'Frequently used'
-  const rows = () => { const raw = typeof window.asherQuickReplies === 'function' ? window.asherQuickReplies() : []; const list = Array.isArray(raw) ? raw : (raw?.templates || raw?.quick_replies || []); return list.map(x => { const shortcut = String(x.shortcut || '').trim(); const content = String(x.body ?? x.content ?? x.message ?? ''); const displayName = getQuickReplyDisplayName({ ...x, shortcut }); return { id: x.id, shortcut, displayName, name: x.name || shortcut || 'Quick reply', content, isQuotation: /ใบเสนอราคา|ออกใบเสนอราคา|เสนอราคา/i.test(`${displayName} ${shortcut} ${content}`), attachments: Array.isArray(x.attachments) ? x.attachments : [], category: x.category || '', usage_count: Number(x.usage_count || 0), last_used_at: x.last_used_at, image: x.thumbnail_url || x.image_url || (Array.isArray(x.attachments) && x.attachments[0]?.public_url ? String(x.attachments[0].public_url).replace(/^(https?:\/\/[^/]+)?\/quick-reply-media\//, '/library-media/') : ''), active: x.active ?? x.is_active ?? true } }).filter(x => x.active !== false) }
-  const filtered = () => { let a = rows().filter(x => !query || `${x.displayName} ${x.shortcut} ${x.content} ${x.category}`.toLowerCase().includes(query.toLowerCase())); if (category !== 'ทั้งหมด') a = a.filter(x => x.category === category || keywords[category].split(/\s+/).some(k => `${x.displayName} ${x.content} ${x.category}`.toLowerCase().includes(k))); if (sort === 'Frequently used') a.sort((x, y) => y.usage_count - x.usage_count); else if (sort === 'Recently used') a.sort((x, y) => String(y.last_used_at || '').localeCompare(String(x.last_used_at || ''))); else a.sort((x, y) => x.displayName.localeCompare(y.displayName, 'th')); return a }
-  const close = () => { menu.hidden = true; menu.replaceChildren(); button.setAttribute('aria-expanded', 'false') }
-  const quoteUnits = () => typeof window.asherQuoteUnits === 'function' ? window.asherQuoteUnits() : []
-  const quoteUnitLabel = unit => `${unit.number ?? unit.unit_number ?? 'ห้องไม่ระบุ'} · ${Number(unit.price ?? unit.selling_price ?? unit.list_price).toLocaleString('th-TH')} บาท`
-  const chooseQuoteUnit = item => {
-    menu.replaceChildren()
-    const head = document.createElement('div'); head.className = 'quick-replies-head'; const title = document.createElement('strong'); title.textContent = 'เลือกห้องที่มีใบเสนอราคา'; head.append(title); const back = document.createElement('button'); back.type = 'button'; back.className = 'subtle'; back.textContent = 'ย้อนกลับ'; back.addEventListener('click', () => open('replies')); head.append(back); menu.append(head)
-    const units = quoteUnits()
-    if (!units.length) { const empty = document.createElement('div'); empty.className = 'template-empty'; empty.textContent = 'ไม่พบห้องที่มีราคาในเคสนี้'; menu.append(empty); return }
-    const label = document.createElement('label'); label.textContent = 'ห้อง'; const select = document.createElement('select'); select.className = 'quote-unit-select'; select.setAttribute('aria-label', 'เลือกห้องที่มีใบเสนอราคา'); units.forEach(unit => { const option = document.createElement('option'); option.value = unit.id ?? unit.number ?? unit.unit_number; option.textContent = quoteUnitLabel(unit); select.append(option) }); label.append(select); menu.append(label)
-    const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'primary quote-unit-confirm'; confirm.textContent = 'เลือกห้องนี้'; confirm.addEventListener('click', () => { const unit = units[select.selectedIndex]; const number = unit.number ?? unit.unit_number ?? ''; const price = Number(unit.price ?? unit.selling_price ?? unit.list_price).toLocaleString('th-TH'); const body = item.content.replace(/\{ห้อง\}|\{เลขห้อง\}/g, number).replace(/\{ราคา\}/g, `${price} บาท`); message.value = /\{ห้อง\}|\{เลขห้อง\}|\{ราคา\}/.test(item.content) ? body : `${body}\nห้อง ${number} ราคา ${price} บาท`; message.dispatchEvent(new Event('input', { bubbles: true })); message.focus(); close() }); menu.append(confirm)
+﻿
+/* Selection prepares a draft; it never sends. */
+(() => {
+  const button = document.getElementById('quick-replies'), message = document.getElementById('message'), menu = document.getElementById('template-menu')
+  if (!button || !message || !menu) return
+  window.asherQuickRepliesEnabled = true
+
+  button.setAttribute('aria-haspopup', 'dialog')
+  button.setAttribute('aria-controls', 'template-menu')
+
+  let query = '', sort = 'frequent', index = 0, mode = 'button', cache = null, loading = false, failed = false, inserting = false, visible = [], list, search, status, requestVersion = 0, insertRange = null
+  const usage = new Map()
+  const el = (tag, content, cls) => { const e = document.createElement(tag); if (content != null) e.textContent = content; if (cls) e.className = cls; return e }
+  const context = () => window.asherQuickReplyContext?.() || {}
+  const unwrap = raw => Array.isArray(raw) ? raw : (raw?.quick_replies || raw?.templates || raw?.items || [])
+  const rows = () => unwrap(cache ?? window.asherQuickReplies?.() ?? []).filter(x => (x.active ?? x.is_active) !== false).map(x => ({ ...x, name: x.title || x.name || x.shortcut || 'Quick reply', shortcut: String(x.shortcut || '').replace(/^\//, ''), content: x.body ?? x.content ?? x.message ?? '', usage_count: Math.max(Number(x.usage_count || 0), usage.get(x.id)?.usage_count || 0), last_used_at: [x.last_used_at || '', usage.get(x.id)?.last_used_at || ''].sort().at(-1) }))
+  const api = async (action, data = {}) => { const r = await fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, data }) }); if (!r.ok) throw new Error('request_failed'); return r.json() }
+  const filtered = () => rows().filter(x => `${x.shortcut} ${x.name} ${x.content}`.toLocaleLowerCase().includes(query.replace(/^\//, '').toLocaleLowerCase())).sort((a, b) => {
+    const exact = x => query && x.shortcut.toLowerCase() === query.replace(/^\//, '').toLowerCase() ? 1 : 0
+    return exact(b) - exact(a) || (sort === 'frequent' ? Number(b.usage_count || 0) - Number(a.usage_count || 0) : sort === 'recent' ? String(b.last_used_at || '').localeCompare(String(a.last_used_at || '')) : a.name.localeCompare(b.name, 'th')) || Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.name.localeCompare(b.name, 'th')
+  })
+  function close () { requestVersion++; loading = false; menu.hidden = true; button.setAttribute('aria-expanded', 'false'); message.removeAttribute('aria-controls'); message.removeAttribute('aria-activedescendant'); menu.replaceChildren() }
+  async function refresh () {
+    const version = ++requestVersion
+    loading = true; failed = false
+    try { const result = unwrap(await api('quick_replies_list')); if (version !== requestVersion) return; cache = result; if (!menu.hidden) render() } catch { if (version === requestVersion) failed = true } finally { if (version === requestVersion) { loading = false; if (!menu.hidden) render() } }
   }
-  let tab = 'replies'
-  function open (nextTab) {
-    if (nextTab) tab = nextTab
-    menu.hidden = false; button.setAttribute('aria-expanded', 'true'); menu.className = 'template-menu quick-replies-popover'; menu.replaceChildren()
-    const head = document.createElement('div'); head.className = 'quick-replies-head'; const tabs = document.createElement('div'); tabs.className = 'saved-replies-tabs'; tabs.setAttribute('role', 'tablist'); [['replies', 'คำตอบสำเร็จรูป'], ['library', 'คลังรูป'], ['units', 'ห้องว่าง']].forEach(([key, label]) => { const t = document.createElement('button'); t.type = 'button'; t.setAttribute('role', 'tab'); t.setAttribute('aria-selected', String(tab === key)); t.className = tab === key ? 'active' : ''; t.textContent = label; t.addEventListener('click', () => { if (tab !== key) open(key) }); tabs.append(t) }); head.append(tabs); const add = document.createElement('button'); add.type = 'button'; add.className = 'subtle'; add.textContent = '+ เพิ่มคำตอบ'; add.addEventListener('click', () => { location.href = '/quick-replies' }); if (tab === 'replies') head.append(add); const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.textContent = 'ปิด'; dismiss.addEventListener('click', () => { close(); button.focus() }); head.append(dismiss); menu.append(head)
-    if (tab === 'units') { if (window.asherImageLibrary) window.asherImageLibrary.renderUnits(menu, { close, openTab: open }); return }
-    if (tab === 'library') { if (window.asherImageLibrary) window.asherImageLibrary.render(menu, { close }); else { const e = document.createElement('div'); e.className = 'template-empty'; e.textContent = 'กรุณารีเฟรชหน้าเพื่อใช้คลังรูป'; menu.append(e) } return }
-    const tools = document.createElement('div'); tools.className = 'quick-replies-tools'; const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'ค้นหาชื่อหรือข้อความ'; search.value = query; tools.append(search); const select = document.createElement('select'); ['Frequently used', 'Recently used', 'A–Z'].forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; select.append(o) }); select.value = sort; tools.append(select); menu.append(tools)
-    const cats = document.createElement('div'); cats.className = 'quick-replies-cats'; categories.forEach(c => { const b = document.createElement('button'); b.type = 'button'; b.textContent = c; if (c === category) b.className = 'active'; b.addEventListener('click', () => { category = c; cats.querySelectorAll('button').forEach(chip => chip.classList.toggle('active', chip === b)); render() }); cats.append(b) }); menu.append(cats)
-    const list = document.createElement('div'); list.className = 'quick-replies-list'; menu.append(list)
-    const render = () => { list.replaceChildren(); const a = filtered(); if (!a.length) { const e = document.createElement('div'); e.className = 'template-empty'; e.textContent = 'ยังไม่มี Quick Reply ที่ตรงกัน'; list.append(e); return } a.forEach(item => { const b = document.createElement('button'); b.type = 'button'; b.className = 'quick-reply-card'; b.setAttribute('aria-label', item.isQuotation ? `เลือกห้องสำหรับ ${item.displayName}` : `แทรก ${item.displayName}`); b.setAttribute('aria-pressed', 'false'); let visual; if (item.image) { const img = document.createElement('img'); img.className = 'quick-reply-image'; img.src = item.image; img.alt = ''; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; visual = img } else { const icon = document.createElement('span'); icon.className = 'quick-reply-icon'; icon.textContent = item.isQuotation ? '🏠' : '💬'; icon.setAttribute('aria-hidden', 'true'); visual = icon } const body = document.createElement('span'); body.className = 'quick-reply-copy'; const n = document.createElement('strong'); n.className = 'quick-reply-title'; n.textContent = item.displayName; const p = document.createElement('small'); p.className = 'quick-reply-preview'; p.textContent = item.isQuotation ? 'เลือกห้องที่มีใบเสนอราคาจากรายการ' : item.content; const badge = document.createElement('span'); badge.className = 'quick-reply-category'; badge.textContent = item.category + (item.attachments.length ? ' · ' + item.attachments.length + ' รูป' : ''); body.append(n, p, badge); b.append(visual, body); b.addEventListener('click', () => { if (b.disabled) return; if (item.isQuotation) { chooseQuoteUnit(item); return } b.disabled = true; b.classList.add('selected'); b.setAttribute('aria-pressed', 'true'); if (message.value.trim() && message.value.trim() !== '/' && !confirm('แทนที่ข้อความที่กำลังพิมพ์ด้วยคำตอบนี้หรือไม่?')) { b.disabled = false; b.classList.remove('selected'); b.setAttribute('aria-pressed', 'false'); return } if (item.attachments.length && !(window.asherAttachLibraryImages && window.asherAttachLibraryImages(item.attachments, { replace: true }))) { b.disabled = false; b.classList.remove('selected'); b.setAttribute('aria-pressed', 'false'); return } delete message.dataset.answerHubId; message.value = item.content; message.dispatchEvent(new Event('input', { bubbles: true })); message.focus(); setTimeout(close, 80) }); list.append(b) }) }
-    search.addEventListener('input', () => { query = search.value; render() }); select.addEventListener('change', () => { sort = select.value; render() }); render(); if (matchMedia('(min-width: 768px)').matches) setTimeout(() => search.focus(), 0)
+  function choose (item) {
+    const range = insertRange
+    close()
+    inserting = true
+    try {
+      if (window.asherInsertQuickReply) window.asherInsertQuickReply(item, range)
+      else { message.value = message.value.slice(0, range?.start ?? 0) + item.content + message.value.slice(range?.end ?? message.value.length); message.dispatchEvent(new Event('input', { bubbles: true })); message.focus() }
+    } finally { inserting = false }
+    usage.set(item.id, { usage_count: Number(item.usage_count || 0) + 1, last_used_at: new Date().toISOString() })
+    const data = { id: item.id }; if (context().conversation_id) data.conversation_id = context().conversation_id
+    void api('quick_reply_use', data).catch(() => {})
   }
-  window.asherOpenSavedReplies = nextTab => { open(nextTab); button.setAttribute('aria-expanded', 'true') }
-  const libraryButton = document.getElementById('image-library-open')
-  if (libraryButton) libraryButton.addEventListener('click', () => { if (!menu.hidden && tab === 'library') close(); else open('library') })
-  menu.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); button.focus() } })
-  button.addEventListener('click', () => menu.hidden ? open('replies') : close()); message.addEventListener('keydown', e => { if (e.key === '/' && !message.value) setTimeout(() => open('replies'), 0) }); document.addEventListener('click', e => { if (!menu.hidden && e.target.isConnected && !menu.contains(e.target) && !button.contains(e.target) && !e.target.closest?.('#image-library-open')) close() })
+  function highlight () {
+    list?.querySelectorAll('.quick-reply-row').forEach((b, i) => { b.classList.toggle('active', i === index); b.setAttribute('aria-selected', String(i === index)) })
+    const active = list?.children[index]
+    if (active && visible.length) { message.setAttribute('aria-activedescendant', active.id); search?.setAttribute('aria-activedescendant', active.id) }
+  }
+  function render () {
+    if (menu.hidden || !list) return
+    visible = filtered(); index = Math.max(0, Math.min(index, visible.length - 1)); list.replaceChildren()
+    status.textContent = failed ? 'โหลดข้อมูลล่าสุดไม่สำเร็จ · ปิดแล้วเปิดอีกครั้งเพื่อลองใหม่' : loading ? 'กำลังโหลด…' : `${visible.length} รายการ`
+    if (!visible.length) list.append(el('div', 'ไม่พบ Quick Reply ที่ตรงกัน', 'template-empty'))
+    visible.forEach((item, i) => {
+      const b = el('button', null, 'quick-reply-row'); b.type = 'button'; b.id = `quick-reply-option-${i}`; b.setAttribute('role', 'option')
+      const image = item.thumbnail_url || item.image_url || item.attachments?.find(a => a.mime_type?.startsWith('image/') || a.kind === 'image')?.public_url
+      if (image && (/^https:\/\//i.test(image) || /^\/(?!\/)/.test(image))) { const img = el('img'); img.src = image; img.alt = ''; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.addEventListener('error', () => { img.hidden = true }); b.append(img) } else b.append(el('span', '⌘', 'quick-reply-thumb'))
+      const copy = el('span', null, 'quick-reply-copy'); copy.append(el('strong', item.name), el('code', item.shortcut ? `/${item.shortcut}` : 'ไม่มี shortcut'), el('small', item.content)); b.append(copy)
+      b.addEventListener('click', () => choose(item)); b.addEventListener('focus', () => { index = i; highlight() }); list.append(b)
+    })
+    highlight()
+  }
+  function open (kind = 'button') {
+    mode = kind; menu.hidden = false; menu.className = 'template-menu quick-replies-popover'; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Quick Replies'); menu.replaceChildren(); button.setAttribute('aria-expanded', 'true'); message.setAttribute('aria-controls', 'quick-replies-list')
+    const head = el('div', null, 'quick-replies-head'), title = el('strong', 'คำตอบที่บันทึกไว้'); title.append(el('small', 'SAVED REPLIES')); head.append(title)
+    if (context().role === 'admin') { const link = el('a', 'จัดการ'); link.href = '/quick-replies'; head.append(link) }
+    const dismiss = el('button', '×'); dismiss.type = 'button'; dismiss.setAttribute('aria-label', 'ปิด Quick Replies'); dismiss.addEventListener('click', () => { close(); message.focus() }); head.append(dismiss); menu.append(head)
+    const tools = el('div', null, 'quick-replies-tools'); search = el('input'); search.type = 'search'; search.placeholder = 'ค้นหาคำตอบ หรือ /shortcut'; search.setAttribute('aria-label', 'ค้นหาคำตอบที่บันทึกไว้'); search.value = query
+    const select = el('select'); select.setAttribute('aria-label', 'เรียงคำตอบ'); [['frequent', 'ใช้บ่อยที่สุด'], ['recent', 'ใช้ล่าสุด'], ['az', 'เรียง ก–ฮ']].forEach(([value, label]) => { const o = el('option', label); o.value = value; select.append(o) }); select.value = sort; tools.append(search, select); menu.append(tools)
+    status = el('div', '', 'quick-replies-status'); status.setAttribute('role', 'status'); list = el('div'); list.id = 'quick-replies-list'; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', 'คำตอบที่บันทึกไว้'); menu.append(status, list, el('p', 'แตะคำตอบเพื่อใส่ข้อความ · ↑ ↓ เลือก · Enter ใส่ · Esc ปิด', 'quick-replies-help'))
+    search.addEventListener('input', () => { query = search.value; index = 0; render() }); select.addEventListener('change', () => { sort = select.value; index = 0; render() }); render(); void refresh()
+    if (kind === 'button') search.focus()
+  }
+  button.addEventListener('click', () => { if (!menu.hidden) close(); else { query = ''; index = 0; insertRange = { start: message.selectionStart ?? message.value.length, end: message.selectionEnd ?? message.value.length }; open() } })
+  message.addEventListener('input', () => {
+    if (inserting) return
+    const caret = message.selectionStart ?? message.value.length
+    const token = message.value.slice(0, caret).match(/(?:^|\s)\/([^\s/]*)$/)
+    if (token) { query = token[1]; insertRange = { start: caret - query.length - 1, end: caret }; index = 0; if (menu.hidden || mode !== 'slash') { open('slash') } else { search.value = query; render() } }
+    else if (!menu.hidden && mode === 'slash') close()
+  })
+  // Capture before the existing textarea Enter-to-send handler, including no matches.
+  document.addEventListener('keydown', e => {
+    if (menu.hidden || (e.target !== message && !menu.contains(e.target))) return
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(); message.focus(); return }
+    if (e.isComposing || e.keyCode === 229) { if (e.key === 'Enter' || e.keyCode === 229) e.stopImmediatePropagation(); return }
+    if (e.target !== message && e.target !== search && !e.target.classList.contains('quick-reply-row')) return
+    if (['ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) {
+      e.preventDefault(); e.stopImmediatePropagation()
+      if (!visible.length) return
+      if (e.key === 'Enter') choose(visible[index])
+      else { index = (index + (e.key === 'ArrowDown' ? 1 : -1) + visible.length) % visible.length; highlight(); list.children[index]?.scrollIntoView({ block: 'nearest' }) }
+    }
+  }, true)
+  document.addEventListener('click', e => { if (!menu.hidden && !menu.contains(e.target) && !button.contains(e.target) && e.target !== message) close() })
+  window.addEventListener('focus', () => { if (!menu.hidden) void refresh() })
 })()
+

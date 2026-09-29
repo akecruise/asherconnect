@@ -1,0 +1,14 @@
+[Unit]
+Description=Archive historical LINE Business chats without unsafe CRM identity guesses
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/asher-inbox/app
+ExecStart=/usr/bin/flock -n /run/lock/asher-line-oa-history.lock /usr/bin/node /opt/asher-inbox/app/scripts/archive-line-oa-history.mjs --cookies /opt/asher-inbox/secrets/line-oa-cookies.json --bot U0f8a4998da40e9e0fa908abd13be3793 --apply
+TimeoutStartSec=8h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

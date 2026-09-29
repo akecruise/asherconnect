@@ -10,12 +10,6 @@ COPY --chown=node:node public ./public
 # scripts/ = เครื่องมือรันมือ เช่น test-claude.mjs ไว้ตรวจว่า API key ใช้ได้จริงจากในคอนเทนเนอร์
 COPY --chown=node:node lib ./lib
 COPY --chown=node:node scripts ./scripts
-# health/ = ระบบเช็คสถานะ — server.mjs import ตอนบูต (health/health.mjs) และเสิร์ฟ health.html จากโฟลเดอร์นี้
-# ถ้าลืมบรรทัดนี้ container จะขึ้นไม่ได้เลย เพราะ import หาไฟล์ไม่เจอตั้งแต่ตอนบูต
-COPY --chown=node:node health ./health
-# services/ = ชั้นบริการคลังคำตอบ (answer-hub) — server.mjs import ตอนบูต (Phase 6)
-# ถ้าลืมบรรทัดนี้ container จะขึ้นไม่ได้เลย เพราะ import หาไฟล์ไม่เจอตั้งแต่ตอนบูต
-COPY --chown=node:node services ./services
 # โฟลเดอร์เซสชัน — สร้างตั้งแต่ใน image เพราะ named volume จะคัดลอกสิทธิ์จากโฟลเดอร์นี้ตอนสร้างครั้งแรก
 # ไม่มีบรรทัดนี้ volume จะเป็นของ root แล้ว node เขียนไม่ได้ (EACCES ตอนล็อกอิน)
 RUN mkdir -p /app/.sessions && chown node:node /app/.sessions && chmod 700 /app/.sessions

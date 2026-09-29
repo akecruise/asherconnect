@@ -1,5 +1,4 @@
 import { slaTag } from './sla.mjs'
-import { dateSeparatorLabel, messageSenderLabel, messageSide, messageStatus } from './conversation-presentation.mjs'
 
 const $ = id => document.getElementById(id)
 const labels={mine:'งานของฉัน',unassigned:'ยังไม่มีคนรับ',waiting:'รอลูกค้าตอบ',sla:'ตอบเกิน SLA',today:'นัดหมายวันนี้',followup:'ถึงเวลาติดตาม',closed:'ปิดแล้ว',all:'ทั้งหมด'}
@@ -7,43 +6,13 @@ const channelState={ok:'รับข้อความอยู่',idle:'เง
 const stageNames={follow_up:'ติดตาม',qualified:'Qualified',appointment:'นัดชม',walk_in:'Walk-in',booking:'Booking',sale:'Sale',lost:'ปิดแล้ว'}
 const errors={invalid_credentials:'อีเมลหรือรหัสผ่านไม่ถูกต้อง',too_many_attempts:'ลองเข้าสู่ระบบหลายครั้งเกินไป กรุณารอ 15 นาที',not_allowed:'บัญชีของระบบไม่มีสิทธิ์ใช้งาน กรุณาติดต่อผู้ดูแล',session_expired:'เชื่อมต่อระบบหลังบ้านไม่ได้ กรุณารีเฟรชหน้า',channel_not_configured:'ยังไม่ได้เชื่อมบัญชีช่องทางนี้ กรุณาติดต่อผู้ดูแล',already_assigned:'มีผู้รับเคสนี้แล้ว กรุณารีเฟรช',claim_required:'กรุณารับเคสก่อนทำรายการ',version_conflict:'ข้อมูลถูกแก้ไขจากอีกหน้าจอ กรุณาเลือกเคสใหม่แล้วตรวจข้อมูล',stage_transition_not_allowed:'กรุณาดำเนินการตามลำดับสถานะ',future_appointment_required:'กรุณาเลือกวันเวลานัดในอนาคต',unit_unavailable:'ห้องนี้ไม่พร้อมจอง',booking_required:'ต้องมีใบจองก่อนบันทึก Sale',case_closed:'เคสนี้ปิดแล้ว',service_unavailable:'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่',request_rejected:'บันทึกไม่สำเร็จ กรุณาตรวจข้อมูลและลำดับสถานะ',invalid_origin:'กรุณาเปิดผ่าน URL ที่ผู้ดูแลกำหนด',shadow_mode:'ตอนนี้ระบบอยู่ในโหมดเก็บข้อมูล ยังไม่เปิดให้ส่งข้อความหาลูกค้า'}
 let boot,items=[],selected=null,detail=null,filter='unassigned',offset=0,busy=false,dirty=false,sequence=0,listSequence=0,polling=false
-// ── หน้าสถานะระบบ (/admin/health) ใช้เปลือกและเซสชันเดิมของแอป — ไม่มีล็อกอินแยกอีกต่อไป ──
-// anonymous เปิดมาเจอฟอร์มล็อกอินเดิมบน URL เดียวกัน ล็อกอินแล้วกลับมาหน้านี้เอง
-// ด่านสิทธิ์จริงอยู่ที่ health_can_view() ในฐาน (manager/admin ดูได้ · บันทึกกฎเป็นของ admin ตาม health_rule_save)
-const ANSWER_VIEW = location.pathname === '/answer-hub'
-const ADMIN_VIEW = location.pathname === '/admin/health'
-const USERS_VIEW = location.pathname === '/admin/users'
 // Small bridge for the optional Quick Replies module; no credentials or service
 // role data are exposed, only the already-authorized bootstrap result.
 window.asherQuickReplies = () => boot?.quick_replies?.length ? boot.quick_replies : (boot?.canned ?? [])
-// Quick Replies can offer only rooms that are available and already priced.
-window.asherQuoteUnits = () => (detail?.units ?? []).filter(unit => Number(unit.price ?? unit.selling_price ?? unit.list_price ?? 0) > 0)
 const drafts=new Map(),pendingCommands=new Map()
-let selectedImages=[]
 const text=(tag,value,cls)=>{const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
-
-// เมนูที่สร้างด้วย JS ต้องมีโครงเดียวกับที่เขียนไว้ใน index.html คือ svg.nav-icon + span.nav-label
-// ★ ไม่ใช่แค่ความสวย — ที่จอแคบ .nav-item ถูกบีบเป็นกล่อง 44×44 (ดู app.css)
-//   เมนูที่มีแต่ข้อความจะถูกยัดลงกล่องนั้นจนอ่านไม่ออก ส่วนเมนูที่มีไอคอนจะซ่อน label แล้วเหลือไอคอน
-const ICON_ANSWER_HUB='M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM13 4h5.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H13z'
-const ICON_USERS='M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M3 20a6 6 0 0 1 12 0M16.5 11.5a3 3 0 1 0 0-6M18 20a5.5 5.5 0 0 0-2-4.3'
-const ICON_MEDIA_LIBRARY='M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM4 15l4.5-4.5 4 4 2.5-2.5L20 17M15.5 9.5h.01'
-const navLink=(id,href,label,iconPath,title=label)=>{
- const a=document.createElement('a')
- a.className='nav-item';a.id=id;a.href=href;a.title=title;a.setAttribute('aria-label',label)
- const svg=document.createElementNS('http://www.w3.org/2000/svg','svg')
- svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','nav-icon')
- svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false')
- const path=document.createElementNS('http://www.w3.org/2000/svg','path')
- path.setAttribute('d',iconPath);path.setAttribute('fill','none');path.setAttribute('stroke','currentColor')
- path.setAttribute('stroke-width','1.8');path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round')
- svg.append(path);a.append(svg,text('span',label,'nav-label'))
- return a
-}
 function note(value,error=false){$('notice').hidden=!value;$('notice').textContent=value;$('notice').className='notice'+(error?' error':'')}
-function safeReturnTo(value){return typeof value==='string'&&value.startsWith('/')&&!value.startsWith('//')&&!value.includes('\\')?value:null}
-function currentReturnTo(){return safeReturnTo(location.pathname+location.search)}
-async function request(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok){if(response.status===401&&path==='/api/command'&&boot){dirty=false;$('message').value='';const back=currentReturnTo();location.replace(back?`/?return_to=${encodeURIComponent(back)}`:'/')}const e=new Error(errors[data.error]||(/[\u0E00-\u0E7F]/.test(data.error||'')?data.error:null)||'ทำรายการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองใหม่');e.code=data.error;throw e}return data}
+async function request(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok){if(response.status===401&&path==='/api/command'&&boot){dirty=false;$('message').value='';location.replace('/')}const e=new Error(errors[data.error]||'ทำรายการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองใหม่');e.code=data.error;throw e}return data}
 const api=(action,data={})=>request('/api/command',{action,data})
 const date=value=>value?new Date(value).toLocaleString('th-TH',{timeZone:'Asia/Bangkok',dateStyle:'medium',timeStyle:'short'}):'—'
 function local(value){if(!value)return '';return new Date(new Date(value).getTime()+7*3600000).toISOString().slice(0,16)}
@@ -85,42 +54,53 @@ function fillTemplate(content){
  return { text, missing }
 }
 
-function useTemplate(content){
- const { text, missing } = fillTemplate(content)
- $('message').value = text
- $('message').focus()
- if (missing.length) note('ยังไม่มีข้อมูลสำหรับ ' + missing.map(m => '{' + m + '}') .join(' ') + ' — กรุณาเติมเองก่อนส่ง', true)
+// จุดแทรกข้อความเดียวสำหรับ Quick Reply ทั้งจากปุ่มและ /shortcut
+window.asherInsertQuickReply = (item, range) => {
+ const message = $('message')
+ const { text: content, missing } = fillTemplate(item?.content ?? item?.body ?? '')
+ const start = range?.start ?? message.selectionStart ?? message.value.length
+ const end = range?.end ?? message.selectionEnd ?? message.value.length
+ message.value = message.value.slice(0, start) + content + message.value.slice(end)
+ message.dispatchEvent(new Event('input', { bubbles: true }))
+ message.focus()
+ if (missing.length) note('ยังไม่มีข้อมูลสำหรับ ' + missing.map(m => '{' + m + '}').join(' ') + ' — กรุณาเติมเองก่อนส่ง', true)
 }
 
-// ── เรียงชิปตามบริบท ──
-// ดูคำในข้อความล่าสุดของลูกค้า แล้วดันเทมเพลตที่เกี่ยวขึ้นหน้า
-// ★ เรียงใหม่เท่านั้น ไม่ซ่อนอันไหน — ซ่อนแล้วเซลส์จะหาของที่เคยอยู่ตรงนั้นไม่เจอ
-const TOPIC_WORDS = {
- ราคา: ['ราคา', 'เท่าไหร่', 'เท่าไร', 'กี่บาท', 'ล้าน', 'ผ่อน', 'ดาวน์', 'โปร'],
- แปลน: ['แปลน', 'ผัง', 'ห้อง', 'ตร.ม', 'ตรม', 'ขนาด', 'กี่ตาราง'],
- นัดชม: ['นัด', 'ดูห้อง', 'เข้าชม', 'ไปดู', 'ว่างวัน', 'เยี่ยมชม'],
- เบอร์: ['เบอร์', 'โทร', 'ติดต่อ', 'ไลน์', 'line id'],
+// โหลดห้องว่างจาก CRM ก่อน แล้วบังคับให้เลือกหนึ่งห้องต่อหนึ่งใบเสนอราคา
+async function exportAvailableUnitsPng(){
+ if(!detail||!selected||busy)return
+ setBusy(true)
+ try{
+  const units=await api('quotation_units',{id:selected})
+  if(!units.length){note('CRM ยังไม่มีห้องว่างสำหรับออกใบเสนอราคา',true);return}
+  const label=u=>`${u.project_name} · ห้อง ${u.unit_number} · ${u.floor_name||'ไม่ระบุชั้น'} · ${Number(u.price||0).toLocaleString('th-TH')} บาท`
+  dialog('เลือกห้องว่างสำหรับใบเสนอราคา PNG',[{name:'unit_id',label:'ห้องว่าง',options:units.map(u=>({value:u.id,label:label(u)}))}],'quotation_png',{submitLabel:'ออก PNG และส่งเข้าแชท'})
+ }catch(error){note(`โหลดห้องว่างไม่สำเร็จ: ${error.message}`,true)}finally{setBusy(false)}
 }
-function lastContactText(){
- const msgs = detail?.messages ?? []
- for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].sender_type === 'contact') return String(msgs[i].content ?? '')
- return ''
+
+async function generateUnitQuotation(unitId){
+ if(!detail||!selected||busy)return
+ const popup=window.open('about:blank','_blank')
+ if(!popup){note('เบราว์เซอร์บล็อกหน้าต่างรูป PNG กรุณาอนุญาต pop-up แล้วลองอีกครั้ง',true);return}
+ popup.opener=null
+ popup.document.title='กำลังออกใบเสนอราคา'
+ popup.document.body.textContent='กำลังให้ ASHER CRM ออกใบเสนอราคา…'
+ setBusy(true)
+ try{
+  const result=await api('quotation_png',{id:selected,unit_id:unitId,request_id:crypto.randomUUID()})
+  if(!result.download_url)throw Error('ไม่ได้รับรูป PNG จาก CRM')
+  $('dialog').close()
+  popup.location.replace(result.download_url)
+  detail=await api('detail',{id:selected})
+  renderDetail()
+  await loadList()
+  note(`ออกใบเสนอราคา ${result.quotation_no||''} และส่งเข้าแชทแล้ว`)
+ }catch(error){
+  popup.close()
+  note(error.message==='unit_unavailable'?'CRM ยังไม่มีห้องว่างสำหรับออกใบเสนอราคา':`ออกใบเสนอราคาไม่สำเร็จ: ${error.message}`,true)
+ }finally{setBusy(false)}
 }
-function rankTemplates(list){
- const hay = lastContactText().toLowerCase()
- const score = t => {
-  const s = ((t.shortcut ?? '') + ' ' + (t.content ?? '')).toLowerCase()
-  let n = 0
-  for (const [topic, words] of Object.entries(TOPIC_WORDS)) {
-   if (!words.some(w => hay.includes(w.toLowerCase()))) continue
-   if (s.includes(topic.toLowerCase()) || words.some(w => s.includes(w.toLowerCase()))) n += 2
-  }
-  return n
- }
- return [...list].map((t, i) => ({ t, i, n: score(t) }))
-   .sort((a, b) => b.n - a.n || a.i - b.i)   // คะแนนเท่ากันให้คงลำดับเดิม
-   .map(x => x.t)
-}
+window.asherExportAvailableUnitsPng=exportAvailableUnitsPng
 
 // ชื่อที่จะโชว์ให้เซลส์เห็น — กฎเดียว ใช้ทั้งการ์ดในรายการและหัวแชท
 //   มีชื่อจริง        -> ชื่อ
@@ -130,7 +110,7 @@ function rankTemplates(list){
 //   เพราะเคยมีของหลุดเข้าฐานจากตอนที่หน้าจอเอาคำนี้ไปใส่ช่องแก้ชื่อแล้วกดบันทึก
 //   ถ้าไม่ดัก ลูกค้าคนนั้นจะชื่อ "ลูกค้าใหม่" ตลอดไปและหา external id ดูไม่ได้เลย
 const NO_NAME = 'ลูกค้าใหม่'
-const CHANNEL_WORD = { line: 'LINE', messenger: 'Messenger', instagram: 'Instagram', tiktok: 'TikTok' }
+const CHANNEL_WORD = { line: 'LINE', messenger: 'Messenger' }
 // ★ ไม่โชว์ id เต็มบนการ์ดอีกแล้ว — userId ของ LINE ยาว 33 ตัว ตัดแล้วเหลือ "U666f06…"
 //   ซึ่งแยกคนไม่ออกและกินที่ทั้งแถว · id เต็มย้ายไปอยู่ในหน้ารายละเอียดพร้อมปุ่มคัดลอก
 function customerName(name, externalId, channel){
@@ -152,7 +132,6 @@ function initials(label){
 function avatar(url, label){
  const box = text('span', '', 'avatar')
  box.textContent = initials(label)
- if (boot?.user?.test_only) return box
  if (url) {
   const img = document.createElement('img')
   img.alt = ''
@@ -210,7 +189,7 @@ let countSequence=0;
 // ตัวนับ SLA ตัวเก่าถูกเอาออก — มันไล่ขอรายการทีละหน้ามานับเองที่เบราว์เซอร์
 // ยิ่งเคสเยอะยิ่งช้า และได้มาแค่ตัวเดียว — ย้ายไปนับที่ฐานทีเดียวด้วย inbox.queue_counts() (sql/024)
 
-function setBusy(value){busy=value;for(const id of ['claim','send','save','transfer','appointment','close','dialog-submit','attach'])$(id).disabled=value;for(const b of $('pipeline').querySelectorAll('button'))b.disabled=value;if(!value&&detail)permissions()}
+function setBusy(value){busy=value;for(const id of ['claim','send','save','transfer','appointment','close','dialog-submit'])$(id).disabled=value;for(const b of $('pipeline').querySelectorAll('button'))b.disabled=value;if(!value&&detail)permissions()}
 // ★ ตอบลูกค้าได้เสมอโดยไม่ต้องรับเคส — ทีมใช้คิวรวม ไม่มีเจ้าของเคสรายคน
 // แต่ "แก้ข้อมูลลูกค้า/เลื่อนสถานะดีล" ยังต้องรับเคสก่อน เพราะเจ้าของดีลต้องมีคนเดียว
 // ด่านจริงอยู่ที่ connect_private.api (sql/025) ตรงนี้แค่ทำให้หน้าจอตรงกับด่านนั้น
@@ -221,7 +200,7 @@ function permissions(){
  const canEdit=open&&(c.assignee_id===boot.user.id||['manager','admin'].includes(boot.user.role)&&c.assignee_id)
  $('claim').hidden=!!c.assignee_id||!open
  $('transfer').hidden=!['manager','admin','senior_sales'].includes(boot.user.role)||!c.assignee_id||!open
- for(const id of ['send','message','attach'])$(id).disabled=busy||!canReply
+ for(const id of ['send','message'])$(id).disabled=busy||!canReply
  for(const id of ['save','appointment','close'])$(id).disabled=busy||!canEdit
  for(const b of $('pipeline').querySelectorAll('button'))b.disabled=busy||!canEdit
  $('send-hint').textContent=!open?'เคสนี้ปิดแล้ว':canEdit?'ตรวจข้อความก่อนกดส่ง':'ตอบได้เลย · กด "รับเคส" ก่อนถ้าจะแก้ข้อมูลหรือเลื่อนสถานะ'
@@ -293,7 +272,7 @@ function renderList(){
     const shown=customerName(item.display_name,item.external_id,item.channel);
     const avatarBox=avatar(item.picture_url,shown);
     // ★ badge ช่องทางอยู่มุมล่างขวาของ avatar ตามสเปก ไม่ใช่ pill แยกในแถวข้อความแบบเดิม
-    avatarBox.append(text('span','','channel-badge '+({line:'line',messenger:'fb',instagram:'ig',tiktok:'tiktok'}[item.channel]||'unknown')));
+    avatarBox.append(text('span','','channel-badge '+(item.channel==='line'?'line':'fb')));
     b.append(text('div','','chat-row-avatar')); b.lastChild.append(avatarBox);
 
     const body=text('div','','chat-row-body');
@@ -342,40 +321,8 @@ const mediaChip = label => text('span', label, 'media-miss')
 function renderMessages(messages,prepend=false){
   if(!prepend)$('messages').replaceChildren()
   const fragment=document.createDocumentFragment()
-  let previousDay = ''
-  if (prepend) {
-    const existing = $('messages').querySelectorAll('[data-message-day]')
-    previousDay = existing[0]?.dataset.messageDay || ''
-  }
-  const customer = detail?.contact || {}
-  const channel = detail?.channel || ''
   for(const m of messages){
-    const stamp=m.sent_at||m.created_at
-    const day=dateSeparatorLabel(stamp)
-    const dayKey=stamp ? new Date(stamp).toLocaleDateString('en-CA',{timeZone:'Asia/Bangkok'}) : ''
-    if(dayKey && dayKey!==previousDay){
-      const separator=text('div',day,'date-separator')
-      separator.dataset.messageDay=dayKey
-      fragment.append(separator)
-      previousDay=dayKey
-    }
-    const side=messageSide(m.sender_type)
-    const row=text('div','','message-row '+side)
-    row.dataset.messageId=m.id||''
-    if(side==='inbound'){
-      const avatar=text('span','','message-avatar')
-      avatar.textContent=initials(messageSenderLabel(m,customer,channel))
-      if(customer.picture_url && !boot?.user?.test_only){
-        const img=document.createElement('img');img.alt='';img.loading='lazy';img.src=customer.picture_url
-        img.addEventListener('error',()=>img.remove());avatar.replaceChildren(img)
-      }
-      row.append(avatar)
-    }
-    const content=text('div','','message-content')
-    const label=text('div',messageSenderLabel(m,customer,channel),'message-sender')
-    if(m.sender_type==='bot') label.append(text('span','BOT','bot-badge'))
-    content.append(label)
-    const b=text('div','','bubble'+(side==='outbound'?' out':side==='system'?' system':''))
+    const b=text('div','','bubble'+(m.sender_type==='agent'?' out':m.sender_type==='bot'?' bot':''))
     const files=Array.isArray(m.media)?m.media:[]
     if(files.length){
       for(const f of files){
@@ -394,20 +341,22 @@ function renderMessages(messages,prepend=false){
       }
       // คำพูดของลูกค้าที่พิมพ์มากับรูป — ข้อความใน [ ] เป็นป้ายของระบบ ไม่ใช่คำพูด
       if(m.content&&!m.content.startsWith('['))b.append(text('p',m.content,'media-caption'))
+    }else if((m.content_type==='image'||/^https:\/\/[^\s]+\/quotation-image\/[0-9a-f-]{36}\?/i.test(m.content||''))&&/^https:\/\//i.test(m.content||'')){
+      const img=document.createElement('img');img.className='media-img';img.loading='lazy';img.alt='[รูปที่ส่ง]';img.src=m.content;img.addEventListener('error',()=>img.replaceWith(mediaChip('[รูปเปิดไม่ได้]')));b.append(img)
     }else if(MEDIA_TYPES.has(m.content_type||'')){
       b.append(mediaChip('[รูป/ไฟล์แนบยังไม่พร้อม]'))
     }else{
       b.append(document.createTextNode(m.content))
     }
-    const status=messageStatus(m)
-    b.append(text('small',date(stamp)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
+    const status=m.sender_type==='agent'?({pending:'รอส่ง',processing:'กำลังส่ง',sent:'ส่งสำเร็จ',failed:'ส่งไม่สำเร็จ',uncertain:'ยังยืนยันการส่งไม่ได้'}[m.delivery_status]||'บันทึกแล้ว'):m.sender_type==='bot'?'Bot':''
+    b.append(text('small',date(m.created_at)+(status?' · '+status:''),m.delivery_status==='failed'?'delivery-error':''))
     if(m.delivery_status==='failed'){const retry=text('button','ลองส่งอีกครั้ง');retry.addEventListener('click',()=>mutate('retry',{message_id:m.id}));b.append(retry)}
-    content.append(b);row.append(content);fragment.append(row)
+    fragment.append(b)
   }
   if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment)
   $('older').hidden=messages.length<100
 }
-async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;selectedImages=[];renderImagePreview();detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight}
+async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight}
 // รูปกับโครงการบนหัวแชท — รูปเอาจากแถวในรายการก่อน (ที่นั่นมี picture_url แน่นอน)
 // แล้วค่อยถอยไปหาของใน detail เผื่อเปิดเคสที่ยังไม่อยู่ในรายการหน้านี้
 function renderChatHeadExtras(who){
@@ -416,7 +365,7 @@ function renderChatHeadExtras(who){
   const url=items.find(i=>i.id===selected)?.picture_url||detail.contact?.picture_url||''
   box.replaceChildren()
   box.textContent=initials(who)
-  if(url&&!boot?.user?.test_only){
+  if(url){
    const img=document.createElement('img')
    img.alt='';img.loading='lazy'
    img.addEventListener('error',()=>img.remove())
@@ -432,16 +381,16 @@ function renderChatHeadExtras(who){
  tag.textContent=name
  tag.hidden=!name
 }
-function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};document.body.dataset.chatChannel=detail.channel||'';const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=CHANNEL_WORD[detail.channel]||'ไม่รองรับ';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
-async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||data.request_id||crypto.randomUUID();const hasFiles=action==='send'&&((Array.isArray(data.files)&&data.files.length>0)||(Array.isArray(data.media_ids)&&data.media_ids.length>0));pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value='';selectedImages=[];renderImagePreview()}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(hasFiles?'อัปโหลดรูปสำเร็จ กำลังส่ง… สถานะจะแสดงใต้ข้อความ':action==='send'?'กำลังส่งข้อความ…':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);const message=hasFiles&&e.code==='media_upload_failed'?'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่':e.message;note(message,true);$('dialog-error').textContent=message}finally{setBusy(false)}}
+function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=detail.channel==='line'?'LINE':'Messenger';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();$('canned').hidden=true;permissions()}
+async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||crypto.randomUUID();pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value=''}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(action==='send'||action==='send_image'?(action==='send_image'?'รูปเข้าคิวแล้ว สถานะส่งจะแสดงใต้รูป':'ข้อความเข้าคิวแล้ว สถานะส่งจะแสดงใต้ข้อความ'):result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);note(e.message,true);$('dialog-error').textContent=e.message}finally{setBusy(false)}}
+window.asherSendImage=url=>mutate('send_image',{url})
 let dialogAction,dialogData
-function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
+function dialog(title,fields,action,extra={}){dialogAction=action;dialogData={...extra};delete dialogData.submitLabel;$('dialog-title').textContent=title;$('dialog-submit').textContent=extra.submitLabel||'ยืนยัน';$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
 function stage(code){if(!detail||code===detail.lead?.stage_code)return;if(code==='appointment')return appointment();if(code==='booking'){if(!detail.units.length){note('ยังไม่มีห้องพร้อมจองใน ERP กรุณาให้ผู้ดูแลเพิ่มห้องก่อน',true);return}dialog('ยืนยันการจองห้อง',[{name:'unit_id',label:'ห้อง',options:detail.units.map(u=>({value:u.id,label:u.number+' · '+Number(u.price).toLocaleString()+' บาท'}))},{name:'amount',label:'ราคาสุทธิ (บาท)',type:'number',min:1,step:'.01'},{name:'deposit',label:'เงินจอง (บาท)',type:'number',min:0,step:'.01'}],'stage',{stage:code});return}if(code==='sale'){dialog('ยืนยันปิดการขาย',[{name:'reference',label:'เลขที่สัญญา / เอกสารอ้างอิง',maxLength:200}],'stage',{stage:code});return}dialog('ยืนยันสถานะ '+stageNames[code],[],'stage',{stage:code})}
 function appointment(){dialog('นัดเข้าชม · เวลาไทย',[{name:'appointment_at',label:'วันและเวลานัด',type:'datetime-local',value:local(detail.state?.appointment_at)}],'appointment')}
 let botState=[]
 // สถานะบอทต้องอ่านจากฐานเสมอ ไม่ใช่จำไว้ในหน้าจอ — ผู้จัดการอีกคนอาจเพิ่งกดปิดไป
 async function refreshBot(){
- if (boot?.user?.test_only) { botState=[]; renderSendMode(); return }
  try{botState=await api('bot_status')}catch{botState=[]}
  renderSendMode()
  const btn=$('bot-toggle');if(!btn)return
@@ -487,18 +436,12 @@ $('bot-toggle').addEventListener('click',async()=>{
   await refreshBot();note(next?'เปิดบอทแล้ว ระบบจะเริ่มคิดคำตอบให้ลูกค้า':'ปิดบอทแล้ว ไม่มีการเรียก AI อีก')
  }catch(e){note(e.message,true);btn.disabled=false}
 })
- const previewBox=document.createElement('div');previewBox.id='image-preview';previewBox.className='image-preview';previewBox.hidden=true;$('message').before(previewBox)
- const imageInput=document.createElement('input');imageInput.id='image-files';imageInput.type='file';imageInput.accept='image/*,.jpg,.jpeg,.png,.webp,.heic,.heif';imageInput.multiple=true;imageInput.hidden=true;document.body.append(imageInput)
- function renderImagePreview(){previewBox.replaceChildren();previewBox.hidden=!selectedImages.length;selectedImages.forEach((file,index)=>{const item=text('div','','image-preview-item');const img=document.createElement('img');img.src=file.library?file.thumb:URL.createObjectURL(file);img.alt=file.library?file.title:file.name;item.append(text('span',String(index+1),'image-preview-order'));const remove=text('button','×','image-preview-remove');remove.type='button';remove.title='ลบรูปนี้';remove.addEventListener('click',()=>{selectedImages.splice(index,1);renderImagePreview();permissions()});item.append(img,remove);previewBox.append(item)})}
- $('attach').disabled=false;$('attach').addEventListener('click',()=>imageInput.click())
- function imageMimeFromBytes(bytes){if(bytes.length>=3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)return'image/jpeg';if(bytes.length>=8&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71&&bytes[4]===13&&bytes[5]===10&&bytes[6]===26&&bytes[7]===10)return'image/png';if(bytes.length>=12&&String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP')return'image/webp';return''}
- function imageExtension(mime){return mime==='image/jpeg'?'jpg':mime==='image/png'?'png':mime==='image/webp'?'webp':''}
- async function inspectImage(file){const bytes=new Uint8Array(await file.arrayBuffer());const mime=imageMimeFromBytes(bytes);const name=String(file.name||'').toLowerCase();const declared=String(file.type||'').toLowerCase().split(';')[0].trim();if(/\.(heic|heif)$/.test(name)||declared==='image/heic'||declared==='image/heif')throw new Error('HEIC/HEIF ยังไม่รองรับ กรุณาเลือกรูป JPG, PNG หรือ WEBP');if(!mime)throw new Error('ไฟล์ไม่ใช่รูป JPG, PNG หรือ WEBP ที่ถูกต้อง');return {file,mime,bytes}}
- imageInput.addEventListener('change',async e=>{const incoming=[...e.target.files];e.target.value='';const max=detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5;if(selectedImages.length+incoming.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง${max===4?' เมื่อมีข้อความร่วมด้วย':''}`,true);return}if(incoming.some(file=>file.size>10*1024*1024)){note('รูปแต่ละไฟล์ต้องมีขนาดไม่เกิน 10 MB',true);return}try{await Promise.all(incoming.map(inspectImage));selectedImages.push(...incoming);renderImagePreview()}catch(error){note(error.message,true)}})
- window.asherComposerContext=()=>({conversationId:selected,channel:detail?.channel||null,project:(($('chat-project')?.textContent||'').toLowerCase().match(/naii|vibe/)||[''])[0],role:boot?.user?.role||'',testOnly:!!boot?.user?.test_only,canSend:!busy&&!!selected&&!$('message').disabled,count:selectedImages.length,max:detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5})
- window.asherAttachLibraryImages=(assets,{replace=false}={})=>{if(!selected||$('message').disabled){note('กรุณาเปิดแชตที่ตอบได้ก่อนเลือกรูป',true);return false}const base=replace?selectedImages.filter(x=>!x.library):selectedImages;const known=new Set(base.filter(x=>x.library).map(x=>x.id));const add=assets.filter(a=>a&&a.id&&!known.has(a.id)).map(a=>({library:true,id:a.id,title:a.title||'',thumb:a.thumb||(a.preview_path||a.storage_path?'/library-media/'+(a.preview_path||a.storage_path):String(a.public_url||'').replace(/^(https?:\/\/[^/]+)?\/quick-reply-media\//,'/library-media/'))}));const max=detail?.channel==='instagram'?1:detail?.channel==='line'&&$('message').value.trim()?4:5;if(base.length+add.length>max){note(`แนบรูปได้สูงสุด ${max} รูปต่อครั้ง`,true);return false}selectedImages=[...base,...add];renderImagePreview();permissions();return true}
- async function filePayload(file){const bytes=new Uint8Array(await file.arrayBuffer());const mime=imageMimeFromBytes(bytes);const extension=imageExtension(mime);const original=String(file.name||'');const name=/\.[^.]+$/.test(original)?original:`${original||'image'}.${extension}`;let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return {name,type:mime,data:btoa(binary)}}
- $('reply').addEventListener('submit',async e=>{e.preventDefault();const value=$('message').value.trim();if(!value&&!selectedImages.length){note('กรุณาพิมพ์ข้อความหรือแนบรูปอย่างน้อย 1 รูป',true);return}const correlationId=crypto.randomUUID();try{const uploads=selectedImages.filter(x=>!x.library);const files=await Promise.all(uploads.map(filePayload));const media_ids=selectedImages.filter(x=>x.library).map(x=>x.id);const media_order=selectedImages.map(x=>x.library?'m:'+x.id:'f:'+uploads.indexOf(x));console.info('[media_pipeline]',{phase:'PICK',correlation_id:correlationId,count:files.length+media_ids.length,files:files.map(file=>({name:file.name,mime:file.type,bytes:Math.floor(file.data.length*3/4)}))});mutate('send',{text:value,files,media_ids,media_order,request_id:correlationId,answer_id:$('message').dataset.answerHubId||undefined})}catch(error){note('อัปโหลดรูปไม่สำเร็จ กรุณาเลือกไฟล์รูปใหม่',true)}})
+$('reply').addEventListener('submit',e=>{e.preventDefault();const value=$('message').value.trim();if(value)mutate('send',{text:value})})
+$('composer-menu-toggle').addEventListener('click',()=>{const menu=$('composer-actions'),open=menu.hidden;menu.hidden=!open;$('composer-menu-toggle').setAttribute('aria-expanded',String(open));$('composer-menu-toggle').setAttribute('aria-label',open?'ปิดเมนูตอบลูกค้า':'เปิดเมนูตอบลูกค้า')})
+$('composer-actions').addEventListener('click',e=>{if(!e.target.closest('.composer-action'))return;$('composer-actions').hidden=true;$('composer-menu-toggle').setAttribute('aria-expanded','false');$('composer-menu-toggle').setAttribute('aria-label','เปิดเมนูตอบลูกค้า')})
+$('attach').addEventListener('click',()=>$('outbound-image-input').click())
+$('outbound-image-input').addEventListener('change',async()=>{const input=$('outbound-image-input'),file=input.files?.[0];if(!file)return;if(!['image/png','image/jpeg','image/webp'].includes(file.type)||!file.size||file.size>10*1024*1024){note('รองรับ PNG, JPEG หรือ WebP ขนาดไม่เกิน 10 MB',true);input.value='';return}const button=$('attach');button.disabled=true;note('กำลังอัปโหลดรูป…');try{const response=await fetch('/api/outbound-image',{method:'POST',headers:{'Content-Type':file.type,'X-Filename':encodeURIComponent(file.name)},body:file});const data=await response.json();if(!response.ok)throw new Error(errors[data.error]||'อัปโหลดรูปไม่สำเร็จ');await window.asherSendImage(data.public_url)}catch(e){note(e.message,true)}finally{button.disabled=false;input.value=''}})
+$('quote-png').addEventListener('click',()=>window.asherExportAvailableUnitsPng?.())
 $('lead-form').addEventListener('input',()=>dirty=true)
 $('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,follow_up_at:utc($('followup').value)})})
 $('claim').addEventListener('click',()=>mutate('claim'))
@@ -506,7 +449,7 @@ $('transfer').addEventListener('click',()=>dialog('โอนเคส',[{name:'a
 $('appointment').addEventListener('click',appointment)
 $('close').addEventListener('click',()=>dialog('ปิดเคส / เสีย Lead',[{name:'reason',label:'เหตุผลที่ปิดเคส',maxLength:2000}],'close'))
 $('cancel').addEventListener('click',()=>$('dialog').close())
-$('dialog-form').addEventListener('submit',e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));if(values.appointment_at)values.appointment_at=utc(values.appointment_at);mutate(dialogAction,{...dialogData,...values})})
+$('dialog-form').addEventListener('submit',e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));if(dialogAction==='quotation_png')return generateUnitQuotation(values.unit_id);if(values.appointment_at)values.appointment_at=utc(values.appointment_at);mutate(dialogAction,{...dialogData,...values})})
 $('refresh').addEventListener('click',()=>loadList().catch(e=>note(e.message,true)))
 $('previous').addEventListener('click',()=>{offset=Math.max(0,offset-50);loadList().catch(e=>note(e.message,true))})
 $('next').addEventListener('click',()=>{offset+=50;loadList().catch(e=>note(e.message,true))})
@@ -523,14 +466,15 @@ function shortChannel(c){ return c.name||c.key||'' }
 //
 // ★ ชื่อย่อใช้บนชิป ชื่อเต็มอยู่ใน title/aria-label เสมอ
 //   แถบนี้กว้างจำกัด ถ้าใช้ชื่อเต็มจะขึ้นบรรทัดใหม่หรือถูกตัด แล้วอ่านไม่รู้เรื่องทั้งคู่
-const shortLabels={all:'ทั้งหมด',unassigned:'ยังไม่มีคนรับ'}
-// ★ ชิปตัวกรองของหน้านี้เหลือ 4 อันแบบเรียบ (ทั้งหมด/ยังไม่มีคนรับ + โครงการ) ตามสเปกใหม่
+const shortLabels={all:'ทั้งหมด',unassigned:'ยังไม่ตอบ'}
+// ★ ชิปตัวกรองของหน้านี้เหลือ 4 อันแบบเรียบ (ทั้งหมด/ยังไม่ตอบ + โครงการ) ตามสเปกใหม่
 //   ของเดิมมีถึง 8 ตัวกรอง (mine/unassigned/waiting/sla/today/followup/closed/all) และมีเมนู "เพิ่มเติม"
 //   ไม่ได้ลบตัวกรองพวกนั้นออกจากฐาน แค่หน้าจอนี้เลือกแสดงแค่ที่สเปกขอ
 //
-// ★ filter 'unassigned' หมายถึงยังไม่มีผู้รับเคส ไม่ใช่ยังไม่มีการตอบลูกค้า
-//   สถานะการตอบจริงอยู่ที่ item.case_status และแสดงบนการ์ดด้วย slaTag():
-//   'รอ X นาที'/'เกิน X นาที' = ลูกค้ายังรอคำตอบ, ว่าง = เซลส์ตอบแล้ว/เคสปิด
+// ★ "ยังไม่ตอบ" แม็ปกับ filter เดิมชื่อ 'unassigned' (ยังไม่มีคนรับ) ไม่ใช่ case_status
+//   เหตุผล: มันคือคีย์เดียวที่ inbox.queue_counts() มีตัวเลขให้แล้ว และในระบบคิวรวม
+//   (shared queue ไม่มีเจ้าของเคส) เคสที่ยังไม่มีคนรับกับเคสที่ยังไม่ถูกตอบเป็นเซตที่ทับกันเกือบสนิท
+//   ถ้าจะให้ตรงกับ case_status='new'|'late' เป๊ะ ต้องเพิ่มตัวนับใหม่ฝั่งฐาน — ยังไม่ทำในรอบนี้
 const STATUS_CHIPS=['all','unassigned']
 // รหัสโครงการจริงจาก core.project.code — เทียบจาก boot.projects ตอน render ไม่ฮาร์ดโค้ด id
 const PROJECT_CHIPS=[['proj-naii','Naii','asher-naii'],['proj-vibe','Vibe','asher-vibe']]
@@ -551,7 +495,7 @@ function pickFilter(key){const next=filter===key?'all':key
 
 function projectIdFor(code){return boot?.projects?.find(p=>p.code===code)?.id ?? null}
 
-// ★ สีแดงใช้เฉพาะตอนมีเคสที่ยังไม่มีผู้รับ (count>0) บนชิปนี้เท่านั้น
+// ★ สีแดงใช้เฉพาะตอนมีของค้างจริง (count>0) บนชิป "ยังไม่ตอบ" เท่านั้น — ชิปอื่นไม่มีวันเป็นสีแดง
 function chipFor(key,label,n){
  const on=filter===key
  const b=text('button','','chip'+(on?' selected':'')+(n>0&&key==='unassigned'?' hot-alert':''))
@@ -581,7 +525,7 @@ async function refreshCounts(){
  renderUnreadBadge()
 }
 
-// ตัวเลขบนไอคอนแชท — ใช้ตัวเดียวกับชิป "ยังไม่มีคนรับ" จะได้ไม่มีวันขัดกันเอง
+// ตัวเลขบนไอคอนแชท — ใช้ตัวเดียวกับชิป "ยังไม่ตอบ" จะได้ไม่มีวันขัดกันเอง
 function renderUnreadBadge(){
  const badge=$('nav-unread');if(!badge)return
  const n=Number(counts.unassigned)||0
@@ -608,55 +552,6 @@ function renderChannels(){
   box.append(chip)
  }
 }
-// ── พิมพ์ "/" เปิดรายการค้นหาเทมเพลต ──
-// ★ เปิดเฉพาะตอน "/" เป็นตัวแรกของช่องพิมพ์ ไม่ใช่ทุกที่ที่มี /
-//   ไม่งั้นลูกค้าถามเรื่อง "24/7" หรือ "3/5 ล้าน" แล้วเมนูจะเด้งขึ้นมาขวางการพิมพ์
-let templateIndex = -1
-function templateMatches(q){
- const list = boot?.canned?.filter(x => x.project_id === $('project').value) ?? []
- const t = q.trim().toLowerCase()
- const ranked = rankTemplates(list)
- if (!t) return ranked.slice(0, 8)
- return ranked.filter(x => ((x.shortcut ?? '') + ' ' + (x.content ?? '')).toLowerCase().includes(t)).slice(0, 8)
-}
-function closeTemplateMenu(){ const b = $('template-menu'); if (b) { b.hidden = true; b.replaceChildren() } templateIndex = -1 }
-function openTemplateMenu(){
- const box = $('template-menu'); if (!box) return
- const v = $('message').value
- if (!v.startsWith('/')) return closeTemplateMenu()
- const items = templateMatches(v.slice(1))
- box.replaceChildren()
- if (!items.length) {
-  box.append(text('div', boot?.canned?.length ? 'ไม่พบเทมเพลตที่ตรง' : 'ยังไม่มีเทมเพลตในระบบ', 'template-empty'))
-  box.hidden = false
-  return
- }
- items.forEach((it, i) => {
-  const b = text('button', '', 'template-item' + (i === templateIndex ? ' active' : ''))
-  b.type = 'button'
-  b.append(text('strong', it.shortcut ?? '(ไม่มีชื่อย่อ)'), text('small', (it.content ?? '').slice(0, 70)))
-  b.addEventListener('click', () => { useTemplate(it.content); closeTemplateMenu() })
-  box.append(b)
- })
- box.hidden = false
-}
-$('message').addEventListener('input', openTemplateMenu)
-$('message').addEventListener('blur', () => setTimeout(closeTemplateMenu, 150))
-$('message').addEventListener('keydown', e => {
- const box = $('template-menu')
- if (!box || box.hidden) return
- const items = [...box.querySelectorAll('.template-item')]
- if (!items.length) return
- if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-  e.preventDefault()
-  templateIndex = (templateIndex + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
-  openTemplateMenu()
- } else if (e.key === 'Enter' && templateIndex >= 0) {
-  e.preventDefault(); e.stopPropagation()   // ★ กันไม่ให้ Enter=ส่ง ทำงานทับ
-  items[templateIndex].click()
- } else if (e.key === 'Escape') { e.preventDefault(); closeTemplateMenu() }
-}, true)   // ★ capture — ต้องได้สิทธิ์ก่อน handler ของ Enter=ส่ง
-
 // ─────────────────────────────────────────── หน้าจอมือถือ (เฟส 4.1)
 // ★ เกณฑ์ 767.98 ต้องตรงกับใน app.css เป๊ะ ๆ ไม่งั้นจะมีช่วงความกว้างที่
 //   JS คิดว่าเป็นมือถือแต่ CSS คิดว่าเป็นจอคอม แล้วหน้าจอจะพังแบบหาสาเหตุยาก
@@ -729,20 +624,9 @@ function relocateRefreshButton(){
 }
 // เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
 // "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง
-const normalizeRole = role => String(role ?? '').trim().toLowerCase()
 function wireAppNav(role){
- role=normalizeRole(role)
  const managerUp=['manager','admin'].includes(role)
  $('nav-stats').hidden=!managerUp
- // สถานะระบบ: แสดงเมนูให้ manager/admin — การซ่อนปุ่มคือความสะอาดตา
- // ด่านจริงอยู่ที่ health_can_view() ในฐาน (แตะ /api/admin/system-health ตรง ๆ ก็ตายที่นั่น)
- // การบันทึกกฎยังเป็นของ admin เท่านั้นตาม health_rule_save ในฐาน หน้าจอปิดช่องแก้ตาม can_edit
- if(!$('nav-media-library')&&!boot?.user?.test_only){$('app-nav').append(navLink('nav-media-library','/media-library','คลังรูป',ICON_MEDIA_LIBRARY))}
- if(!$('nav-answer-hub')&&managerUp){$('app-nav').append(navLink('nav-answer-hub','/answer-hub','คลังคำตอบ',ICON_ANSWER_HUB))}
- if($('nav-admin-status'))$('nav-admin-status').hidden=!managerUp
- // แสดงทางเข้ากลางไว้เสมอเพื่อให้ผู้ใช้รู้ว่าหน้าอยู่ที่ไหน; endpoint ป้องกัน non-admin ฝั่ง server
- // และจะตอบ 403 หากบัญชีไม่มีสิทธิ์ admin.
- if(!$('nav-admin-users')){$('app-nav').append(navLink('nav-admin-users','/admin/users','ผู้ใช้และสิทธิ์',ICON_USERS,'ผู้ใช้และสิทธิ์ (admin เท่านั้น)'))}
  // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
  // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
  $('nav-settings').addEventListener('click',()=>{
@@ -757,172 +641,8 @@ function wireAppNav(role){
   if(document.body.classList.contains('chat-open'))setChatOpen(false)
  })
 }
-// ═══════════════════════ หน้าสถานะระบบ (/admin/health) ═══════════════════════
-// ข้อมูลจาก /api/admin/system-health (เซสชันคุกกี้เดิม) — เลิกใช้ password grant แยกของหน้า standalone
-// ★ overall คำนวณที่ backend จุดเดียว (server.mjs) หน้านี้แปลงเป็นคำกับสีเท่านั้น ห้ามสรุปเอง
-const AH_OVERALL={healthy:['good','HEALTHY'],degraded:['warn','DEGRADED'],down:['critical','DOWN'],unknown:['gray','UNKNOWN']}
-const AH_STATE={healthy:['good','ปกติ'],degraded:['warn','ต้องดู'],down:['critical','ล่ม'],warn:['warn','ต้องดู'],unknown:['gray','ยังไม่มีข้อมูล'],disabled:['gray','ปิดอยู่']}
-// พารามิเตอร์หลักที่แก้ได้ต่อชนิดกฎ — ต้องตรงกับที่ health_rule_save ตรวจใน SQL
-const AH_MAIN_PARAM={silence:['minutes','นาที'],fail_count:['threshold','ครั้ง'],pending_age:['minutes','นาที'],tls_days:['days','วัน'],worker_age:['minutes','นาที']}
-let ahDom=null,ahBusyTest=false
-async function ahFetch(path,body){
- const res=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined})
- if(res.status===401){location.replace('/admin/health');throw new Error('กรุณาเข้าสู่ระบบใหม่')}
- if(res.status===403)throw new Error('หน้านี้สำหรับ manager และ admin')
- const data=await res.json().catch(()=>({}))
- if(!res.ok)throw new Error(errors[data.error]||data.error||'HTTP '+res.status)
- return data
-}
-const ahAgo=iso=>{if(!iso)return 'ยังไม่มี';const m=Math.floor((Date.now()-new Date(iso))/60000);return m<1?'เมื่อสักครู่':m<60?m+' นาทีที่แล้ว':m<1440?Math.floor(m/60)+' ชม. ที่แล้ว':Math.floor(m/1440)+' วันที่แล้ว'}
-const ahUptime=s=>{const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d} วัน ${h} ชม.`:h?`${h} ชม. ${m} นาที`:`${m} นาที`}
-function ahPill(status){const [tone,label]=AH_STATE[status]??AH_STATE.unknown;return text('span',label,'pill '+tone)}
-function ahRow(k,v,bad){const row=text('div','','ah-row');row.append(text('span',k),text('span',String(v??'—'),bad?'ah-bad-text':''));return row}
-function ahCard(title,status,rows){const card=text('div','','ah-card'+(status==='down'?' ah-bad':''))
- const head=text('header');head.append(text('h3',title),ahPill(status));card.append(head)
- for(const r of rows)card.append(ahRow(r[0],r[1],r[2]))
- return card}
-function ahChannelCard(label,c){if(!c)return ahCard(label,'disabled',[['ช่องทาง','ยังไม่มีในระบบ']])
- const rows=[['ช่องทาง',c.name||label],['ข้อความล่าสุด',ahAgo(c.lastWebhookAt)]]
- if(c.detail)rows.push(['เหตุผล',c.detail,c.reachable===false])
- return ahCard(label,c.status,rows)}
-function buildAdminHealth(){
- const sec=text('section');sec.id='admin-health'
- const head=text('div','','ah-head')
- head.append(text('h1','สถานะระบบ'))
- const overall=text('span','…','pill gray');overall.id='ah-overall';head.append(overall)
- const refresh=text('button','รีเฟรช');refresh.id='ah-refresh';refresh.type='button';refresh.className='subtle'
- refresh.addEventListener('click',()=>{refresh.disabled=true;refreshAdminHealth().catch(e=>ahError(e.message)).finally(()=>refresh.disabled=false)})
- head.append(refresh);sec.append(head)
- const meta=text('p','','ah-meta');meta.id='ah-meta';sec.append(meta)
- const err=text('div','','notice error');err.id='ah-error';err.hidden=true;sec.append(err)
- sec.append(text('h2','ภาพรวมระบบ','ah-section'))
- const cards=text('div','','ah-grid');cards.id='ah-cards';sec.append(cards)
- sec.append(text('h2','ตรวจระบบ','ah-section'))
- const testBtn=text('button','ตรวจทุกขั้น','primary');testBtn.id='ah-test';testBtn.type='button'
- testBtn.addEventListener('click',runAdminSelfTest);sec.append(testBtn)
- const steps=text('div');steps.id='ah-steps';steps.hidden=true;sec.append(steps)
- sec.append(text('h2','กฎแจ้งเตือน','ah-section'))
- const rules=text('div');rules.id='ah-rules';sec.append(rules)
- rules.addEventListener('change',onAdminRuleChange)
- const note=text('p','','muted');note.id='ah-rule-note';sec.append(note)
- ahDom={overall,meta,err,cards,steps,testBtn,rules,note,canEdit:false}
- return sec
-}
-function ahError(msg){const box=ahDom?.err;if(!box)return;box.hidden=!msg;box.textContent=msg||''}
-async function initAdminHealth(){
- const main=document.querySelector('#workspace main')||document.body
- main.append(buildAdminHealth())
- await refreshAdminHealth().catch(e=>ahError(e.message))
-}
-async function refreshAdminHealth(){const sys=await ahFetch('/api/admin/system-health');ahError('');renderAdminHealth(sys)}
-function renderAdminHealth(sys){
- const [tone,label]=AH_OVERALL[sys.overall]??AH_OVERALL.unknown
- ahDom.overall.className='pill '+tone;ahDom.overall.textContent=label
- ahDom.meta.textContent=`ทำงานมา ${ahUptime(sys.uptimeSec??0)} · เวอร์ชัน ${sys.version||'—'} · เช็คล่าสุด ${sys.checkedAt?new Date(sys.checkedAt).toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok'}):'—'} · โหมดเงา ${sys.shadowMode?'ON — รับเข้าอย่างเดียว':'OFF — ส่งจริง'}`
- const cards=ahDom.cards;cards.replaceChildren()
- const db=sys.database??{}
- cards.append(ahCard('ฐานข้อมูล',db.status??'unknown',[
-  ['ตอบกลับใน',db.latencyMs!=null?db.latencyMs+' ms':'ไม่ตอบ',db.latencyMs==null],
-  ['สำเร็จล่าสุด',ahAgo(db.lastSuccessAt)]]))
- const ch=sys.channels??{}
- cards.append(ahChannelCard('LINE',ch.line))
- cards.append(ahChannelCard('Messenger',ch.messenger))
- cards.append(ahChannelCard('TikTok @ashercondo',ch.tiktok))
- const w=sys.workers??{},wi=w.inbound??{},wo=w.outbound??{}
- cards.append(ahCard('Worker ขาเข้า',wi.status??'unknown',[
-  ['สำเร็จล่าสุด',ahAgo(wi.lastSuccessAt)],
-  ['อายุ',wi.ageMin!=null?wi.ageMin+' นาที':'—'],
-  ['เกณฑ์เตือน/วิกฤต',(wi.warnMin??'—')+' / '+(wi.critMin??'—')+' นาที']]))
- cards.append(ahCard('Worker ขาออก',wo.status??'unknown',[
-  ['โหมด',wo.shadow?'เงา — ตั้งใจไม่ส่ง จึงไม่นับว่าเงียบ':'ส่งจริง'],
-  ['สำเร็จล่าสุด',ahAgo(wo.lastSuccessAt)],
-  ['เกณฑ์เตือน/วิกฤต',(wo.warnMin??'—')+' / '+(wo.critMin??'—')+' นาที']]))
- const q=sys.queue??{}
- cards.append(ahCard('คิวงาน',q.status??'unknown',[
-  ['Pending',q.pending??'—'],['Processing',q.processing??'—'],
-  ['Failed',q.failed??'—',Number(q.failed)>0],
-  ['เก่าสุด',q.oldest_min!=null?q.oldest_min+' นาที':'—']]))
- renderAdminRules(sys)
-}
-function renderAdminRules(sys){
- ahDom.rules.replaceChildren()
- ahDom.canEdit=sys.can_edit===true
- ahDom.note.textContent=ahDom.canEdit?'เปลี่ยนกฎแล้วมีผลทันทีกับการเตือนบนระบบจริง — ทุกการบันทึกจะถามยืนยันก่อน':'เฉพาะ admin แก้กฎได้ (บัญชีนี้ดูได้อย่างเดียว)'
- for(const r of sys.rules??[]){
-  const [pk,unit]=AH_MAIN_PARAM[r.kind]??[null,null]
-  const row=text('div','','ah-rule'+(r.enabled?'':' off'));row.dataset.id=r.id;row.dataset.name=r.name
-  const tog=document.createElement('label');tog.className='ah-toggle'
-  const cb=document.createElement('input');cb.type='checkbox';cb.dataset.f='enabled';cb.checked=!!r.enabled;cb.disabled=!ahDom.canEdit;cb.setAttribute('aria-label','เปิดใช้กฎ '+r.name)
-  tog.append(cb);row.append(tog)
-  row.append(text('span',r.name,'ah-name'))
-  const firing=r.enabled&&r.firing
-  const [ftone,flabel]=firing?(AH_STATE[r.level]??AH_STATE.unknown):['gray',r.value||'ปกติ']
-  row.append(text('span',flabel,'pill '+ftone))
-  const ctl=text('div','','ah-ctl')
-  if(pk){
-   const pl=document.createElement('label');pl.className='ah-field'
-   pl.append(document.createTextNode('เกิน '))
-   const num=document.createElement('input');num.type='number';num.min='1';num.dataset.f='param';num.dataset.k=pk;num.value=r.params?.[pk]??'';num.disabled=!ahDom.canEdit
-   pl.append(num,document.createTextNode(' '+unit+(r.kind==='fail_count'?` ใน ${r.params?.minutes??'—'} นาที`:'')))
-   ctl.append(pl)
-  }
-  const ll=document.createElement('label');ll.className='ah-field';ll.append(document.createTextNode('ระดับ '))
-  const sel=document.createElement('select');sel.dataset.f='level';sel.disabled=!ahDom.canEdit
-  for(const [v,lab] of [['warn','ต้องดู'],['urgent','ด่วน']]){const o=document.createElement('option');o.value=v;o.textContent=lab;if(r.level===v)o.selected=true;sel.append(o)}
-  ll.append(sel);ctl.append(ll)
-  const nl=document.createElement('label');nl.className='ah-field'
-  const nb=document.createElement('input');nb.type='checkbox';nb.dataset.f='notify';nb.checked=!!r.notify;nb.disabled=!ahDom.canEdit
-  nl.append(nb,document.createTextNode(' แจ้ง Telegram'));ctl.append(nl)
-  ctl.append(text('span',String(r.hour_from).padStart(2,'0')+':00–'+String(r.hour_to).padStart(2,'0')+':00','muted'))
-  row.append(ctl);ahDom.rules.append(row)
- }
-}
-async function onAdminRuleChange(e){
- const el=e.target,rule=el.closest('.ah-rule')
- if(!rule||!ahDom||!ahDom.canEdit)return
- const body={id:rule.dataset.id}
- if(el.dataset.f==='enabled')body.enabled=el.checked
- else if(el.dataset.f==='notify')body.notify=el.checked
- else if(el.dataset.f==='level')body.level=el.value
- else if(el.dataset.f==='param'){
-  const n=parseInt(el.value,10)
-  if(!(n>=1)){ahError('ค่าต้องเป็นตัวเลขตั้งแต่ 1 ขึ้นไป');return}
-  ahError('');body.params={[el.dataset.k]:n}
- }
- // กฎเปลี่ยนแล้วกระทบการเตือนบนระบบจริงทันที จึงถามยืนยันทุกครั้งก่อนบันทึก — กดไม่ตกลง = หน้าจอคืนค่าจากฐาน
- if(!confirm(`บันทึกการเปลี่ยนแปลงกฎ "${rule.dataset.name}" บนระบบจริงหรือไม่?`)){refreshAdminHealth().catch(()=>{});return}
- try{await ahFetch('/api/admin/health-rule',body);await refreshAdminHealth()}
- catch(err){ahError('บันทึกกฎไม่สำเร็จ: '+err.message);await refreshAdminHealth().catch(()=>{})}
-}
-async function runAdminSelfTest(){
- if(ahBusyTest)return;ahBusyTest=true
- const btn=ahDom.testBtn;btn.disabled=true;btn.textContent='กำลังตรวจ…'
- try{
-  const data=await ahFetch('/api/admin/system-health/test',{})
-  // contract เดิม: tests มาจาก flowHealth.selftest() ที่ backend — steps เป็น array เสมอ
-  const steps=Array.isArray(data.tests)?data.tests:[]
-  ahDom.steps.hidden=false;ahDom.steps.replaceChildren()
-  for(const s of steps){
-   const pass=s.result==='PASS',skip=!pass&&/ข้าม/.test(s.detail??'')
-   const row=text('div','','ah-step')
-   row.append(text('span',pass?'✅ ผ่าน':skip?'⚠️ ข้าม':'❌ ผิดพลาด','ah-step-icon '+(pass?'ah-ok':skip?'ah-skip':'ah-fail')))
-   const name=text('span',s.name);if(!pass&&s.detail)name.title=s.detail
-   row.append(name,text('span',(s.ms??0)+' ms','ah-ms'))
-   ahDom.steps.append(row)
-  }
-  ahDom.steps.append(text('div',`ผ่าน ${data.passed??0}/${steps.length}`+(data.ok?' · ปกติทั้งหมด':' · มีข้อที่ต้องดู'),'ah-sum'))
-  await refreshAdminHealth().catch(()=>{})
- }catch(err){ahError('ตรวจไม่สำเร็จ: '+err.message)}
- finally{ahBusyTest=false;btn.disabled=false;btn.textContent='ตรวจทุกขั้น'}
-}
-async function start(){boot=await api('bootstrap');const role=normalizeRole(boot.user.role);boot.user.role=role;$('login-panel').hidden=true;$('workspace').hidden=false;$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(role);relocateRefreshButton();wireAppNav(role);
-// หน้าสถานะระบบ: ยังใช้ header/nav/notice เดิมทุกอย่าง แค่สลับเนื้อหาตรงกลาง — ไม่โหลดของแชท
-if(ANSWER_VIEW){const { mountAnswerHub } = await import('./answer-hub.js');return mountAnswerHub({ api, role: boot.user.role })}
-if(ADMIN_VIEW){document.body.classList.add('admin-view');return initAdminHealth()}
-if(USERS_VIEW){const {mountUsers}=await import('./users.js');return mountUsers({role:boot.user.role,actorId:boot.user.id})}
-const { mountQuickAnswer } = await import('./quick-answer.js');mountQuickAnswer({api,getContext:()=>({conversation_id:selected,project_id:detail?.conversation?.project_id??detail?.lead?.project_id??null})})
-await refreshBot();renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList();const match=/^\/conversations\/([^/]+)$/.exec(location.pathname);if(match){try{await selectCase(decodeURIComponent(match[1]))}catch(e){note('เปิดบทสนทนาไม่สำเร็จ: '+e.message,true)}}}
-setInterval(async()=>{if(!boot||busy||polling||document.hidden||ADMIN_VIEW||ANSWER_VIEW)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
+async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
+setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
  // ★ เตือนเมื่อ "คนอื่น" ตอบแทรกระหว่างที่เรากำลังพิมพ์ — คิวรวมแปลว่าสองคนหยิบเคสเดียวกันได้
  //   เตือนเฉพาะตอนที่ในช่องพิมพ์มีข้อความค้างอยู่ ไม่งั้นจะเด้งรบกวนทุกครั้งที่เพื่อนตอบ
  {const before=detail.last_agent_reply,after=next.last_agent_reply
@@ -931,7 +651,6 @@ setInterval(async()=>{if(!boot||busy||polling||document.hidden||ADMIN_VIEW||ANSW
   detail.last_agent_reply=after}
  const wait=sla(next.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;permissions()}}catch(e){note(e.message,true)}finally{polling=false}},10000)
 window.addEventListener('beforeunload',e=>{if(dirty||$('message').value.trim()){e.preventDefault();e.returnValue=''}})
-$('login-form').addEventListener('submit',async e=>{e.preventDefault();const btn=$('login-submit');btn.disabled=true;$('login-error').textContent='';try{await request('/api/login',{email:$('login-email').value,password:$('login-password').value});$('login-password').value='';// ★ ล็อกอินจากหน้าไหนกลับไปหน้านั้น — เข้า /admin/health ตอนยังไม่ล็อกอินจะได้ไม่ต้องพิมพ์ URL ซ้ำ
-const back=safeReturnTo(new URLSearchParams(location.search).get('return_to'))||(/^\/conversations\/[^/]+$/.test(location.pathname)?currentReturnTo():null);location.replace(back||(ANSWER_VIEW?'/answer-hub':ADMIN_VIEW?'/admin/health':USERS_VIEW?'/admin/users':'/'))}catch(e){$('login-error').textContent=e.message}finally{btn.disabled=false}})
+$('login-form').addEventListener('submit',async e=>{e.preventDefault();const btn=$('login-submit');btn.disabled=true;$('login-error').textContent='';try{await request('/api/login',{email:$('login-email').value,password:$('login-password').value});$('login-password').value='';location.replace('/')}catch(e){$('login-error').textContent=e.message}finally{btn.disabled=false}})
 $('logout').addEventListener('click',async()=>{if((dirty||$('message').value.trim())&&!confirm('มีข้อความหรือข้อมูลที่ยังไม่ได้บันทึก ต้องการออกจากระบบหรือไม่?'))return;$('logout').disabled=true;try{await request('/api/logout',{});dirty=false;$('message').value='';location.replace('/')}catch(e){note(e.message,true);$('logout').disabled=false}})
 start().catch(e=>{$('workspace').hidden=true;$('login-panel').hidden=false;if(e.code!=='session_expired')$('login-error').textContent=e.message})
