@@ -23,15 +23,23 @@
   async function refresh () {
     const version = ++requestVersion
     loading = true; failed = false
-    try { const result = unwrap(await api('quick_replies_list')); if (version !== requestVersion) return; cache = result; if (!menu.hidden) render() } catch { if (version === requestVersion) failed = true } finally { if (version === requestVersion) { loading = false; if (!menu.hidden) render() } }
+    // แสดงรายการที่มีอยู่ทันที แล้วค่อยวาดใหม่เฉพาะเมื่อข้อมูลจากเซิร์ฟเวอร์เปลี่ยนจริง
+    // (วาดใหม่ทุกครั้ง = รายการกระพริบ เลื่อนหลุด และนิ้วที่กำลังจะแตะไปโดนแถวอื่น)
+    const before = JSON.stringify(unwrap(cache ?? window.asherQuickReplies?.() ?? []))
+    let changed = false
+    try { const result = unwrap(await api('quick_replies_list')); if (version !== requestVersion) return; changed = JSON.stringify(result) !== before; cache = result } catch { if (version === requestVersion) failed = true } finally { if (version === requestVersion) { loading = false; if (!menu.hidden && (changed || failed)) render(); else if (status && !failed) status.textContent = `${visible.length} รายการ` } }
   }
+  // มือถือ/แท็บเล็ต: อย่าเรียกคีย์บอร์ดขึ้นเอง จอจะหดและแผงกระตุกเหมือนกดไม่ติด
+  const touch = () => window.matchMedia?.('(pointer: coarse)').matches ?? false
   function choose (item) {
     const range = insertRange
+    // เลือกจากปุ่มบนมือถือ: ใส่ข้อความแล้วพร้อมกดส่งเลย ไม่ต้องเด้งคีย์บอร์ด (แบบ LINE)
+    const focus = !(mode === 'button' && touch())
     close()
     inserting = true
     try {
-      if (window.asherInsertQuickReply) window.asherInsertQuickReply(item, range)
-      else { message.value = message.value.slice(0, range?.start ?? 0) + item.content + message.value.slice(range?.end ?? message.value.length); message.dispatchEvent(new Event('input', { bubbles: true })); message.focus() }
+      if (window.asherInsertQuickReply) window.asherInsertQuickReply(item, range, { focus })
+      else { message.value = message.value.slice(0, range?.start ?? 0) + item.content + message.value.slice(range?.end ?? message.value.length); message.dispatchEvent(new Event('input', { bubbles: true })); if (focus) message.focus() }
     } finally { inserting = false }
     usage.set(item.id, { usage_count: Number(item.usage_count || 0) + 1, last_used_at: new Date().toISOString() })
     const data = { id: item.id }; if (context().conversation_id) data.conversation_id = context().conversation_id
@@ -45,7 +53,7 @@
   function render () {
     if (menu.hidden || !list) return
     visible = filtered(); index = Math.max(0, Math.min(index, visible.length - 1)); list.replaceChildren()
-    status.textContent = failed ? 'โหลดข้อมูลล่าสุดไม่สำเร็จ · ปิดแล้วเปิดอีกครั้งเพื่อลองใหม่' : loading ? 'กำลังโหลด…' : `${visible.length} รายการ`
+    status.textContent = failed ? 'โหลดข้อมูลล่าสุดไม่สำเร็จ · ปิดแล้วเปิดอีกครั้งเพื่อลองใหม่' : loading && !visible.length ? 'กำลังโหลด…' : `${visible.length} รายการ`
     if (!visible.length) list.append(el('div', 'ไม่พบ Quick Reply ที่ตรงกัน', 'template-empty'))
     visible.forEach((item, i) => {
       const b = el('button', null, 'quick-reply-row'); b.type = 'button'; b.id = `quick-reply-option-${i}`; b.setAttribute('role', 'option')
@@ -65,7 +73,7 @@
     const select = el('select'); select.setAttribute('aria-label', 'เรียงคำตอบ'); [['frequent', 'ใช้บ่อยที่สุด'], ['recent', 'ใช้ล่าสุด'], ['az', 'เรียง ก–ฮ']].forEach(([value, label]) => { const o = el('option', label); o.value = value; select.append(o) }); select.value = sort; tools.append(search, select); menu.append(tools)
     status = el('div', '', 'quick-replies-status'); status.setAttribute('role', 'status'); list = el('div'); list.id = 'quick-replies-list'; list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', 'คำตอบที่บันทึกไว้'); menu.append(status, list, el('p', 'แตะคำตอบเพื่อใส่ข้อความ · ↑ ↓ เลือก · Enter ใส่ · Esc ปิด', 'quick-replies-help'))
     search.addEventListener('input', () => { query = search.value; index = 0; render() }); select.addEventListener('change', () => { sort = select.value; index = 0; render() }); render(); void refresh()
-    if (kind === 'button') search.focus()
+    if (kind === 'button' && !touch()) search.focus()
   }
   button.addEventListener('click', () => { if (!menu.hidden) close(); else { query = ''; index = 0; insertRange = { start: message.selectionStart ?? message.value.length, end: message.selectionEnd ?? message.value.length }; open() } })
   message.addEventListener('input', () => {

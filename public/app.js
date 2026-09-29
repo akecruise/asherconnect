@@ -55,50 +55,60 @@ function fillTemplate(content){
 }
 
 // จุดแทรกข้อความเดียวสำหรับ Quick Reply ทั้งจากปุ่มและ /shortcut
-window.asherInsertQuickReply = (item, range) => {
+window.asherInsertQuickReply = (item, range, { focus = true } = {}) => {
  const message = $('message')
  const { text: content, missing } = fillTemplate(item?.content ?? item?.body ?? '')
  const start = range?.start ?? message.selectionStart ?? message.value.length
  const end = range?.end ?? message.selectionEnd ?? message.value.length
  message.value = message.value.slice(0, start) + content + message.value.slice(end)
  message.dispatchEvent(new Event('input', { bubbles: true }))
- message.focus()
+ if (focus) message.focus()
  if (missing.length) note('ยังไม่มีข้อมูลสำหรับ ' + missing.map(m => '{' + m + '}').join(' ') + ' — กรุณาเติมเองก่อนส่ง', true)
 }
 
-// โหลดห้องว่างจาก CRM ก่อน แล้วบังคับให้เลือกหนึ่งห้องต่อหนึ่งใบเสนอราคา
+// เปิดหน้าต่างเลือกห้องทันทีพร้อมสถานะกำลังโหลด แล้วค่อยเติมห้องว่างจาก CRM ตามมา
+// (เดิมรอ CRM ตอบก่อนค่อยเปิด — ระหว่างนั้นหน้าจอนิ่ง เซลส์คิดว่ากดไม่ติด)
+// หนึ่งห้องต่อหนึ่งใบเสนอราคา · จำรายการห้องไว้สั้น ๆ ให้เปิดซ้ำได้ทันที
+const QUOTE_UNITS_TTL_MS=60_000
+let quoteUnitsCache=null
 async function exportAvailableUnitsPng(){
  if(!detail||!selected||busy)return
- setBusy(true)
+ const conversation=selected
+ dialog('เลือกห้องว่างสำหรับใบเสนอราคา PNG',[{name:'unit_id',label:'ห้องว่าง',options:[{value:'',label:'กำลังโหลดห้องว่างจาก CRM…'}]}],'quotation_png',{submitLabel:'ออก PNG และส่งเข้าแชท'})
+ const select=$('dialog-fields').querySelector('select[name="unit_id"]')
+ select.disabled=true;$('dialog-submit').disabled=true
+ const stillOpen=()=>$('dialog').open&&dialogAction==='quotation_png'&&selected===conversation
  try{
-  const units=await api('quotation_units',{id:selected})
-  if(!units.length){note('CRM ยังไม่มีห้องว่างสำหรับออกใบเสนอราคา',true);return}
+  const fresh=quoteUnitsCache&&quoteUnitsCache.id===conversation&&Date.now()-quoteUnitsCache.at<QUOTE_UNITS_TTL_MS
+  const units=fresh?quoteUnitsCache.units:await api('quotation_units',{id:conversation})
+  if(!fresh)quoteUnitsCache={id:conversation,at:Date.now(),units}
+  if(!stillOpen())return
+  if(!units.length){$('dialog').close();note('CRM ยังไม่มีห้องว่างสำหรับออกใบเสนอราคา',true);return}
   const label=u=>`${u.project_name} · ห้อง ${u.unit_number} · ${u.floor_name||'ไม่ระบุชั้น'} · ${Number(u.price||0).toLocaleString('th-TH')} บาท`
-  dialog('เลือกห้องว่างสำหรับใบเสนอราคา PNG',[{name:'unit_id',label:'ห้องว่าง',options:units.map(u=>({value:u.id,label:label(u)}))}],'quotation_png',{submitLabel:'ออก PNG และส่งเข้าแชท'})
- }catch(error){note(`โหลดห้องว่างไม่สำเร็จ: ${error.message}`,true)}finally{setBusy(false)}
+  select.replaceChildren(...units.map(u=>{const option=text('option',label(u));option.value=u.id;return option}))
+  select.disabled=false;$('dialog-submit').disabled=busy
+ }catch(error){if(stillOpen())$('dialog-error').textContent=`โหลดห้องว่างไม่สำเร็จ: ${error.message}`}
 }
 
 async function generateUnitQuotation(unitId){
- if(!detail||!selected||busy)return
- const popup=window.open('about:blank','_blank')
- if(!popup){note('เบราว์เซอร์บล็อกหน้าต่างรูป PNG กรุณาอนุญาต pop-up แล้วลองอีกครั้ง',true);return}
- popup.opener=null
- popup.document.title='กำลังออกใบเสนอราคา'
- popup.document.body.textContent='กำลังให้ ASHER CRM ออกใบเสนอราคา…'
+ if(!detail||!selected||busy||!unitId)return
+ const conversation=selected,submit=$('dialog-submit'),submitLabel=submit.textContent
+ submit.textContent='กำลังออกใบเสนอราคา…'
  setBusy(true)
  try{
-  const result=await api('quotation_png',{id:selected,unit_id:unitId,request_id:crypto.randomUUID()})
+  const result=await api('quotation_png',{id:conversation,unit_id:unitId,request_id:crypto.randomUUID()})
   if(!result.download_url)throw Error('ไม่ได้รับรูป PNG จาก CRM')
+  quoteUnitsCache=null
   $('dialog').close()
-  popup.location.replace(result.download_url)
-  detail=await api('detail',{id:selected})
-  renderDetail()
-  await loadList()
   note(`ออกใบเสนอราคา ${result.quotation_no||''} และส่งเข้าแชทแล้ว`)
  }catch(error){
-  popup.close()
-  note(error.message==='unit_unavailable'?'CRM ยังไม่มีห้องว่างสำหรับออกใบเสนอราคา':`ออกใบเสนอราคาไม่สำเร็จ: ${error.message}`,true)
- }finally{setBusy(false)}
+  $('dialog-error').textContent=error.message==='unit_unavailable'?'ห้องนี้ไม่ว่างแล้ว กรุณาเลือกห้องอื่น':`ออกใบเสนอราคาไม่สำเร็จ: ${error.message}`
+  if(error.message==='unit_unavailable')quoteUnitsCache=null
+  return
+ }finally{submit.textContent=submitLabel;setBusy(false)}
+ // รูปใบเสนอราคาจะโผล่ในแชทเอง — โหลดแชท/รายการเบื้องหลัง ไม่ล็อกปุ่มรอ
+ if(selected===conversation)api('detail',{id:conversation}).then(d=>{if(selected===conversation){detail=d;renderDetail()}}).catch(()=>{})
+ loadList().catch(()=>{})
 }
 window.asherExportAvailableUnitsPng=exportAvailableUnitsPng
 
