@@ -29,6 +29,7 @@ import { randomUUID } from 'node:crypto'
 import { createOutboundMediaUrl, safeOutboundPath, verifyOutboundMedia } from './lib/outbound-media.mjs'
 import { createQuotationImageUrl, verifyQuotationImageUrl, verifyQuotationUrl } from './lib/quotation-link.mjs'
 import { createQuotationImageStore } from './lib/quotation-image.mjs'
+import { createUnitQuotationImages, UNIT_QUOTE_PREFIX } from './lib/unit-quotation-images.mjs'
 // ตัวนำเข้า Saved Replies — zero-dependency ตามบ้านนี้ (image ไม่มีขั้น npm install)
 import { parseImport, previewRows, validateRow, CATEGORIES, MAX_IMPORT_BYTES, MAX_ROWS as MAX_IMPORT_ROWS } from './lib/quick-replies-import.mjs'
 import { generateReply, maskPII, loadProjectData } from './bots/reply.mjs'
@@ -1165,7 +1166,28 @@ async function handleCommand(req, res) {
     return json(res, 200, { ...quotation, download_url: publicUrl, sent: true })
   }
 
+  // ใบเสนอราคาสำเร็จรูปต่อห้อง: รูปทำรอไว้แล้ว — ส่งเป็นรูปเข้าแชททันที ไม่ต้องรอ CRM
+  if (input.action === 'quotation_unit_png') {
+    const [detail, who] = await Promise.all([
+      rpc(accessToken, 'messages', { id: input.data.id }),
+      rpc(accessToken, 'bootstrap'),
+    ])
+    if (!who.user?.id) throw fail(403, 'not_allowed')
+    await assertConversationSendable(accessToken, detail, who)
+    let path
+    try { path = await unitQuotations.pathFor(String(input.data.unit_id ?? '')) } catch (e) {
+      if (e.status) throw e
+      log.warn('unit_quotation_send_failed', { reason: e.message })
+      throw fail(503, 'service_unavailable')
+    }
+    const url = createOutboundMediaUrl(origin, path, outboundMediaSigningKey)
+    if (!url) throw fail(503, 'service_unavailable')
+    return json(res, 200, await rpcDirect(accessToken, 'send_image', { p_conversation_id: input.data.id, p_url: url }))
+  }
+
   if (input.action === 'quotation_units') {
+    // เซลส์กำลังจะเลือกห้อง — เติมรูปห้องที่ยังไม่มีไว้เบื้องหลัง
+    warmUnitQuotations()
     const [detail, who] = await Promise.all([
       rpc(accessToken, 'messages', { id: input.data.id }),
       rpc(accessToken, 'bootstrap'),
@@ -1333,6 +1355,39 @@ const quotationImages = createQuotationImageStore({
   },
   log,
 })
+
+const unitQuotations = createUnitQuotationImages({
+  async listFromCrm() {
+    const response = await crmQuotation('/api/integrations/connect/unit-quotation-images')
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(`crm_${response.status}`)
+    return Array.isArray(result.data) ? result.data : []
+  },
+  async fetchFromCrm(unitId) {
+    const response = await crmQuotation(`/api/integrations/connect/units/${unitId}/quotation-image`)
+    if (response.status === 404 || response.status === 409) throw fail(409, 'unit_unavailable')
+    if (!response.ok) throw new Error(`crm_${response.status}`)
+    return { bytes: Buffer.from(await response.arrayBuffer()), version: response.headers.get('x-quotation-version') || '' }
+  },
+  async listStored() {
+    const paths = []
+    for (let offset = 0; ; offset += 1000) {
+      const response = await fetch(`${upstream}/storage/v1/object/list/inbox-media`, {
+        method: 'POST',
+        headers: { apikey: anon, Authorization: `Bearer ${service}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefix: 'outbound', search: UNIT_QUOTE_PREFIX, limit: 1000, offset }),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+      })
+      if (!response.ok) throw new Error(`storage_${response.status}`)
+      const page = await response.json()
+      for (const item of page) if (item?.name) paths.push(`outbound/${item.name}`)
+      if (page.length < 1000) return paths
+    }
+  },
+  writeObject: (path, bytes) => uploadMediaObject(path, { bytes, type: 'image/png' }),
+  log,
+})
+const warmUnitQuotations = () => { if (crmUrl && crmToken && crmWorkspaceId) unitQuotations.warmAll().catch(e => log.warn('unit_quotation_prerender_failed', { reason: e.message })) }
 
 async function outboundImageUpload(req, res) {
   if (req.headers.origin !== origin) throw fail(403, 'invalid_origin')
@@ -1565,6 +1620,9 @@ const sweepTimer = setInterval(() => {
 }, 21600000); sweepTimer.unref()
 
 // เซสชันที่หมดอายุไม่มีเจ้าของกลับมาลบให้ ทิ้งไว้คือ refresh token ที่ยังใช้ได้นอนอยู่ในดิสก์
+// ทำรูปใบเสนอราคาต่อห้องรอไว้: หลังเปิดเครื่องครู่หนึ่ง แล้วทุก 15 นาที (ห้องใหม่/ราคาเปลี่ยน)
+setTimeout(warmUnitQuotations, 20_000).unref()
+const unitQuotationTimer = setInterval(warmUnitQuotations, 15 * 60_000); unitQuotationTimer.unref()
 const sessionTimer = setInterval(() => {
   sessions.sweep()
     .then(r => { if (r.deleted) log.info('session_swept', { deleted: r.deleted }) })

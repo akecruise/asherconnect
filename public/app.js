@@ -69,23 +69,25 @@ window.asherInsertQuickReply = (item, range, { focus = true } = {}) => {
 // เปิดหน้าต่างเลือกห้องทันทีพร้อมสถานะกำลังโหลด แล้วค่อยเติมห้องว่างจาก CRM ตามมา
 // (เดิมรอ CRM ตอบก่อนค่อยเปิด — ระหว่างนั้นหน้าจอนิ่ง เซลส์คิดว่ากดไม่ติด)
 // หนึ่งห้องต่อหนึ่งใบเสนอราคา · จำรายการห้องไว้สั้น ๆ ให้เปิดซ้ำได้ทันที
+// รูปเป็นใบเสนอราคาสำเร็จรูปต่อห้องที่เซิร์ฟเวอร์ทำรอไว้แล้ว — กดส่งแล้วขึ้นแชททันที ไม่ต้องรอ CRM วาดรูป
+// ห้องที่ยังไม่มีราคา (รอราคา) ออกใบเสนอราคาไม่ได้ จึงไม่แสดง
 const QUOTE_UNITS_TTL_MS=60_000
 let quoteUnitsCache=null
 async function exportAvailableUnitsPng(){
  if(!detail||!selected||busy)return
  const conversation=selected
- dialog('เลือกห้องว่างสำหรับใบเสนอราคา PNG',[{name:'unit_id',label:'ห้องว่าง',options:[{value:'',label:'กำลังโหลดห้องว่างจาก CRM…'}]}],'quotation_png',{submitLabel:'ออก PNG และส่งเข้าแชท'})
+ dialog('ส่งใบเสนอราคา',[{name:'unit_id',label:'ห้องว่าง',options:[{value:'',label:'กำลังโหลดห้องว่างจาก CRM…'}]}],'quotation_png',{submitLabel:'ส่งใบเสนอราคาเข้าแชท'})
  const select=$('dialog-fields').querySelector('select[name="unit_id"]')
  select.disabled=true;$('dialog-submit').disabled=true
  const stillOpen=()=>$('dialog').open&&dialogAction==='quotation_png'&&selected===conversation
  try{
   const fresh=quoteUnitsCache&&quoteUnitsCache.id===conversation&&Date.now()-quoteUnitsCache.at<QUOTE_UNITS_TTL_MS
-  const units=fresh?quoteUnitsCache.units:await api('quotation_units',{id:conversation})
+  const units=(fresh?quoteUnitsCache.units:await api('quotation_units',{id:conversation})).filter(u=>Number(u.price)>0)
   if(!fresh)quoteUnitsCache={id:conversation,at:Date.now(),units}
   if(!stillOpen())return
-  if(!units.length){$('dialog').close();note('CRM ยังไม่มีห้องว่างสำหรับออกใบเสนอราคา',true);return}
+  if(!units.length){$('dialog').close();note('CRM ยังไม่มีห้องว่างที่มีราคาสำหรับออกใบเสนอราคา',true);return}
   const label=u=>`${u.project_name} · ห้อง ${u.unit_number} · ${u.floor_name||'ไม่ระบุชั้น'} · ${Number(u.price||0).toLocaleString('th-TH')} บาท`
-  select.replaceChildren(...units.map(u=>{const option=text('option',label(u));option.value=u.id;return option}))
+  select.replaceChildren(...units.map(u=>{const option=text('option',label(u));option.value=u.id;option.dataset.unitNumber=u.unit_number;return option}))
   select.disabled=false;$('dialog-submit').disabled=busy
  }catch(error){if(stillOpen())$('dialog-error').textContent=`โหลดห้องว่างไม่สำเร็จ: ${error.message}`}
 }
@@ -93,16 +95,15 @@ async function exportAvailableUnitsPng(){
 async function generateUnitQuotation(unitId){
  if(!detail||!selected||busy||!unitId)return
  const conversation=selected,submit=$('dialog-submit'),submitLabel=submit.textContent
- submit.textContent='กำลังออกใบเสนอราคา…'
+ const unitNumber=$('dialog-fields').querySelector(`option[value="${CSS.escape(unitId)}"]`)?.dataset.unitNumber||''
+ submit.textContent='กำลังส่ง…'
  setBusy(true)
  try{
-  const result=await api('quotation_png',{id:conversation,unit_id:unitId,request_id:crypto.randomUUID()})
-  if(!result.download_url)throw Error('ไม่ได้รับรูป PNG จาก CRM')
-  quoteUnitsCache=null
+  await api('quotation_unit_png',{id:conversation,unit_id:unitId})
   $('dialog').close()
-  note(`ออกใบเสนอราคา ${result.quotation_no||''} และส่งเข้าแชทแล้ว`)
+  note(`ส่งใบเสนอราคาห้อง ${unitNumber} เข้าแชทแล้ว`)
  }catch(error){
-  $('dialog-error').textContent=error.message==='unit_unavailable'?'ห้องนี้ไม่ว่างแล้ว กรุณาเลือกห้องอื่น':`ออกใบเสนอราคาไม่สำเร็จ: ${error.message}`
+  $('dialog-error').textContent=error.message==='unit_unavailable'?'ห้องนี้ไม่ว่างแล้ว กรุณาเลือกห้องอื่น':`ส่งใบเสนอราคาไม่สำเร็จ: ${error.message}`
   if(error.message==='unit_unavailable')quoteUnitsCache=null
   return
  }finally{submit.textContent=submitLabel;setBusy(false)}
