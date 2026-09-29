@@ -38,7 +38,8 @@ test('Instagram sends text through the Instagram Messages endpoint',async()=>{
   called={url,body:JSON.parse(init.body)}
   return new Response(JSON.stringify({message_id:'ig-mid'}),{status:200,headers:{'content-type':'application/json'}})
  })
- assert.equal(called.url,'https://graph.instagram.com/v23.0/17841426509548035/messages')
+ // /me ผูกกับ token ของ Instagram — account ID ที่ใช้จับ webhook อาจเปลี่ยนหลังเชื่อมใหม่
+ assert.equal(called.url,'https://graph.instagram.com/v23.0/me/messages')
  assert.deepEqual(called.body,{recipient:{id:'IGSID-1'},message:{text:'ใบเสนอราคา https://example.com/q.pdf'}})
  assert.equal(result.status,'sent')
  assert.equal(result.provider_id,'ig-mid')

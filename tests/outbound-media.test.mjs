@@ -1,40 +1,38 @@
+// รูปขาออก (รูปแนบ, คลังรูป, ใบเสนอราคา) ส่งให้ LINE/Messenger เป็นลิงก์ /outbound-media/ ที่เซ็นไว้
+// ไฟล์จริงอยู่ใน bucket private — ลิงก์ต้องเปิดได้เฉพาะ path ที่อนุญาต และหมดอายุตามเวลา
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateOutboundImages, OUTBOUND_IMAGE_MAX_BYTES } from '../lib/outbound-media.mjs'
-import { renderPayloads } from '../providers.mjs'
+import { createOutboundMediaUrl, safeOutboundPath, verifyOutboundMedia } from '../lib/outbound-media.mjs'
+import { renderPayload } from '../providers.mjs'
 
-const png = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]).toString('base64')
-const jpeg = Buffer.from([0xff,0xd8,0xff,0xe0,0,0,0,0]).toString('base64')
-const file = (name = 'x.png', data = png) => ({ name, type: 'image/png', data })
+const now = Date.parse('2026-09-29T03:00:00Z')
+const key = 'secret'
 
-test('server validates image bytes, rejects non-images and enforces max five', () => {
-  assert.equal(validateOutboundImages([file()]).length, 1)
-  assert.throws(() => validateOutboundImages([file('x.txt')]), /JPG/)
-  assert.throws(() => validateOutboundImages(Array.from({ length: 6 }, (_, i) => file(`${i}.png`))), /สูงสุด 5/)
-  assert.throws(() => validateOutboundImages([file('x.png', Buffer.alloc(OUTBOUND_IMAGE_MAX_BYTES + 1).toString('base64'))]), /10 MB/)
-  assert.throws(() => validateOutboundImages([file('x.png', Buffer.from('not an image').toString('base64'))]), /ไม่ใช่รูป/)
+test('only known outbound media paths are allowed', () => {
+  assert.equal(safeOutboundPath('outbound/unit-quote-abc-123.png'), 'outbound/unit-quote-abc-123.png')
+  assert.equal(safeOutboundPath('qr/a1b2.jpg'), 'qr/a1b2.jpg')
+  assert.equal(safeOutboundPath('67fabe8b-80a5-4c0d-b3b3-6841d1d68fdc/67fabe8b-80a5-4c0d-b3b3-6841d1d68fdc-2.webp'), '67fabe8b-80a5-4c0d-b3b3-6841d1d68fdc/67fabe8b-80a5-4c0d-b3b3-6841d1d68fdc-2.webp')
+  for (const bad of ['../secrets.png', 'outbound/../x.png', 'quotation/a.png', 'outbound/a.svg', 'outbound/A B.png', '']) assert.equal(safeOutboundPath(bad), null, bad)
 })
 
-test('image-only and mixed text+image produce provider messages without auto-send semantics', () => {
-  assert.deepEqual(renderPayloads('messenger', { type: 'media', text: '', media: [{ url: 'https://cdn/a.png' }] }, ''), [
-    { attachment: { type: 'image', payload: { url: 'https://cdn/a.png', is_reusable: true } } },
-  ])
-  assert.deepEqual(renderPayloads('line', { type: 'media', text: 'ดูรูปนี้', media: [{ url: 'https://cdn/a.png' }, { url: 'https://cdn/b.webp' }] }, ''), [
-    { type: 'text', text: 'ดูรูปนี้' },
-    { type: 'image', originalContentUrl: 'https://cdn/a.png', previewImageUrl: 'https://cdn/a.png' },
-    { type: 'image', originalContentUrl: 'https://cdn/b.webp', previewImageUrl: 'https://cdn/b.webp' },
-  ])
+test('signed URL verifies, and rejects tampering, other paths, wrong key and expiry', () => {
+  const url = new URL(createOutboundMediaUrl('https://inbox.example.com', 'outbound/a.png', key, now, 60))
+  const path = url.pathname.slice('/outbound-media/'.length)
+  const expires = url.searchParams.get('expires'), signature = url.searchParams.get('signature')
+  assert.equal(path, 'outbound/a.png')
+  assert.equal(verifyOutboundMedia(path, expires, signature, key, now), true)
+  assert.equal(verifyOutboundMedia('outbound/b.png', expires, signature, key, now), false)
+  assert.equal(verifyOutboundMedia(path, String(Number(expires) + 1), signature, key, now), false)
+  assert.equal(verifyOutboundMedia(path, expires, signature.replace(/.$/, c => c === '0' ? '1' : '0'), key, now), false)
+  assert.equal(verifyOutboundMedia(path, expires, signature, 'other', now), false)
+  assert.equal(verifyOutboundMedia(path, expires, signature, key, now + 61_000), false)
 })
 
-test('Android generic filename and blank/octet-stream MIME normalize from image bytes', () => {
-  const [generic] = validateOutboundImages([{ name: 'blob', type: '', data: jpeg }])
-  assert.equal(generic.mime, 'image/jpeg')
-  assert.equal(generic.name, 'blob.jpg')
-  const [octet] = validateOutboundImages([{ name: 'upload', type: 'application/octet-stream', data: png }])
-  assert.equal(octet.mime, 'image/png')
-  assert.equal(octet.name, 'upload.png')
+test('no URL is created for a path that is not allowed', () => {
+  assert.equal(createOutboundMediaUrl('https://inbox.example.com', '../x.png', key, now), null)
 })
 
-test('HEIC/HEIF is rejected with an explicit client-actionable error', () => {
-  assert.throws(() => validateOutboundImages([{ name: 'photo.heic', type: 'image/heic', data: jpeg }]), /HEIC\/HEIF/)
+test('a signed quotation image link is delivered as an image, not as text', () => {
+  const link = 'https://inbox.example.com/quotation-image/67fabe8b-80a5-4c0d-b3b3-6841d1d68fdc?expires=1&signature=a'
+  assert.deepEqual(renderPayload('line', null, link), { type: 'image', originalContentUrl: link, previewImageUrl: link })
 })
