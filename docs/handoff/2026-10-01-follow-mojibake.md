@@ -63,9 +63,19 @@ docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < /tm
 
 ### 3. ซ่อมข้อความเก่าในฐาน (ไม่บังคับ)
 
-`inbox.message` ตั้งแต่ ~21 ก.ย. ที่เป็น follow / unfollow / ข้อความไม่ใช่ตัวอักษร มี content เพี้ยน
-นับก่อน: `select event_type, count(*) from inbox.message where content like U&'[\0E40\0E18%' group by 1;`
-แล้วค่อยเขียน UPDATE (ใช้ U&'' เหมือน hotfix)
+สคริปต์พร้อมแล้ว: `docs/cleanup-2026-10-01-follow-mojibake.sql` (ASCII ล้วน, จับเฉพาะสตริงเพี้ยนแบบตรงตัว ไม่ใช้ pattern)
+แก้ `inbox.message.content` · `inbox.conversation.last_message_preview` · `inbox.bot_decisions.text`
+นับอย่างเดียว ไม่แก้: `connect_private.job` (แจ้งเตือนที่ส่งไปแล้ว) · `inbox.crm_publish_outbox` (ส่งให้ CRM ไปแล้ว)
+**ลง hotfix ข้อ 1 ก่อน** ไม่งั้นแถวใหม่ยังเพี้ยนต่อ
+
+```bash
+# dry run (ค่าเริ่มต้น) — แสดงจำนวนแล้ว rollback
+docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < /tmp/cleanup.sql
+# ตัวเลขดูสมเหตุสมผล แล้วค่อยลงจริง
+docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v apply=1 < /tmp/cleanup.sql
+```
+
+ลองกับ Postgres 16 ชั่วคราวแล้ว: แถวเพี้ยนตรงตัวถูกแก้, ข้อความลูกค้าจริงและแถวที่มีข้อความอื่นต่อท้ายไม่ถูกแตะ, dry run ไม่เปลี่ยนอะไร
 
 ### 4. กันไม่ให้เกิดซ้ำ
 
