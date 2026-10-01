@@ -5,8 +5,8 @@
 #
 # หยุดเองทุกครั้งที่ไม่แน่ใจ:
 #   1. .deployed-commit ต้องตรงกับ EXPECT_LIVE (ตัวที่คิดว่ารันอยู่)
-#   2. ไฟล์บนเครื่องต้องตรงกับ commit นั้น — ถ้ามีไฟล์ถูกแก้ด้วยมือ (เคยเกิดแล้ว ดู 20a7799)
-#      วางทับไปจะทำของพวกนั้นหาย จึงหยุดแล้วพิมพ์รายชื่อให้ดูก่อน
+#   2. ไฟล์ที่ถูกแก้ด้วยมือบนเครื่อง (เคยเกิดแล้ว ดู 20a7799) — ไม่ทับทิ้ง: sql/ docs/ tests/ เก็บของบนเครื่อง,
+#      ไฟล์โค้ดรวม 3 ทาง ชนกันเมื่อไหร่หยุด · DRY_RUN=1 = ดูแผนอย่างเดียว ไม่แก้อะไร
 #   3. ไฟล์หน้าเว็บใหม่ต้องตอบ 200 หลัง build — ไม่งั้นบอกวิธีย้อนกลับ
 # ตามหลักใน docs/deploy.md: deploy จาก commit เท่านั้น · ไม่แตะ .env channels.json .sessions/
 set -euo pipefail
@@ -41,14 +41,40 @@ curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$COMMIT" | tar -xz -C "$WOR
 echo "ได้ $(find "$WORK/new" -type f | wc -l) ไฟล์"
 for f in "${SQL_FILES[@]}"; do [ -f "$WORK/new/$f" ] || die "ไม่มี $f ใน commit นี้"; done
 
-say "3/7 ตรวจว่าบนเครื่องไม่มีไฟล์ที่ถูกแก้ด้วยมือ"
+say "3/7 ไฟล์ที่ถูกแก้ด้วยมือบนเครื่อง (เทียบกับ $LIVE)"
+# ★ แก้มือบน VPS เคยเกิดหลายครั้ง (20a7799, hotfix 30 ก.ย.) — ไม่ทับทิ้งเงียบ ๆ:
+#   ไฟล์ใน sql/ docs/ tests/ ไม่ได้ใช้ตอนรัน → เก็บของบนเครื่องไว้ตามเดิม
+#   ไฟล์โค้ด → รวม 3 ทาง (ของเดิม / ของบนเครื่อง / ของใหม่) ชนกันเมื่อไหร่หยุด
 DRIFT=$(diff -rq "$WORK/live" "$APP" -x .env -x channels.json -x .sessions -x node_modules -x .deployed-commit 2>&1 \
-  | grep ' differ$' || true)
-if [ -n "$DRIFT" ]; then
-  echo "$DRIFT"
-  die "ไฟล์ข้างบนบนเครื่องไม่ตรงกับ $LIVE — ส่งรายการนี้ให้คนดูแลก่อน ยังไม่ได้แก้อะไร"
+  | sed -n "s#^Files $WORK/live/\(.*\) and .* differ\$#\1#p" || true)
+KEEP=()
+if [ -z "$DRIFT" ]; then echo "ไม่มี"; fi
+for f in $DRIFT; do
+  case "$f" in
+    sql/*|docs/*|tests/*)
+      echo "เก็บของบนเครื่อง: $f (ไม่ได้ใช้ตอนรัน)"; KEEP+=("$f") ;;
+    *)
+      if cmp -s "$APP/$f" "$WORK/new/$f"; then
+        echo "ตรงกับของใหม่อยู่แล้ว: $f"
+      else
+        echo "--- แก้มือ: $f"
+        diff -u "$WORK/live/$f" "$APP/$f" | head -60 || true
+        if [ ! -f "$WORK/new/$f" ]; then
+          echo "ของใหม่ไม่มีไฟล์นี้ — เก็บของบนเครื่องไว้"; KEEP+=("$f")
+        elif diff3 -m "$APP/$f" "$WORK/live/$f" "$WORK/new/$f" > "$WORK/merged"; then
+          cp "$WORK/merged" "$WORK/new/$f"; echo "รวมกับของใหม่ได้: $f"
+        else
+          die "$f แก้มือชนกับของใหม่ รวมเองไม่ได้ — ส่งข้อความข้างบนให้คนดูแล ยังไม่ได้แก้อะไร"
+        fi
+      fi ;;
+  esac
+done
+for f in "${KEEP[@]}"; do mkdir -p "$(dirname "$WORK/new/$f")"; cp -p "$APP/$f" "$WORK/new/$f"; done
+
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  printf '\nDRY RUN จบ — ยังไม่ได้แก้อะไร · รันจริง: bash %s %s %s\n' "$0" "$COMMIT" "${SQL_FILES[*]}"
+  exit 0
 fi
-echo "ตรงกันหมด"
 
 say "4/7 จุดย้อนกลับ (image + โฟลเดอร์ + ฐาน)"
 docker tag app-asher-connect "app-asher-connect:rollback-$STAMP"
@@ -67,6 +93,12 @@ done
 [ ${#SQL_FILES[@]} -gt 0 ] || echo "(ไม่มี)"
 
 say "6/7 วางโค้ดใหม่ + build"
+for f in $DRIFT; do
+  case "$f" in *.js|*.mjs)
+    docker run --rm --entrypoint node -v "$WORK/new:/w:ro" app-asher-connect --check "/w/$f" \
+      || die "$f หลังรวมแล้ว syntax ผิด — ยังไม่ได้วางโค้ด (SQL ลงไปแล้ว เป็นการเพิ่มอย่างเดียว)" ;;
+  esac
+done
 tar -C "$WORK/new" -cf - . | tar -C "$APP" -xf -
 echo "$COMMIT" > .deployed-commit
 docker compose build && docker compose up -d
