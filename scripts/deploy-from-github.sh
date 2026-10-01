@@ -17,7 +17,7 @@ SQL_FILES=("$@")
 APP="${APP:-/opt/asher-inbox/app}"
 BASE=$(dirname "$APP")
 REPO=akecruise/asherconnect
-EXPECT_LIVE="${EXPECT_LIVE:-933d47bb6d811e036eb6f00ad88b02f4c8326df7}"
+EXPECT_LIVE="${EXPECT_LIVE:-f52bab0edbdaacba264f363dd6d6c4cca02a00d4}"
 PORT="${PORT:-3200}"
 STAMP=$(date +%Y%m%d-%H%M%S)
 WORK=/tmp/deploy-$STAMP
@@ -61,7 +61,7 @@ for f in $DRIFT; do
         diff -u "$WORK/live/$f" "$APP/$f" | head -60 || true
         if [ ! -f "$WORK/new/$f" ]; then
           echo "ของใหม่ไม่มีไฟล์นี้ — เก็บของบนเครื่องไว้"; KEEP+=("$f")
-        elif diff3 -m "$APP/$f" "$WORK/live/$f" "$WORK/new/$f" > "$WORK/merged"; then
+        elif diff3 -m -E "$APP/$f" "$WORK/live/$f" "$WORK/new/$f" > "$WORK/merged"; then
           cp "$WORK/merged" "$WORK/new/$f"; echo "รวมกับของใหม่ได้: $f"
         else
           die "$f แก้มือชนกับของใหม่ รวมเองไม่ได้ — ส่งข้อความข้างบนให้คนดูแล ยังไม่ได้แก้อะไร"
