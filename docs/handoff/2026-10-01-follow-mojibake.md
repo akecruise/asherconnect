@@ -46,6 +46,7 @@ Hotfix ลองกับฐาน local (`supabase-db`) แบบ rollback → 
   follow/unfollow ถูกทริกเกอร์ `canonical_system_message_label` (202609252200) แก้ไว้แล้ว — ไม่ต้องรัน `-v apply=1`
   เหลือเฉพาะ `connect_private.job` 18 แถว (แจ้งเตือน follow ที่ส่งไปแล้ว 21 ก.ย.–1 ต.ค.) — ประวัติ ไม่ต้องแก้
 - ⏳ ข้อ 2 deploy `bots/notify.mjs` — ยังไม่ยืนยัน
+- ✅ ข้อ 4 `sql/run.mjs` check/plan/apply ปฏิเสธไฟล์ SQL ที่เพี้ยน · เทสต์สแกนทุกไฟล์ (ยกเว้น docs/) และอยู่ใน `npm test` · `reference/inbox-schema.sql` แก้แล้ว
 
 ## ยังไม่ได้ทำ — ทำต่อตามลำดับ
 
