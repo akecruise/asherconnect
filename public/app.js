@@ -595,9 +595,19 @@ const tagChip=(t,cls='tag-chip')=>{const el=text('span',t.name,cls+' tag-'+tagCo
 
 // ☆/★ — คลิกแล้วไม่เปิดแชท, เปลี่ยนทันที (optimistic) แล้วถอยกลับถ้าฐานปฏิเสธ
 // ★ การ์ดเป็น <button> อยู่แล้ว ตัวนี้จึงเป็น span role=button (ปุ่มซ้อนปุ่มไม่ได้)
+const STAR_PATH='M12 2.8l2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z'
+function starIcon(){
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg')
+ svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');svg.setAttribute('class','star-icon')
+ const p=document.createElementNS('http://www.w3.org/2000/svg','path')
+ p.setAttribute('d',STAR_PATH);p.setAttribute('stroke-width','1.8');p.setAttribute('stroke-linejoin','round')
+ svg.append(p);return svg
+}
 function starToggle(id,on,cls){
  const head=cls==='chat-head-star'
- const el=text(head?'button':'span',on?'★':'☆',cls+(on?' on':''))
+ // ★ ไอคอน SVG ขนาดเท่า Facebook (20px การ์ด · 24px หัวแชท) — ตัวอักษร ☆ เดิมเล็กและบางจนมองไม่เห็น
+ const el=document.createElement(head?'button':'span');el.className=cls+(on?' on':'')
+ el.append(starIcon())
  if(head)el.type='button';else{el.setAttribute('role','button');el.tabIndex=0}
  el.setAttribute('aria-pressed',String(on));el.setAttribute('aria-label',on?'ถอดดาว':'ติดดาว');el.title=on?'ถอดดาว':'ติดดาวลูกค้า potential'
  const act=e=>{e.preventDefault();e.stopPropagation();toggleStar(id)}

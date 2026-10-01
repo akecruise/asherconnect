@@ -1241,14 +1241,22 @@ body.lead-open .lead-card { transform: none; visibility: visible }
 /* ── ติดดาว · ติดตาม · Tag ─────────────────────────────────────────────
    การ์ดยังขาว สีอยู่ที่ป้ายเล็ก/ชิปเท่านั้น · เลยกำหนดติดตาม = อำพัน ไม่ใช่แดง
    ★ แดงแบรนด์สงวนไว้ให้ SLA เกินเท่านั้น จึงไม่มีสีแดงใน palette ของ tag */
+/* ดาว: ขนาดเท่า Facebook — ไอคอน 20px บนการ์ด / 24px หัวแชท · เป้ากด 32px / 36px
+   ยังไม่ติด = เส้นสีเทากลาง (--muted อ่านออกบนพื้นขาว) · ติดแล้ว = เต็มสีอำพัน */
 .chat-row-star, .chat-head-star {
-  flex: none; border: none; background: transparent; padding: 0 2px; cursor: pointer;
-  color: var(--faint); font-size: 14px; line-height: 1;
+  flex: none; display: inline-grid; place-items: center;
+  border: none; background: transparent; padding: 0; cursor: pointer;
+  color: var(--muted); border-radius: 8px;
 }
+.chat-row-star { width: 32px; height: 32px; margin: -6px -4px -6px 0 }
+.chat-head-star { width: 36px; height: 36px; margin-left: -6px }
+.star-icon { display: block; fill: none; stroke: currentColor }
+.chat-row-star .star-icon { width: 20px; height: 20px }
+.chat-head-star .star-icon { width: 24px; height: 24px }
 .chat-row-star.on, .chat-head-star.on { color: var(--star) }
-.chat-row-star:hover, .chat-head-star:hover { color: var(--star) }
-.chat-row-star:focus-visible { outline: 2px solid var(--focus); border-radius: 4px }
-.chat-head-star { font-size: 18px }
+.chat-row-star.on .star-icon, .chat-head-star.on .star-icon { fill: currentColor }
+.chat-row-star:hover, .chat-head-star:hover { color: var(--star); background: var(--rule-soft) }
+.chat-row-star:focus-visible, .chat-head-star:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px }
 
 .tag-chip, .card-tag {
   display: inline-flex; align-items: center; max-width: 9em;
