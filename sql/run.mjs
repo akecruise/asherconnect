@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mojibakeLines } from './mojibake.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const MANIFEST = join(HERE, 'ORDER.txt')
@@ -91,6 +92,15 @@ for (const f of order) {
     if (!defines.get(k).includes(f)) defines.get(k).push(f)
   }
   drops.set(f, new Set([...clean.matchAll(DROPS)].map(key)))
+}
+
+// ── ด่าน 1.5: ภาษาไทยเพี้ยน (UTF-8 → cp874) ─────────────────────────
+// ★ ไฟล์ที่เพี้ยนรันผ่านได้ปกติ ไม่มี error — สตริงเพี้ยนไปโผล่ในแชท/แจ้งเตือนแทน
+//   จึงต้องหยุดตั้งแต่ตรงนี้ ก่อน plan/apply ลงฐาน (ดู sql/mojibake.mjs)
+for (const [f, raw] of bodies) {
+  const lines = mojibakeLines(raw)
+  if (lines.length) problems.push(f + ' มีภาษาไทยเพี้ยน (เซฟผ่าน PowerShell 5/cp874?) บรรทัด '
+    + lines.slice(0, 5).join(', ') + (lines.length > 5 ? ' …รวม ' + lines.length + ' บรรทัด' : ''))
 }
 
 const objectsOf = (f) => new Set([...defines].filter(([, fs]) => fs.includes(f)).map(([k]) => k))

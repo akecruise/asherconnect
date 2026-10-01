@@ -18,11 +18,26 @@ test('ไม่มี reply_reason ก็ไม่พิมพ์ undefined', ()
   assert.equal(formatNotify({ text: 'สวัสดี', reply_go: false }).includes('undefined'), false)
 })
 
-// กันไฟล์ SQL ถูกเซฟผ่าน PowerShell 5 / cp874 จนภาษาไทยเพี้ยน (เคยเกิดกับ 202609211200_messenger_identity_p0.sql)
-test('ไฟล์ sql/ ต้องไม่มีภาษาไทยเพี้ยนแบบ UTF-8 → cp874', async () => {
-  const { readdirSync, readFileSync } = await import('node:fs')
-  const dir = new URL('../sql/', import.meta.url)
-  const bad = readdirSync(dir).filter(f => f.endsWith('.sql'))
-    .filter(f => /เธ[฀-๿]|เน€/.test(readFileSync(new URL(f, dir), 'utf8')))
+// กันไฟล์ถูกเซฟผ่าน PowerShell 5 / cp874 จนภาษาไทยเพี้ยน (เคยเกิดกับ 202609211200_messenger_identity_p0.sql)
+// ★ ตรวจทุกไฟล์ที่ git ติดตาม ไม่ใช่แค่ sql/ — โค้ดใน bots/ lib/ public/ ก็มีภาษาไทย
+//   ยกเว้น docs/ ที่ยกตัวอย่างข้อความเพี้ยนไว้โดยตั้งใจ
+test('ไม่มีไฟล์ไหนมีภาษาไทยเพี้ยนแบบ UTF-8 → cp874', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const { readFileSync } = await import('node:fs')
+  const { mojibakeLines } = await import('../sql/mojibake.mjs')
+  const root = new URL('../', import.meta.url)
+  const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0')
+    .filter((f) => /\.(sql|mjs|js|html|css|json|md|txt|sh|py)$/.test(f) && !f.startsWith('docs/'))
+  const bad = files.flatMap((f) => {
+    const lines = mojibakeLines(readFileSync(new URL(f, root), 'utf8'))
+    return lines.length ? [f + ':' + lines.slice(0, 3).join(',')] : []
+  })
   assert.deepEqual(bad, [])
+})
+
+test('ตัวตรวจไม่จับภาษาไทยจริง แต่จับของที่เพี้ยน', async () => {
+  const { MOJIBAKE } = await import('../sql/mojibake.mjs')
+  assert.equal(MOJIBAKE.test('เธอเนียนมาก เธอเน้นเรื่องราคา'), false)
+  // ต่อจากชิ้นย่อย ไม่งั้นไฟล์เทสต์นี้เองจะโดนเทสต์ข้างบนจับ
+  assert.equal(MOJIBAKE.test(['[เธฅ', 'เธน', 'เธเ', 'เธเ', 'เนเ', 'ธฒ]'].join('')), true)
 })

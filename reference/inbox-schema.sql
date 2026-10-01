@@ -90,12 +90,12 @@ BEGIN
 
     IF v_role IS NULL THEN
         RAISE EXCEPTION 'not_allowed'
-            USING HINT = 'เธขเธฑเธเนเธกเนเธกเธตเนเธเธฃเนเธเธฅเนเนเธ core.profile โ€” เธ•เนเธญเธเธฅเนเธญเธเธญเธดเธเธญเธขเนเธฒเธเธเนเธญเธขเธซเธเธถเนเธเธเธฃเธฑเนเธ';
+            USING HINT = 'ยังไม่มีโปรไฟล์ใน core.profile — ต้องล็อกอินอย่างน้อยหนึ่งครั้ง';
     END IF;
 
-    -- เธฅเนเธญเธเนเธ–เธงเธเนเธญเธเธญเนเธฒเธเน€เธเนเธฒเธเธญเธเธเธฑเธเธเธธเธเธฑเธ
-    -- เธ–เนเธฒเนเธกเนเธฅเนเธญเธ เน€เธเธฅเธชเนเธชเธญเธเธเธเธเธ”เธเธฃเนเธญเธกเธเธฑเธเธเธฐเน€เธซเนเธ assignee_id เน€เธเนเธ NULL เธ—เธฑเนเธเธเธนเน
-    -- เนเธฅเนเธงเธเธเธ—เธตเนเน€เธเธตเธขเธเธ—เธตเธซเธฅเธฑเธเธเธฐเธ—เธฑเธเธเธเนเธฃเธเนเธ”เธขเนเธกเนเธกเธตเนเธเธฃเธฃเธนเน
+    -- ล็อกแถวก่อนอ่านเจ้าของปัจจุบัน
+    -- ถ้าไม่ล็อก เซลส์สองคนกดพร้อมกันจะเห็น assignee_id เป็น NULL ทั้งคู่
+    -- แล้วคนที่เขียนทีหลังจะทับคนแรกโดยไม่มีใครรู้
     SELECT assignee_id INTO v_current
       FROM inbox.conversation WHERE id = p_conversation_id FOR UPDATE;
 
@@ -106,14 +106,14 @@ BEGIN
     v_self_claim := (p_assignee_id = v_me AND v_current IS NULL);
 
     IF v_role NOT IN ('manager','admin','senior_sales') AND NOT v_self_claim THEN
-        -- เนเธขเธเธเนเธญเธเธงเธฒเธกเนเธซเนเธเธเธ—เธตเนเน€เธเธญเธฃเธนเนเธงเนเธฒเธ•เธดเธ”เน€เธเธฃเธฒเธฐเธญเธฐเนเธฃ
-        -- not_allowed เน€เธเธข เน เธ—เธณเนเธซเนเธ•เนเธญเธเธกเธฒเนเธฅเนเนเธเนเธ”เน€เธญเธเธ—เธธเธเธเธฃเธฑเนเธ
+        -- แยกข้อความให้คนที่เจอรู้ว่าติดเพราะอะไร
+        -- not_allowed เฉย ๆ ทำให้ต้องมาไล่โค้ดเองทุกครั้ง
         IF v_current IS NOT NULL AND v_current <> v_me THEN
             RAISE EXCEPTION 'conversation_taken'
-                USING HINT = 'เน€เธเธชเธเธตเนเธกเธตเธเธเธฃเธฑเธเนเธเนเธฅเนเธง เนเธซเนเธเธนเนเธเธฑเธ”เธเธฒเธฃเนเธญเธเนเธซเนเธ–เนเธฒเธ•เนเธญเธเธเธฒเธฃเน€เธเธฅเธตเนเธขเธเธกเธทเธญ';
+                USING HINT = 'เคสนี้มีคนรับไปแล้ว ให้ผู้จัดการโอนให้ถ้าต้องการเปลี่ยนมือ';
         ELSIF p_assignee_id <> v_me THEN
             RAISE EXCEPTION 'not_allowed'
-                USING HINT = 'เน€เธเธฅเธชเนเธกเธญเธเธซเธกเธฒเธขเธเธฒเธเนเธซเนเธเธเธญเธทเนเธเนเธกเนเนเธ”เน เธฃเธฑเธเนเธซเนเธ•เธฑเธงเน€เธญเธเนเธ”เนเน€เธเธเธฒเธฐเน€เธเธชเธ—เธตเนเธขเธฑเธเนเธกเนเธกเธตเน€เธเนเธฒเธเธญเธ';
+                USING HINT = 'เซลส์มอบหมายงานให้คนอื่นไม่ได้ รับให้ตัวเองได้เฉพาะเคสที่ยังไม่มีเจ้าของ';
         ELSE
             RAISE EXCEPTION 'not_allowed';
         END IF;
@@ -138,7 +138,7 @@ ALTER FUNCTION inbox.assign_conversation(p_conversation_id uuid, p_assignee_id u
 -- Name: FUNCTION assign_conversation(p_conversation_id uuid, p_assignee_id uuid); Type: COMMENT; Schema: inbox; Owner: postgres
 --
 
-COMMENT ON FUNCTION inbox.assign_conversation(p_conversation_id uuid, p_assignee_id uuid) IS 'เธกเธญเธเธซเธกเธฒเธขเธเธ—เธชเธเธ—เธเธฒ โ€” เธเธนเนเธเธฑเธ”เธเธฒเธฃ/เธซเธฑเธงเธซเธเนเธฒเธกเธญเธเธซเธกเธฒเธขเนเธเธฃเธเนเนเธ”เน ยท เน€เธเธฅเธชเนเธฃเธฑเธเน€เธเธชเธ—เธตเนเธขเธฑเธเนเธกเนเธกเธตเน€เธเนเธฒเธเธญเธเนเธซเนเธ•เธฑเธงเน€เธญเธเนเธ”เน';
+COMMENT ON FUNCTION inbox.assign_conversation(p_conversation_id uuid, p_assignee_id uuid) IS 'มอบหมายบทสนทนา — ผู้จัดการ/หัวหน้ามอบหมายใครก็ได้ · เซลส์รับเคสที่ยังไม่มีเจ้าของให้ตัวเองได้';
 
 
 --
@@ -210,7 +210,7 @@ BEGIN
         INSERT INTO core.event_log(event_type, entity, entity_id, actor_type, project_id, channel, request_id, payload)
         SELECT 'inbox.outbound_skipped', 'message', NEW.id, 'system'::core.actor_type,
                i.project_id, i.channel, NEW.id::text,
-               jsonb_build_object('reason','เนเธกเนเธเธเธเนเธญเธเธ—เธฒเธเธ•เธดเธ”เธ•เนเธญเธเธญเธเธฅเธนเธเธเนเธฒ (core.contact_identity)')
+               jsonb_build_object('reason','ไม่พบช่องทางติดต่อของลูกค้า (core.contact_identity)')
           FROM inbox.conversation c JOIN inbox.inbox i ON i.id = c.inbox_id
          WHERE c.id = NEW.conversation_id;
         RETURN NEW;
@@ -231,7 +231,7 @@ ALTER FUNCTION inbox.enqueue_outbound() OWNER TO postgres;
 -- Name: FUNCTION enqueue_outbound(); Type: COMMENT; Schema: inbox; Owner: postgres
 --
 
-COMMENT ON FUNCTION inbox.enqueue_outbound() IS 'เนเธชเนเธเนเธญเธเธงเธฒเธกเธเธฒเธเน€เธฃเธฒเธฅเธเธเธดเธงเธเธฒเธญเธญเธ โ€” เธเธฃเธญเธเธ—เธธเธเธ—เธฒเธเธ—เธตเนเน€เธเธตเธขเธเธฅเธ inbox.message เนเธกเนเนเธเนเน€เธเธเธฒเธฐ agent_reply';
+COMMENT ON FUNCTION inbox.enqueue_outbound() IS 'ใส่ข้อความจากเราลงคิวขาออก — ครอบทุกทางที่เขียนลง inbox.message ไม่ใช่เฉพาะ agent_reply';
 
 
 --
