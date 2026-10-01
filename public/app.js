@@ -1,4 +1,5 @@
 import { slaTag } from './sla.mjs'
+import { TAG_COLORS, TAG_COLOR_NAMES, tagColor, isFlagFilter, flagListArgs, followPresets, followBadge, cardTags, matchTags, tagDiff } from './case-flags.mjs'
 import { dateSeparatorLabel, messageSenderLabel, messageSide, messageStatus } from './conversation-presentation.mjs'
 
 const $ = id => document.getElementById(id)
@@ -19,6 +20,8 @@ window.asherQuickReplies = () => boot?.quick_replies?.length ? boot.quick_replie
 // Quick Replies can offer only rooms that are available and already priced.
 window.asherQuoteUnits = () => (detail?.units ?? []).filter(unit => Number(unit.price ?? unit.selling_price ?? unit.list_price ?? 0) > 0)
 const drafts=new Map(),pendingCommands=new Map()
+// ดาว/tag/ติดตาม ของเคสในหน้าที่โหลดอยู่ (inbox.case_flags) + รายการ tag ของทีม (inbox.tags_list)
+let flags={},tagState={tags:[],starred:0,can_manage:false,can_create:false}
 let selectedImages=[]
 const text=(tag,value,cls)=>{const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
 
@@ -204,7 +207,9 @@ function listTime(value){
  return d.toLocaleDateString('th-TH',{timeZone:'Asia/Bangkok',day:'numeric',month:'short'})
 }
 
-function dueAlerts(state,closed=false){if(closed)return [];const now=Date.now();return [['appointment_at','ถึงเวลานัดหมาย'],['follow_up_at','ติดตามเลยกำหนด']].filter(([key])=>state[key]&&Date.parse(state[key])<=now).map(([,label])=>label)}
+// ★ ติดตามเลยกำหนดไม่อยู่ในนี้แล้ว — มีป้าย ⏰ สีอำพันของตัวเอง (การ์ด + บล็อกการติดตาม) ตาม spec ดาว/tag
+//   ป้ายในนี้เป็นสีแดง ถ้าคงไว้จะซ้ำกันสองป้ายและเป็นแดงที่สงวนไว้ให้ SLA
+function dueAlerts(state,closed=false){if(closed)return [];const now=Date.now();return [['appointment_at','ถึงเวลานัดหมาย']].filter(([key])=>state[key]&&Date.parse(state[key])<=now).map(([,label])=>label)}
 function renderDue(state,closed){let box=$('due-alerts');if(!box){box=text('div','','case-alerts');box.id='due-alerts';$('appointment-summary').after(box)}box.replaceChildren(...dueAlerts(state,closed).map(label=>text('span',label,'pill red')))}
 let countSequence=0;
 // ตัวนับ SLA ตัวเก่าถูกเอาออก — มันไล่ขอรายการทีละหน้ามานับเองที่เบราว์เซอร์
@@ -259,13 +264,23 @@ function renderLastReply(){
 //   ถ้าอยากให้ pagination แม่นสมบูรณ์ทุกกรณี ต้องเพิ่มพารามิเตอร์ project ใน connect_api (ไม่ทำในรอบนี้)
 async function loadList(){const seq=++listSequence
  const isProject=filter.startsWith('proj-')
- const data=await api('list',{filter:isProject?'all':filter,search:$('search').value.trim(),offset})
+ const search=$('search').value.trim()
+ // ★ ดาว/tag ไปทาง inbox.flag_list (ไม่แตะ connect_private.api) — แถวรูปเดียวกับ list
+ const data=isFlagFilter(filter)?await api('flag_list',flagListArgs(filter,search,offset)):await api('list',{filter:isProject?'all':filter,search,offset})
  if(seq!==listSequence)return
  const projectId=isProject?projectIdFor(PROJECT_CHIPS.find(([k])=>k===filter)?.[2]):null
  const page=isProject?data.filter(x=>x.project_id===projectId):data
  items=page.slice(0,50)
  $('next').disabled=data.length<=50;$('previous').disabled=offset===0
+ await loadFlags(items.map(i=>i.id));if(seq!==listSequence)return
  renderList();await refreshCounts()}
+// เรียกครั้งเดียวต่อหน้า แล้ว merge ลงการ์ด — อ่านไม่ได้ก็แค่ไม่มีดาว/tag หน้าจอไม่พัง
+async function loadFlags(ids){
+ // เคสที่เปิดอยู่อาจไม่อยู่ในหน้านี้ (เปิดจากลิงก์/เปลี่ยนตัวกรอง) — ขอรวมไปด้วย หัวแชทจะได้ไม่หาย
+ const want=[...new Set(selected?[...ids,selected]:ids)]
+ if(!want.length){flags={};return}
+ try{flags=await api('case_flags',{conversation_ids:want})}catch{/* คงของเดิมไว้ */}
+}
 // ชื่อย่อโครงการบนแท็ก — ย้อนจาก project_id ของแถวไปหารหัสโครงการ แล้วเทียบกับชิปที่มีอยู่แล้ว
 // ไม่ออกแบบใหม่: ใช้ป้ายเดียวกับที่อยู่บนชิปตัวกรอง (Naii/Vibe) ให้อ่านตรงกันทั้งหน้า
 function projectTagLabel(projectId){
@@ -303,6 +318,8 @@ function renderList(){
     const name=text('strong',shown,'chat-row-name');
     if(item.unread_count>0){const dot=text('span','','unread-dot');dot.setAttribute('aria-hidden','true');name.prepend(dot)}
     top.append(name);
+    const f=flags[item.id]||{};
+    top.append(starToggle(item.id,!!f.starred,'chat-row-star'));
     if(tag.label&&!oneTag){
       const el=text('span',tag.label,'sla-tag '+tag.tone);
       el.title=tag.label;top.append(el)
@@ -329,6 +346,18 @@ function renderList(){
     if(item.unread_count>0)meta.append(text('span',String(Math.min(item.unread_count,99)),'unread-badge'));
     bottom.append(meta);
     body.append(bottom);
+
+    // แถวที่สาม (มีเฉพาะการ์ดที่มี tag/วันติดตาม): tag สูงสุด 2 อัน +N (1 อันถ้ามีวันติดตาม — คอลัมน์แคบ) · ⏰ วันติดตาม (เลยกำหนด = อำพัน ไม่ใช่แดง)
+    // ★ แยกแถวเพราะคอลัมน์รายการแคบ — ยัดรวมกับแท็กโครงการแล้วถูกตัดจนอ่านไม่ออก
+    const fat=f.follow_up_at??item.follow_up_at,fb=closed?null:followBadge(fat),ct=cardTags(f.tags,fb?1:2);
+    if(ct.shown.length||fb){
+      b.classList.add('has-flags');
+      const row=text('div','','chat-row-flags');
+      for(const t of ct.shown)row.append(tagChip(t,'card-tag'));
+      if(ct.more)row.append(text('span','+'+ct.more,'card-tag more'));
+      if(fb){const el=text('span',fb.label,'follow-badge'+(fb.overdue?' overdue':''));el.title='ติดตาม '+date(fat)+(f.follow_note?' · '+f.follow_note:'');row.append(el)}
+      body.append(row);
+    }
 
     b.append(body);
     b.addEventListener('click',()=>selectCase(item.id).catch(e=>note(e.message,true)));$('conversations').append(b)
@@ -407,7 +436,8 @@ function renderMessages(messages,prepend=false){
   if(prepend)$('messages').prepend(fragment);else $('messages').append(fragment)
   $('older').hidden=messages.length<100
 }
-async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;selectedImages=[];renderImagePreview();detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight}
+async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;selectedImages=[];renderImagePreview();detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight
+ if(!flags[id])api('case_flags',{conversation_ids:[id]}).then(r=>{if(id!==selected)return;flags={...flags,...r};renderHeadFlags();renderFollow()}).catch(()=>{})}
 // รูปกับโครงการบนหัวแชท — รูปเอาจากแถวในรายการก่อน (ที่นั่นมี picture_url แน่นอน)
 // แล้วค่อยถอยไปหาของใน detail เผื่อเปิดเคสที่ยังไม่อยู่ในรายการหน้านี้
 function renderChatHeadExtras(who){
@@ -432,7 +462,7 @@ function renderChatHeadExtras(who){
  tag.textContent=name
  tag.hidden=!name
 }
-function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};document.body.dataset.chatChannel=detail.channel||'';const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=CHANNEL_WORD[detail.channel]||'ไม่รองรับ';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('followup').value=local(s.follow_up_at);$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
+function renderDetail(){const c=detail.conversation,l=detail.lead||{},s=detail.state||{};document.body.dataset.chatChannel=detail.channel||'';const who=customerName(detail.contact.display_name,detail.contact.external_id,detail.channel);$('chat-name').textContent=who;renderContactId(detail.contact.external_id);$('chat-channel').textContent=CHANNEL_WORD[detail.channel]||'ไม่รองรับ';renderChatHeadExtras(who);const wait=sla(detail.case_status);$('sla').textContent=wait.label;$('sla').className='pill '+wait.style;$('display-name').value=detail.contact.display_name||'';$('phone').value=detail.contact.phone||'';$('budget').value=l.budget??'';$('room').value=l.interest_unit_type||'';$('interest').value=l.extra?.interest||'unknown';$('project').value=l.project_id||boot.projects[0]?.id||'';$('owner').textContent=boot.assignees.find(a=>a.id===c.assignee_id)?.name||'ยังไม่มีคนรับ';$('appointment-summary').textContent=s.appointment_at?date(s.appointment_at):'ยังไม่มีนัดหมาย';renderDue(s,c.status==='resolved');renderFollow();renderHeadFlags();$('message').value=drafts.get(selected)||'';renderMessages(detail.messages);$('pipeline').replaceChildren();for(const [code,label]of Object.entries(stageNames)){if(code==='lost')continue;const b=text('button',label,l.stage_code===code?'active':'');b.addEventListener('click',()=>stage(code));$('pipeline').append(b)}$('canned').replaceChildren();for(const item of rankTemplates(boot.canned.filter(x=>x.project_id===$('project').value))){const b=text('button',item.shortcut);b.type='button';b.title=item.content;b.addEventListener('click',()=>useTemplate(item.content));$('canned').append(b)}permissions()}
 async function mutate(action,data={}){if(busy||!selected)return;const id=selected;const key=JSON.stringify({id,action,data});const requestId=pendingCommands.get(key)||data.request_id||crypto.randomUUID();const hasFiles=action==='send'&&((Array.isArray(data.files)&&data.files.length>0)||(Array.isArray(data.media_ids)&&data.media_ids.length>0));pendingCommands.set(key,requestId);setBusy(true);try{const result=await api(action,{...data,id,request_id:requestId});pendingCommands.delete(key);if(action==='send'){drafts.delete(id);$('message').value='';selectedImages=[];renderImagePreview()}$('dialog').close();dirty=false;detail=await api('detail',{id});renderDetail();await loadList();note(hasFiles?'อัปโหลดรูปสำเร็จ กำลังส่ง… สถานะจะแสดงใต้ข้อความ':action==='send'?'กำลังส่งข้อความ…':result.booking_id?'บันทึกเอกสารจองและข้อมูล ERP แล้ว':'บันทึกข้อมูลแล้ว')}catch(e){if(e.code&&e.code!=='service_unavailable')pendingCommands.delete(key);const message=hasFiles&&e.code==='media_upload_failed'?'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่':e.message;note(message,true);$('dialog-error').textContent=message}finally{setBusy(false)}}
 let dialogAction,dialogData
 function dialog(title,fields,action,extra={}){dialogAction=action;dialogData=extra;$('dialog-title').textContent=title;$('dialog-fields').replaceChildren();$('dialog-error').textContent='';for(const f of fields){const label=text('label',f.label);const input=document.createElement(f.options?'select':'input');input.name=f.name;input.required=f.required!==false;if(f.options){for(const o of f.options){const option=text('option',o.label);option.value=o.value;input.append(option)}}else{input.type=f.type||'text';if(f.min!==undefined)input.min=f.min;if(f.step)input.step=f.step;if(f.value!==undefined)input.value=f.value;if(f.maxLength)input.maxLength=f.maxLength}label.append(input);$('dialog-fields').append(label)}$('dialog').showModal()}
@@ -500,7 +530,10 @@ $('bot-toggle').addEventListener('click',async()=>{
  async function filePayload(file){const bytes=new Uint8Array(await file.arrayBuffer());const mime=imageMimeFromBytes(bytes);const extension=imageExtension(mime);const original=String(file.name||'');const name=/\.[^.]+$/.test(original)?original:`${original||'image'}.${extension}`;let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return {name,type:mime,data:btoa(binary)}}
  $('reply').addEventListener('submit',async e=>{e.preventDefault();const value=$('message').value.trim();if(!value&&!selectedImages.length){note('กรุณาพิมพ์ข้อความหรือแนบรูปอย่างน้อย 1 รูป',true);return}const correlationId=crypto.randomUUID();try{const uploads=selectedImages.filter(x=>!x.library);const files=await Promise.all(uploads.map(filePayload));const media_ids=selectedImages.filter(x=>x.library).map(x=>x.id);const media_order=selectedImages.map(x=>x.library?'m:'+x.id:'f:'+uploads.indexOf(x));console.info('[media_pipeline]',{phase:'PICK',correlation_id:correlationId,count:files.length+media_ids.length,files:files.map(file=>({name:file.name,mime:file.type,bytes:Math.floor(file.data.length*3/4)}))});mutate('send',{text:value,files,media_ids,media_order,request_id:correlationId,answer_id:$('message').dataset.answerHubId||undefined})}catch(error){note('อัปโหลดรูปไม่สำเร็จ กรุณาเลือกไฟล์รูปใหม่',true)}})
 $('lead-form').addEventListener('input',()=>dirty=true)
-$('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,follow_up_at:utc($('followup').value)})})
+$('lead-form').addEventListener('submit',e=>{e.preventDefault();mutate('save',{version:detail.state.version,display_name:$('display-name').value,phone:$('phone').value,project_id:$('project').value,budget:$('budget').value,room:$('room').value,interest:$('interest').value,
+ // ★ วันติดตามย้ายไปบันทึกผ่าน case_follow แล้ว แต่ save บน VPS ยัง nullif(follow_up_at) — ไม่ส่ง = ล้างค่า
+ //   จึงส่งค่าปัจจุบันกลับไปเสมอจนกว่า save จะเลิกแตะคอลัมน์นี้
+ follow_up_at:detail.state?.follow_up_at||''})})
 $('claim').addEventListener('click',()=>mutate('claim'))
 $('transfer').addEventListener('click',()=>dialog('โอนเคส',[{name:'assignee_id',label:'ผู้รับผิดชอบใหม่',options:boot.assignees.map(a=>({value:a.id,label:a.name}))}],'transfer'))
 $('appointment').addEventListener('click',appointment)
@@ -535,12 +568,13 @@ const STATUS_CHIPS=['all','unassigned']
 // รหัสโครงการจริงจาก core.project.code — เทียบจาก boot.projects ตอน render ไม่ฮาร์ดโค้ด id
 const PROJECT_CHIPS=[['proj-naii','Naii','asher-naii'],['proj-vibe','Vibe','asher-vibe']]
 
-const urlNames={all:'all',unassigned:'pending','proj-naii':'naii','proj-vibe':'vibe'}
+const urlNames={all:'all',unassigned:'pending','proj-naii':'naii','proj-vibe':'vibe',starred:'starred',followup:'followup'}
 const fromUrl=Object.fromEntries(Object.entries(urlNames).map(([k,v])=>[v,k]))
 const readFilter=()=>{const v=new URL(location.href).searchParams.get('filter')||''
+ if(/^tag-[0-9a-f-]{36}$/.test(v))return 'tag:'+v.slice(4)
  return fromUrl[v]||'all'}
 function writeFilter(){const u=new URL(location.href)
- u.searchParams.set('filter',urlNames[filter]||'all')
+ u.searchParams.set('filter',filter.startsWith('tag:')?'tag-'+filter.slice(4):urlNames[filter]||'all')
  history.replaceState(null,'',u)}
 let counts={}
 
@@ -570,6 +604,10 @@ function renderFilters(){
  nav.replaceChildren()
  for(const key of STATUS_CHIPS)nav.append(chipFor(key,shortLabels[key],counts[key]??0))
  for(const [key,label]of PROJECT_CHIPS)nav.append(chipFor(key,label,0))
+ // ★ ดาว/ติดตาม/Tag — ตัวเลขดาว+tag มาจาก tags_list, ติดตามมาจาก queue_counts (ตัวกรอง followup เดิม)
+ nav.append(chipFor('starred','★ ติดดาว',tagState.starred??0))
+ nav.append(chipFor('followup','⏰ ถึงเวลาติดตาม',counts.followup??0))
+ nav.append(tagFilterChip())
 }
 
 // นับทุกตัวกรองในคำขอเดียว แล้ววาดชิปใหม่
@@ -577,6 +615,7 @@ function renderFilters(){
 async function refreshCounts(){
  try{counts=await api('queue_counts',{search:$('search').value.trim()})}
  catch{counts={}}
+ await refreshTags()
  renderFilters()
  renderUnreadBadge()
 }
@@ -587,6 +626,211 @@ function renderUnreadBadge(){
  const n=Number(counts.unassigned)||0
  badge.textContent=n>99?'99+':String(n)
  badge.hidden=n===0
+}
+
+// ───────────────────────────────────────── ติดดาว · ติดตาม · Tag
+// spec: docs/handoff/2026-10-01-star-follow-tags.md · ด่านสิทธิ์อยู่ที่ inbox.* ในฐาน
+// ★ ดาว/tag ผูกกับ "ลูกค้า" ไม่ใช่เคส — ลูกค้าคนเดียวที่ทักหลายช่องทางเห็นชุดเดียวกัน
+//   แก้แล้วจึงต้องโหลด flags ของทั้งหน้าใหม่ ไม่ใช่แก้แค่การ์ดใบที่กด
+async function refreshTags(){
+ try{tagState=await api('tags_list',{})}catch{/* ใช้ของเดิม ชิปยังกดได้ */}
+}
+async function reloadFlags(){await loadFlags(items.map(i=>i.id));renderList();renderHeadFlags()}
+const tagChip=(t,cls='tag-chip')=>{const el=text('span',t.name,cls+' tag-'+tagColor(t.color));el.title=t.name;return el}
+
+// ☆/★ — คลิกแล้วไม่เปิดแชท, เปลี่ยนทันที (optimistic) แล้วถอยกลับถ้าฐานปฏิเสธ
+// ★ การ์ดเป็น <button> อยู่แล้ว ตัวนี้จึงเป็น span role=button (ปุ่มซ้อนปุ่มไม่ได้)
+function starToggle(id,on,cls){
+ const head=cls==='chat-head-star'
+ const el=text(head?'button':'span',on?'★':'☆',cls+(on?' on':''))
+ if(head)el.type='button';else{el.setAttribute('role','button');el.tabIndex=0}
+ el.setAttribute('aria-pressed',String(on));el.setAttribute('aria-label',on?'ถอดดาว':'ติดดาว');el.title=on?'ถอดดาว':'ติดดาวลูกค้า potential'
+ const act=e=>{e.preventDefault();e.stopPropagation();toggleStar(id)}
+ el.addEventListener('click',act)
+ el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')act(e)})
+ return el
+}
+async function toggleStar(id){
+ const before=flags[id]||{},next=!before.starred
+ flags={...flags,[id]:{...before,starred:next}};renderList();renderHeadFlags()
+ try{await api('case_star',{conversation_id:id,starred:next});await reloadFlags();await refreshTags();renderFilters()}
+ catch(e){flags={...flags,[id]:before};renderList();renderHeadFlags();note(e.message,true)}
+}
+
+// หัวแชท: ปุ่มดาว + แถว tag + ปุ่ม ＋ Tag
+function renderHeadFlags(){
+ if(!detail||!selected)return
+ const host=document.querySelector('.chat-head-text');if(!host)return
+ let row=$('chat-flags')
+ if(!row){row=text('div','','chat-flags');row.id='chat-flags';host.append(row)}
+ const f=flags[selected]||{}
+ const star=starToggle(selected,!!f.starred,'chat-head-star');star.id='chat-star'
+ const add=text('button','＋ Tag','tag-add');add.type='button';add.id='tag-add'
+ add.setAttribute('aria-haspopup','true');add.addEventListener('click',()=>openTagPicker(add))
+ row.replaceChildren(star,...(f.tags||[]).map(t=>tagChip(t)),add)
+}
+
+// popover แบบ LINE: ค้นหา · ติ๊กหลายอัน · "สร้าง tag ใหม่ '…'" ถ้าพิมพ์แล้วไม่เจอ
+function openTagPicker(anchor){
+ $('tag-picker')?.remove()
+ const id=selected,before=(flags[id]?.tags||[]).map(t=>t.id)
+ const chosen=new Set(before)
+ const box=text('div','','tag-picker');box.id='tag-picker';box.setAttribute('role','dialog');box.setAttribute('aria-label','เลือก Tag')
+ const q=document.createElement('input');q.type='search';q.placeholder='ค้นหาหรือพิมพ์ชื่อ tag ใหม่';q.maxLength=30;q.setAttribute('aria-label','ค้นหา tag')
+ const list=text('div','','tag-picker-list')
+ const done=text('button','บันทึก','primary');done.type='button'
+ const cancel=text('button','ยกเลิก','subtle');cancel.type='button'
+ const close=()=>{box.remove();document.removeEventListener('mousedown',outside,true)}
+ const outside=e=>{if(!box.contains(e.target)&&e.target!==anchor)close()}
+ function draw(){
+  const m=matchTags(tagState.tags,q.value)
+  list.replaceChildren()
+  for(const t of m.hits){
+   const l=text('label','','tag-option');const c=document.createElement('input');c.type='checkbox';c.checked=chosen.has(t.id)
+   c.addEventListener('change',()=>{c.checked?chosen.add(t.id):chosen.delete(t.id)})
+   l.append(c,tagChip(t));list.append(l)
+  }
+  if(m.create&&tagState.can_create){
+   const b=text('button','＋ สร้าง tag ใหม่ “'+m.create+'”','tag-create');b.type='button'
+   b.addEventListener('click',async()=>{
+    b.disabled=true
+    try{const t=await api('tag_upsert',{name:m.create});await refreshTags();chosen.add(t.id);q.value='';draw()}
+    catch(e){note(e.message,true);b.disabled=false}
+   })
+   list.append(b)
+  }
+  if(!list.childElementCount)list.append(text('p','ไม่มี tag','muted'))
+ }
+ q.addEventListener('input',draw)
+ done.addEventListener('click',async()=>{
+  const diff=tagDiff(before,[...chosen])
+  close()
+  if(!diff.add.length&&!diff.remove.length)return
+  try{await api('case_tags_set',{conversation_id:id,...diff});await reloadFlags();await refreshTags();renderFilters()}
+  catch(e){note(e.message,true)}
+ })
+ cancel.addEventListener('click',close)
+ const foot=text('div','','tag-picker-foot');foot.append(cancel,done)
+ box.append(q,list,foot);draw()
+ anchor.after(box);q.focus()
+ setTimeout(()=>document.addEventListener('mousedown',outside,true))
+ box.addEventListener('keydown',e=>{if(e.key==='Escape'){close();anchor.focus()}})
+}
+
+// ชิป "Tag ▾" ในแถวตัวกรอง — เลือก tag แล้วรายการไปทาง flag_list
+function tagFilterChip(){
+ const on=filter.startsWith('tag:')
+ const cur=on?tagState.tags.find(t=>'tag:'+t.id===filter):null
+ const wrap=text('span','','tag-filter')
+ const b=text('button','','chip'+(on?' selected':''));b.type='button'
+ b.setAttribute('aria-haspopup','true');b.setAttribute('aria-expanded','false')
+ b.append(text('span',cur?'# '+cur.name:'Tag ▾','chip-name'))
+ b.title='กรองตาม Tag'
+ b.addEventListener('click',e=>{
+  e.stopPropagation()
+  const open=$('tag-filter-menu');if(open){open.remove();b.setAttribute('aria-expanded','false');return}
+  // ★ วางเมนูไว้ที่ body แบบ fixed — #filters เป็นตัวเลื่อนแนวนอน (overflow) เมนูข้างในจะถูกตัดหาย
+  const menu=text('div','','chip-menu tag-filter-menu');menu.id='tag-filter-menu';menu.setAttribute('role','menu')
+  const r=b.getBoundingClientRect()
+  menu.style.top=(r.bottom+4)+'px';menu.style.left=Math.max(16,Math.min(r.left,innerWidth-16-220))+'px'
+  for(const t of tagState.tags){
+   const it=text('button','','chip-menu-item'+(filter==='tag:'+t.id?' selected':''));it.type='button';it.setAttribute('role','menuitem')
+   it.append(tagChip(t),text('span',String(t.count??0),'chip-n'))
+   it.addEventListener('click',()=>{menu.remove();pickFilter('tag:'+t.id)})
+   menu.append(it)
+  }
+  if(!tagState.tags.length)menu.append(text('p','ยังไม่มี tag','muted'))
+  if(tagState.can_manage){
+   const m=text('button','จัดการ Tag…','chip-menu-item');m.type='button'
+   m.addEventListener('click',()=>{menu.remove();openTagAdmin()})
+   menu.append(m)
+  }
+  document.body.append(menu);b.setAttribute('aria-expanded','true')
+  setTimeout(()=>document.addEventListener('click',()=>{menu.remove();b.setAttribute('aria-expanded','false')},{once:true}))
+ })
+ wrap.append(b)
+ return wrap
+}
+
+// หน้าจัดการ Tag (manager/admin): ชื่อ · สีจาก palette · ลำดับ · เลิกใช้
+function openTagAdmin(){
+ let dlg=$('tag-admin')
+ if(!dlg){dlg=document.createElement('dialog');dlg.id='tag-admin';dlg.className='tag-admin';document.body.append(dlg)}
+ const draw=()=>{
+  const head=text('div','','section-heading');const x=text('button','×');x.type='button';x.setAttribute('aria-label','ปิด')
+  x.addEventListener('click',()=>dlg.close());head.append(text('h2','จัดการ Tag'),x)
+  const rows=text('div','','tag-admin-rows')
+  const row=(t)=>{
+   const r=text('div','','tag-admin-row')
+   const name=document.createElement('input');name.value=t?.name||'';name.maxLength=30;name.placeholder='ชื่อ tag';name.setAttribute('aria-label','ชื่อ tag')
+   const color=document.createElement('select');color.setAttribute('aria-label','สี')
+   for(const c of TAG_COLORS){const o=text('option',TAG_COLOR_NAMES[c]);o.value=c;color.append(o)}
+   color.value=tagColor(t?.color)
+   const sort=document.createElement('input');sort.type='number';sort.value=t?.sort_order??'';sort.className='tag-sort';sort.setAttribute('aria-label','ลำดับ')
+   const save=text('button',t?'บันทึก':'＋ เพิ่ม');save.type='button'
+   save.addEventListener('click',async()=>{
+    save.disabled=true
+    try{await api('tag_upsert',{id:t?.id||'',name:name.value,color:color.value,sort_order:sort.value});await refreshTags();await reloadFlags();renderFilters();draw()}
+    catch(e){note(e.message,true);save.disabled=false}
+   })
+   r.append(name,color,sort,save)
+   if(t){
+    const arc=text('button','เลิกใช้','subtle');arc.type='button'
+    arc.addEventListener('click',async()=>{
+     if(!confirm('เลิกใช้ tag “'+t.name+'”? ป้ายนี้จะหายจากทุกเคส'))return
+     try{await api('tag_archive',{id:t.id});if(filter==='tag:'+t.id)pickFilter('all');await refreshTags();await reloadFlags();renderFilters();draw()}
+     catch(e){note(e.message,true)}
+    })
+    r.append(arc)
+   }
+   return r
+  }
+  for(const t of tagState.tags)rows.append(row(t))
+  rows.append(row(null))
+  dlg.replaceChildren(head,rows)
+ }
+ draw();if(!dlg.open)dlg.showModal()
+}
+
+// lead card: บล็อก "การติดตาม" — ปุ่มลัด + กำหนดเอง + โน้ต + เสร็จแล้ว · บันทึกผ่าน case_follow
+// ★ ไม่ต้องรับเคสก่อน (ต่างจากฟอร์มข้อมูลลูกค้า) ด่านคือ can_read ในฐาน
+function renderFollow(){
+ const box=$('follow-block');if(!box||!detail)return
+ const c=detail.conversation,s=detail.state||{},f=flags[selected]||{}
+ const open=c.status!=='resolved'
+ const at=s.follow_up_at||null
+ box.replaceChildren()
+ const head=text('div','','follow-head');head.append(text('h3','การติดตาม'))
+ const fb=followBadge(at)
+ head.append(text('span',at?date(at):'ยังไม่ได้ตั้ง','follow-when'+(fb?.overdue?' overdue':'')))
+ box.append(head)
+ const presets=text('div','','follow-presets')
+ const custom=document.createElement('input');custom.type='datetime-local';custom.value=local(at);custom.setAttribute('aria-label','วันเวลาติดตาม (เวลาไทย)')
+ const noteBox=document.createElement('textarea');noteBox.rows=2;noteBox.maxLength=500;noteBox.placeholder='โน้ตสั้น ๆ เช่น โทรหลังเลิกงาน';noteBox.value=f.follow_note||'';noteBox.setAttribute('aria-label','โน้ตการติดตาม')
+ const save=text('button','บันทึกการติดตาม','full');save.type='button'
+ const doneBtn=text('button','✓ เสร็จแล้ว','subtle full');doneBtn.type='button';doneBtn.hidden=!at
+ for(const p of followPresets()){
+  const b=text('button',p.label,'follow-preset');b.type='button'
+  b.addEventListener('click',()=>{custom.value=local(p.at)})
+  presets.append(b)
+ }
+ const submit=async(when,noteValue)=>{
+  for(const el of [save,doneBtn])el.disabled=true
+  try{
+   const r=await api('case_follow',{conversation_id:selected,follow_up_at:when||'',note:noteValue,version:detail.state?.version})
+   // ★ เก็บ version ใหม่ ไม่งั้นกด "บันทึกข้อมูล" ต่อจะชน version_conflict
+   detail.state={...(detail.state||{}),follow_up_at:r.follow_up_at,version:r.version}
+   flags={...flags,[selected]:{...(flags[selected]||{}),follow_up_at:r.follow_up_at,follow_note:r.follow_note}}
+   renderDue(detail.state,detail.conversation.status==='resolved');renderFollow();renderList();await refreshCounts()
+   note(when?'ตั้งการติดตามแล้ว':'ปิดการติดตามแล้ว')
+  }catch(e){note(e.message,true);for(const el of [save,doneBtn])el.disabled=false}
+ }
+ save.addEventListener('click',()=>submit(utc(custom.value),noteBox.value))
+ doneBtn.addEventListener('click',()=>submit('', ''))
+ for(const el of [custom,noteBox,save,doneBtn,...presets.children])el.disabled=!open
+ const when=text('label','กำหนดเอง · เวลาไทย');when.append(custom)
+ const noteLabel=text('label','โน้ต');noteLabel.append(noteBox)
+ box.append(presets,when,noteLabel,save,doneBtn)
 }
 
 function renderChannels(){

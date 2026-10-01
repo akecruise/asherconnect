@@ -43,6 +43,7 @@ import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from
 import { createUserAdmin } from './services/user-admin/service.mjs'
 import { extractCustomerContact } from './lib/customer-contact-extraction.mjs'
 import { TIKTOK_OAUTH_CALLBACK_PATH, parseTikTokOAuthCallback } from './lib/tiktok-oauth.mjs'
+import { flagRpc } from './lib/case-flags.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -1625,6 +1626,12 @@ async function handleCommand(req, res) {
   if (LOG_ACTIONS.has(input.action)) {
     return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
   }
+
+  // ★ ติดดาว · การติดตาม · Tag — ทางเดียวกับหน้าสถิติ ยิงด้วย token ของคนที่ล็อกอิน
+  //   ด่านสิทธิ์ (can_read, role, test_only) อยู่ที่ inbox.* ใน sql/202610011000_contact_star_tags.sql
+  //   ไม่ผ่าน connect_private.api — ตัวบน VPS ใหม่กว่า repo ห้ามเขียนทับ
+  const flag = flagRpc(input.action, input.data)
+  if (flag) return json(res, 200, await rpcDirect(accessToken, flag.fn, flag.body))
 
   // ★ คลังคำตอบ (Phase 6) — เดินผ่าน Answer Service เป็นชั้นกลางเท่านั้น
   //   ด่านสิทธิ์จริงอยู่ในฟังก์ชัน inbox.ah_* ของฐาน (sales อ่าน approved · manager แก้ ·

@@ -297,3 +297,9 @@ _ledger.sql
 # ── ห้องว่าง/ราคาสดจาก Asher CRM ──
 # ★ ต้องอยู่หลัง 202609261000_media_library (ใช้ inbox.media_library_role)
 202609261100_unit_availability.sql
+
+# ── ติดดาว · การติดตาม · Tag แบบ LINE OA (docs/handoff/2026-10-01-star-follow-tags.md) ──
+# ★ ไม่แตะ connect_private.api — ฟังก์ชันแยกใน inbox เรียกผ่าน rpcDirect แบบ queue_counts
+#   คอลัมน์ select ของ inbox.flag_list คัดจากกิ่ง list ของ 202609221400_manual_name_guard
+#   ก่อนลง VPS ต้องเทียบกับ pg_get_functiondef ของ connect_private.api ตัวบน VPS
+202610011000_contact_star_tags.sql

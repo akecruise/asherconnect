@@ -91,6 +91,14 @@
   --messenger-outbound: #0084FF;
   --messenger-outbound-text: #FFFFFF;
   --messenger-outbound-meta: rgba(255,255,255,.82);
+  /* tag palette (ติดดาว/Tag) — ไม่มีแดง แดงสงวนไว้ให้ SLA */
+  --tag-purple-bg: #F5F0FF;
+  --tag-purple-fg: #6D28D9;
+  --tag-pink-bg: #FDF2F8;
+  --tag-pink-fg: #BE185D;
+  --tag-teal-bg: #F0FDFA;
+  --tag-teal-fg: #0F766E;
+  --star: #D97706;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -150,6 +158,13 @@
   --messenger-outbound: #1877F2;
   --messenger-outbound-text: #FFFFFF;
   --messenger-outbound-meta: rgba(255,255,255,.82);
+  --tag-purple-bg: #2D2145;
+  --tag-purple-fg: #D5BFFF;
+  --tag-pink-bg: #3B1830;
+  --tag-pink-fg: #F9A8D4;
+  --tag-teal-bg: #0F2F2C;
+  --tag-teal-fg: #5EEAD4;
+  --star: #F5B860;
   }
 }
 
@@ -1334,3 +1349,77 @@ body.admin-view #lead-card { display: none }
 .ah-field { display: inline-flex; align-items: center; gap: 6px }
 .ah-field input[type="number"] { width: 84px }
 #ah-rule-note { margin-top: 10px }
+
+/* ── ติดดาว · ติดตาม · Tag ─────────────────────────────────────────────
+   การ์ดยังขาว สีอยู่ที่ป้ายเล็ก/ชิปเท่านั้น · เลยกำหนดติดตาม = อำพัน ไม่ใช่แดง
+   ★ แดงแบรนด์สงวนไว้ให้ SLA เกินเท่านั้น จึงไม่มีสีแดงใน palette ของ tag */
+.chat-row-star, .chat-head-star {
+  flex: none; border: none; background: transparent; padding: 0 2px; cursor: pointer;
+  color: var(--faint); font-size: 14px; line-height: 1;
+}
+.chat-row-star.on, .chat-head-star.on { color: var(--star) }
+.chat-row-star:hover, .chat-head-star:hover { color: var(--star) }
+.chat-row-star:focus-visible { outline: 2px solid var(--focus); border-radius: 4px }
+.chat-head-star { font-size: 18px }
+
+.tag-chip, .card-tag {
+  display: inline-flex; align-items: center; max-width: 9em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-radius: 999px; font-size: 11px; line-height: 1.4; padding: 1px 7px;
+}
+.card-tag { display: inline-block; flex: 0 1 auto; min-width: 0; max-width: 7em; font-size: 10px; padding: 0 6px }
+.card-tag.more { flex: none }
+.card-tag.more { background: var(--pill-gray-bg); color: var(--pill-gray-fg) }
+.tag-grey { background: var(--pill-gray-bg); color: var(--pill-gray-fg) }
+.tag-blue { background: var(--pill-blue-bg); color: var(--pill-blue-fg) }
+.tag-green { background: var(--pill-green-bg); color: var(--pill-green-fg) }
+.tag-amber { background: var(--pill-amber-bg); color: var(--pill-amber-fg) }
+.tag-purple { background: var(--tag-purple-bg); color: var(--tag-purple-fg) }
+.tag-pink { background: var(--tag-pink-bg); color: var(--tag-pink-fg) }
+.tag-teal { background: var(--tag-teal-bg); color: var(--tag-teal-fg) }
+
+.chat-row-flags { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden }
+.follow-badge { flex: none; margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap }
+.follow-badge.overdue { color: var(--pill-amber-fg); background: var(--pill-amber-bg); border-radius: 999px; padding: 0 6px }
+
+.chat-flags { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px }
+.tag-add { height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; color: var(--muted); border: 1px dashed var(--rule); background: transparent }
+.tag-add:hover { color: var(--ink); border-color: var(--accent-line) }
+
+.tag-picker {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  width: min(280px, calc(100vw - 32px)); padding: 8px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: 0 8px 24px var(--fresh-shadow), 0 2px 6px var(--fresh-shadow);
+}
+.tag-picker input[type=search] { width: 100% }
+.tag-picker-list { max-height: 240px; overflow-y: auto; margin: 6px 0; display: flex; flex-direction: column; gap: 2px }
+.tag-option { display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 6px; border-radius: 7px; cursor: pointer }
+.tag-option:hover { background: var(--paper) }
+.tag-create { text-align: left; border: none; background: transparent; color: var(--ink); font-size: 12px; padding: 6px }
+.tag-create:hover { background: var(--paper) }
+.tag-picker-foot { display: flex; justify-content: flex-end; gap: 6px }
+
+.tag-filter { flex: none; display: inline-flex }
+.tag-filter-menu { position: fixed; right: auto; width: 220px; max-height: min(320px, 60vh); overflow-y: auto }
+.chat-row.has-flags { height: 82px }
+
+.follow-block { margin: 16px 0; padding-top: 12px; border-top: 1px solid var(--rule-soft) }
+.follow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px }
+.follow-head h3 { margin: 0 }
+.follow-when { font-size: 12px; color: var(--muted) }
+.follow-when.overdue { color: var(--pill-amber-fg) }
+.follow-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px }
+.follow-preset { height: 26px; padding: 0 10px; border-radius: 999px; font-size: 12px }
+.follow-block label { margin: 10px 0 }
+.follow-block input, .follow-block textarea { width: 100% }
+.follow-block .full + .full { margin-top: 6px }
+
+.tag-admin { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); color: var(--ink) }
+.tag-admin-rows { display: flex; flex-direction: column; gap: 6px }
+.tag-admin-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
+.tag-admin-row { padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft) }
+.tag-admin-row input:not(.tag-sort) { flex: 1 1 100%; width: auto; min-width: 0 }
+.tag-admin-row select { flex: 0 0 auto; width: auto }
+.tag-admin-row .tag-sort { flex: 0 0 64px; width: 64px }
+.tag-admin-row button { flex: none; width: auto }
