@@ -37,6 +37,7 @@ import { classifyOnly, intentRow } from './bots/classify.mjs'
 import { formatNotify, notifyTargets } from './bots/notify.mjs'
 import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
+import { flagRpc } from './lib/case-flags.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -1040,6 +1041,12 @@ async function handleCommand(req, res) {
     return json(res, 200, await rpcDirect(accessToken, input.action, { p: input.data }))
   }
 
+  // ★ ติดดาว · การติดตาม · Tag — ทางเดียวกับหน้าสถิติ ยิงด้วย token ของคนที่ล็อกอิน
+  //   ด่านสิทธิ์ (can_read, role, test_only) อยู่ที่ inbox.* ใน sql/202610011000_contact_star_tags.sql
+  //   ไม่ผ่าน connect_private.api — ตัวบน VPS ใหม่กว่า repo ห้ามเขียนทับ
+  const flag = flagRpc(input.action, input.data)
+  if (flag) return json(res, 200, await rpcDirect(accessToken, flag.fn, flag.body))
+
   // Quick Reply management uses dedicated security-definer RPCs. The browser
   // only sends the user's session token; role checks remain in Supabase.
   if (input.action === 'quick_replies_list') {
@@ -1466,7 +1473,7 @@ async function quickReplyMedia(req, res, url) {
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
 const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
   '/privacy': 'privacy.html', '/meta-reviewer-avatar.png': 'meta-reviewer-avatar.png',
-  '/sla.mjs': 'sla.mjs', '/quick-replies.js': 'quick-replies.js', '/media-library.js': 'media-library.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
+  '/sla.mjs': 'sla.mjs', '/case-flags.mjs': 'case-flags.mjs', '/quick-replies.js': 'quick-replies.js', '/media-library.js': 'media-library.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
   '/quick-replies.css': 'quick-replies.css', '/quick-replies-admin.css': 'quick-replies-admin.css',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css',
   '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css' }
