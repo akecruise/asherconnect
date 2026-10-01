@@ -303,3 +303,7 @@ _ledger.sql
 #   คอลัมน์ select ของ inbox.flag_list คัดจากกิ่ง list ของ 202609221400_manual_name_guard
 #   ก่อนลง VPS ต้องเทียบกับ pg_get_functiondef ของ connect_private.api ตัวบน VPS
 202610011000_contact_star_tags.sql
+
+# ── หน้ารายชื่อติดต่อ + drawer ลูกค้า (อ่านอย่างเดียว ไม่แตะเวลาข้อความ) ──
+# ★ ต้องอยู่หลัง 202610011000_contact_star_tags (ใช้ inbox.flag_actor / flag_tags_of / flag_contact_of)
+202610021000_contacts_page.sql

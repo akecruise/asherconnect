@@ -109,7 +109,7 @@ for i in $(seq 1 20); do
   curl -fs -o /dev/null "http://127.0.0.1:$PORT/health" && break
   sleep 3
 done
-for p in / /app.js /case-flags.mjs; do
+for p in / /app.js /case-flags.mjs /contacts; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$p")
   echo "$p $code"
   [ "$code" = 200 ] || ok=0

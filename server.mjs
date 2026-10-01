@@ -1471,7 +1471,7 @@ async function quickReplyMedia(req, res, url) {
 
 // ไฟล์หน้าเว็บรับเฉพาะชื่อที่ตรงแบบเป๊ะ ไม่ประกอบ path จากสิ่งที่ผู้ใช้ส่งมา
 // ตัวชี้ขาดคือตารางกับ regex นี้ ไม่ใช่การกรอง ".." ทีหลัง ซึ่งพลาดได้หลายทาง
-const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
+const staticFiles = { '/': 'index.html', '/contacts': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css', '/login.css': 'login.css', '/fonts/plex.css': 'fonts/plex.css',
   '/privacy': 'privacy.html', '/meta-reviewer-avatar.png': 'meta-reviewer-avatar.png',
   '/sla.mjs': 'sla.mjs', '/case-flags.mjs': 'case-flags.mjs', '/quick-replies.js': 'quick-replies.js', '/media-library.js': 'media-library.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
   '/quick-replies.css': 'quick-replies.css', '/quick-replies-admin.css': 'quick-replies-admin.css',

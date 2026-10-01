@@ -59,3 +59,33 @@ test('lead form save still sends the current follow_up_at so save does not clear
   assert.match(app, /follow_up_at:detail\.state\?\.follow_up_at\|\|''/)
   assert.doesNotMatch(app, /\$\('followup'\)/)
 })
+
+import { STAGES, stageOf, slaBadge, contactsQuery, bulkSummary } from '../public/case-flags.mjs'
+
+test('stage codes match the database lifecycle function', () => {
+  const sql = readFileSync(new URL('../sql/202610021000_contacts_page.sql', import.meta.url), 'utf8')
+  const allowed = /v_stage not in \(([^)]*)\)/.exec(sql)[1].match(/'([a-z_]+)'/g).map(s => s.slice(1, -1))
+  assert.deepEqual(STAGES.map(s => s[0]), allowed)
+  assert.equal(stageOf('booking')[1], 'จอง')
+  assert.equal(stageOf('nope'), null)
+})
+
+test('SLA badge only translates the database verdict', () => {
+  assert.deepEqual(slaBadge('over', 25), { label: 'เกิน SLA', tone: 'over', title: 'ลูกค้ารอมา 25 นาที' })
+  assert.equal(slaBadge('near', 6).label, 'ใกล้เกิน')
+  assert.deepEqual(slaBadge('ok', null), { label: 'ปกติ', tone: 'ok', title: 'ปกติ' })
+  assert.equal(slaBadge(undefined).tone, 'ok')
+})
+
+test('contacts query drops empty filters and clamps paging', () => {
+  assert.deepEqual(contactsQuery({ search: '  ', stage: 'new', sla: '', starred: false, sort: 'x', offset: -5 }),
+    { sort: 'desc', offset: 0, stage: 'new' })
+  assert.deepEqual(contactsQuery({ assignee: 'none', starred: true, sort: 'asc', offset: 50 }),
+    { sort: 'asc', offset: 50, assignee: 'none', starred: true })
+})
+
+test('bulk summary reports real failures instead of a blanket success', () => {
+  assert.equal(bulkSummary('ติดแท็ก', [{ ok: true }, { ok: true }]), 'ติดแท็กแล้ว 2 รายการ')
+  assert.equal(bulkSummary('มอบหมาย', [{ ok: true }, { ok: false, code: 'claim_required' }, { ok: false, code: 'claim_required' }], { claim_required: 'ยังไม่มีคนรับเคส' }),
+    'มอบหมายแล้ว 1 รายการ · ไม่สำเร็จ 2: ยังไม่มีคนรับเคส 2')
+})

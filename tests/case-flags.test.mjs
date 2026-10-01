@@ -15,8 +15,9 @@ test('actions outside the allow-list do not reach the database', () => {
 })
 
 test('every allow-listed action exists in the migration and is granted to authenticated', () => {
-  const sql = readFileSync(new URL('../sql/202610011000_contact_star_tags.sql', import.meta.url), 'utf8')
-  const grant = /grant execute on function([\s\S]*?)to authenticated/.exec(sql)[1]
+  const files = ['202610011000_contact_star_tags.sql', '202610021000_contacts_page.sql']
+  const sql = files.map(f => readFileSync(new URL('../sql/' + f, import.meta.url), 'utf8')).join('\n')
+  const grant = [...sql.matchAll(/grant execute on function([\s\S]*?)to authenticated/g)].map(m => m[1]).join(' ')
   for (const action of FLAG_ACTIONS) {
     assert.match(sql, new RegExp(`create or replace function inbox\\.${action}\\(p jsonb`), action)
     assert.match(grant, new RegExp(`inbox\\.${action}\\(jsonb\\)`), action + ' granted')
@@ -26,4 +27,12 @@ test('every allow-listed action exists in the migration and is granted to authen
 test('server routes flag actions through the allow-list', () => {
   const server = readFileSync(new URL('../server.mjs', import.meta.url), 'utf8')
   assert.match(server, /flagRpc\(input\.action, input\.data\)/)
+})
+
+test('contacts page migration only reads — never writes messages or their timestamps', () => {
+  const sql = readFileSync(new URL('../sql/202610021000_contacts_page.sql', import.meta.url), 'utf8')
+    .replace(/--[^\n]*/g, '')
+  assert.doesNotMatch(sql, /\b(update|delete\s+from|insert\s+into|alter\s+table|truncate)\s+inbox\.message\b/i)
+  assert.doesNotMatch(sql, /\bcreated_at\s*=/i)
+  assert.doesNotMatch(sql, /\bcreate\s+table\b/i)
 })
