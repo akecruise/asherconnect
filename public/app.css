@@ -1311,11 +1311,61 @@ body.lead-open .lead-card { transform: none; visibility: visible }
 .follow-block input, .follow-block textarea { width: 100% }
 .follow-block .full + .full { margin-top: 6px }
 
-.tag-admin { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); color: var(--ink) }
-.tag-admin-rows { display: flex; flex-direction: column; gap: 6px }
-.tag-admin-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center }
-.tag-admin-row { padding-bottom: 6px; border-bottom: 1px solid var(--rule-soft) }
-.tag-admin-row input:not(.tag-sort) { flex: 1 1 100%; width: auto; min-width: 0 }
-.tag-admin-row select { flex: 0 0 auto; width: auto }
-.tag-admin-row .tag-sort { flex: 0 0 64px; width: 64px }
-.tag-admin-row button { flex: none; width: auto }
+/* หน้าจัดการแท็ก แบบ LINE OA Manager — ตาราง แท็ก | จำนวนแชท | จัดการ · ฟอร์มสร้าง/แก้ */
+.tag-admin {
+  width: min(720px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 32px));
+  padding: 0; border: 1px solid var(--rule); border-radius: 12px;
+  background: var(--surface); color: var(--ink); overflow: auto;
+}
+.tag-admin::backdrop { background: var(--scrim) }
+.tag-admin-head {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px;
+  padding: 14px 16px; background: var(--surface); border-bottom: 1px solid var(--rule-soft);
+}
+.tag-admin-head h2 { margin: 0; font-size: 17px; flex: 1 }
+.tag-admin-head .icon-btn { width: 36px; height: 36px; padding: 0; border: none; background: transparent; font-size: 20px; color: var(--muted) }
+.tag-admin-head .icon-btn:hover { background: var(--rule-soft); color: var(--ink) }
+.tag-admin-tools { display: flex; gap: 8px; padding: 14px 16px 0 }
+.tag-admin-tools input { flex: 1; min-width: 0; width: auto }
+.tag-admin-tools .primary { flex: none; width: auto; white-space: nowrap }
+.tag-admin-sub { margin: 8px 16px 4px; font-size: 12px }
+.tag-admin-table { padding: 0 16px 16px }
+.tag-admin-tr {
+  display: grid; grid-template-columns: minmax(0, 1fr) 96px 136px; align-items: center; gap: 8px;
+  min-height: 48px; border-bottom: 1px solid var(--rule-soft);
+}
+.tag-admin-th { min-height: 36px; font-size: 12px; color: var(--muted) }
+.tag-admin-name { min-width: 0 }
+.tag-admin-name .tag-chip { max-width: 100%; font-size: 13px; padding: 2px 10px }
+.tag-admin-count, .tag-admin-th span:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums }
+.tag-admin-actions { display: flex; justify-content: flex-end; gap: 2px }
+.tag-admin-actions button { width: auto; padding: 6px 10px; font-size: 13px }
+.tag-admin-actions .danger:hover { color: var(--urgent) }
+.tag-admin-empty { padding: 24px 0; text-align: center }
+.tag-admin-form { padding: 4px 16px 16px }
+.tag-admin-name-row { position: relative }
+.tag-admin-name-row input { width: 100%; padding-right: 56px }
+.tag-admin-counter { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 12px }
+.tag-admin-colors { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; padding: 0; border: 0 }
+.tag-admin-colors legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding: 0 }
+.tag-swatch {
+  position: relative; display: grid; place-items: center; width: 36px; height: 36px; margin: 0;
+  border-radius: 50%; cursor: pointer; border: 2px solid transparent;
+}
+.tag-swatch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer }
+/* วงในเป็นสีตัวอักษรของแท็ก (เข้ม) ให้แยกสีออกง่าย · วงนอกเป็นสีพื้นของแท็ก · ที่เลือกอยู่มีขอบเข้ม */
+.tag-swatch::before { content: ""; width: 20px; height: 20px; border-radius: 50%; background: currentColor }
+.tag-swatch:has(input:checked) { border-color: var(--ink) }
+.tag-swatch:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px }
+.tag-admin-form label:not(.tag-swatch) { display: block }
+.tag-admin-form .tag-sort { display: block; width: 96px; margin-top: 6px }
+.tag-admin-preview { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; font-size: 12px }
+.tag-admin-preview .tag-chip { font-size: 13px; padding: 2px 10px }
+.tag-admin-error { min-height: 18px; margin: 6px 0; color: var(--urgent); font-size: 13px }
+.tag-admin-foot { display: flex; justify-content: flex-end; gap: 8px }
+.tag-admin-foot button { width: auto; min-width: 96px }
+@media (max-width: 600px) {
+  .tag-admin { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0 }
+  .tag-admin-tr { grid-template-columns: minmax(0, 1fr) 56px 112px }
+  .tag-admin-actions button { padding: 6px 8px }
+}

@@ -705,8 +705,8 @@ function tagFilterChip(){
    menu.append(it)
   }
   if(!tagState.tags.length)menu.append(text('p','ยังไม่มี tag','muted'))
-  if(tagState.can_manage){
-   const m=text('button','จัดการ Tag…','chip-menu-item');m.type='button'
+  if(tagState.can_manage||tagState.can_create){
+   const m=text('button','จัดการแท็ก…','chip-menu-item');m.type='button'
    m.addEventListener('click',()=>{menu.remove();openTagAdmin()})
    menu.append(m)
   }
@@ -717,44 +717,109 @@ function tagFilterChip(){
  return wrap
 }
 
-// หน้าจัดการ Tag (manager/admin): ชื่อ · สีจาก palette · ลำดับ · เลิกใช้
+// หน้าจัดการแท็ก แบบ LINE OA Manager (ตั้งค่า → แท็ก)
+// รายการ: ค้นหา · ชิปสี · จำนวนแชท · แก้ไข/ลบ  |  ฟอร์ม: ชื่อ (นับ 0/30) · สี 7 สี · ตัวอย่างสด · ลำดับ
+// ★ สิทธิ์ตามฐาน (inbox.tag_upsert / tag_archive): ทุกคนสร้างได้ · แก้/ลบ/เรียงลำดับเฉพาะ manager/admin
+//   การซ่อนปุ่มตรงนี้เป็นแค่หน้าตา ด่านจริงอยู่ในฐาน
 function openTagAdmin(){
  let dlg=$('tag-admin')
- if(!dlg){dlg=document.createElement('dialog');dlg.id='tag-admin';dlg.className='tag-admin';document.body.append(dlg)}
- const draw=()=>{
-  const head=text('div','','section-heading');const x=text('button','×');x.type='button';x.setAttribute('aria-label','ปิด')
-  x.addEventListener('click',()=>dlg.close());head.append(text('h2','จัดการ Tag'),x)
-  const rows=text('div','','tag-admin-rows')
-  const row=(t)=>{
-   const r=text('div','','tag-admin-row')
-   const name=document.createElement('input');name.value=t?.name||'';name.maxLength=30;name.placeholder='ชื่อ tag';name.setAttribute('aria-label','ชื่อ tag')
-   const color=document.createElement('select');color.setAttribute('aria-label','สี')
-   for(const c of TAG_COLORS){const o=text('option',TAG_COLOR_NAMES[c]);o.value=c;color.append(o)}
-   color.value=tagColor(t?.color)
-   const sort=document.createElement('input');sort.type='number';sort.value=t?.sort_order??'';sort.className='tag-sort';sort.setAttribute('aria-label','ลำดับ')
-   const save=text('button',t?'บันทึก':'＋ เพิ่ม');save.type='button'
-   save.addEventListener('click',async()=>{
-    save.disabled=true
-    try{await api('tag_upsert',{id:t?.id||'',name:name.value,color:color.value,sort_order:sort.value});await refreshTags();await reloadFlags();renderFilters();draw()}
-    catch(e){note(e.message,true);save.disabled=false}
-   })
-   r.append(name,color,sort,save)
-   if(t){
-    const arc=text('button','เลิกใช้','subtle');arc.type='button'
-    arc.addEventListener('click',async()=>{
-     if(!confirm('เลิกใช้ tag “'+t.name+'”? ป้ายนี้จะหายจากทุกเคส'))return
-     try{await api('tag_archive',{id:t.id});if(filter==='tag:'+t.id)pickFilter('all');await refreshTags();await reloadFlags();renderFilters();draw()}
-     catch(e){note(e.message,true)}
-    })
-    r.append(arc)
-   }
-   return r
-  }
-  for(const t of tagState.tags)rows.append(row(t))
-  rows.append(row(null))
-  dlg.replaceChildren(head,rows)
+ if(!dlg){dlg=document.createElement('dialog');dlg.id='tag-admin';dlg.className='tag-admin';dlg.setAttribute('aria-labelledby','tag-admin-title');document.body.append(dlg)}
+ let query=''
+ const manage=()=>tagState.can_manage,create=()=>tagState.can_create
+ const after=async()=>{await refreshTags();await reloadFlags();renderFilters()}
+ const head=(title,back)=>{
+  const h=text('div','','tag-admin-head')
+  if(back){const b=text('button','←','icon-btn tag-admin-back');b.type='button';b.setAttribute('aria-label','กลับไปรายการแท็ก');b.addEventListener('click',back);h.append(b)}
+  const t=text('h2',title);t.id='tag-admin-title';h.append(t)
+  const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dlg.close());h.append(x)
+  return h
  }
- draw();if(!dlg.open)dlg.showModal()
+ function list(){
+  const tools=text('div','','tag-admin-tools')
+  const q=document.createElement('input');q.type='search';q.placeholder='ค้นหาแท็ก';q.value=query;q.setAttribute('aria-label','ค้นหาแท็ก')
+  tools.append(q)
+  if(create()){const add=text('button','＋ สร้างแท็ก','primary');add.type='button';add.addEventListener('click',()=>form(null));tools.append(add)}
+  const sub=text('p','','tag-admin-sub muted')
+  const table=text('div','','tag-admin-table');table.setAttribute('role','table');table.setAttribute('aria-label','รายการแท็ก')
+  const drawRows=()=>{
+   const rows=matchTags(tagState.tags,query).hits
+   sub.textContent='ทั้งหมด '+tagState.tags.length+' แท็ก'+(query?' · พบ '+rows.length:'')+' · แท็กใช้ร่วมกันทั้งทีม ติดได้หลายแท็กต่อลูกค้า'
+   const hr=text('div','','tag-admin-tr tag-admin-th');hr.setAttribute('role','row')
+   for(const c of ['แท็ก','จำนวนแชท','']){const h=text('span',c);h.setAttribute('role','columnheader');hr.append(h)}
+   table.replaceChildren(hr)
+   for(const t of rows){
+    const r=text('div','','tag-admin-tr');r.setAttribute('role','row')
+    const name=text('span','','tag-admin-name');name.setAttribute('role','cell');name.append(tagChip(t))
+    const n=text('span',String(t.count??0),'tag-admin-count');n.setAttribute('role','cell');n.title='แชทที่ยังไม่ปิดซึ่งติดแท็กนี้'
+    const act=text('span','','tag-admin-actions');act.setAttribute('role','cell')
+    if(manage()){
+     const e=text('button','แก้ไข','subtle');e.type='button';e.setAttribute('aria-label','แก้ไขแท็ก '+t.name);e.addEventListener('click',()=>form(t))
+     const d=text('button','ลบ','subtle danger');d.type='button';d.setAttribute('aria-label','ลบแท็ก '+t.name)
+     d.addEventListener('click',async()=>{
+      const used=t.count?' แท็กนี้จะหายจากแชท '+t.count+' รายการ':''
+      if(!confirm('ลบแท็ก “'+t.name+'”?'+used))return
+      d.disabled=true
+      try{await api('tag_archive',{id:t.id});if(filter==='tag:'+t.id)pickFilter('all');await after();note('ลบแท็ก “'+t.name+'” แล้ว');drawRows()}
+      catch(err){note(err.message,true);d.disabled=false}
+     })
+     act.append(e,d)
+    }
+    r.append(name,n,act);table.append(r)
+   }
+   if(!rows.length)table.append(text('p',query?'ไม่พบแท็ก “'+query+'”':'ยังไม่มีแท็ก','muted tag-admin-empty'))
+  }
+  q.addEventListener('input',()=>{query=q.value;drawRows()})
+  drawRows()
+  dlg.replaceChildren(head('จัดการแท็ก'),tools,sub,table)
+  q.focus()
+ }
+ function form(t){
+  const editing=!!t
+  const f=document.createElement('form');f.className='tag-admin-form';f.noValidate=true
+  const nameLabel=text('label','ชื่อแท็ก')
+  const nameRow=text('div','','tag-admin-name-row')
+  const name=document.createElement('input');name.maxLength=30;name.required=true;name.value=t?.name||'';name.placeholder='เช่น สนใจ 1BR'
+  const counter=text('span','','tag-admin-counter muted')
+  nameRow.append(name,counter);nameLabel.append(nameRow)
+  const colorBox=text('fieldset','','tag-admin-colors');colorBox.append(text('legend','สี'))
+  let color=tagColor(t?.color)
+  const preview=text('div','','tag-admin-preview')
+  const drawPreview=()=>{counter.textContent=name.value.trim().length+'/30';preview.replaceChildren(text('span','ตัวอย่าง','muted'),tagChip({name:name.value.trim()||'ชื่อแท็ก',color}))}
+  for(const c of TAG_COLORS){
+   const l=text('label','','tag-swatch tag-'+c);l.title=TAG_COLOR_NAMES[c]
+   const r=document.createElement('input');r.type='radio';r.name='tag-color';r.value=c;r.checked=c===color;r.setAttribute('aria-label',TAG_COLOR_NAMES[c])
+   r.addEventListener('change',()=>{color=c;drawPreview()})
+   l.append(r);colorBox.append(l)
+  }
+  const fields=[nameLabel,colorBox]
+  let sort=null
+  if(manage()){
+   const sl=text('label','ลำดับ (น้อยขึ้นก่อน)');sort=document.createElement('input');sort.type='number';sort.className='tag-sort';sort.value=t?.sort_order??''
+   sl.append(sort);fields.push(sl)
+  }
+  const err=text('p','','tag-admin-error');err.setAttribute('role','alert')
+  const cancel=text('button','ยกเลิก','subtle');cancel.type='button';cancel.addEventListener('click',list)
+  const save=text('button',editing?'บันทึก':'สร้าง','primary');save.type='submit'
+  const foot=text('div','','tag-admin-foot');foot.append(cancel,save)
+  name.addEventListener('input',drawPreview)
+  f.addEventListener('submit',async e=>{
+   e.preventDefault();err.textContent=''
+   const v=name.value.trim()
+   if(!v){err.textContent='กรุณาใส่ชื่อแท็ก';name.focus();return}
+   const dup=tagState.tags.find(x=>x.name.trim().toLowerCase()===v.toLowerCase()&&x.id!==t?.id)
+   if(dup&&editing){err.textContent='มีแท็กชื่อนี้อยู่แล้ว';name.focus();return}
+   save.disabled=true
+   try{
+    const r=await api('tag_upsert',{id:t?.id||'',name:v,color,sort_order:sort?sort.value:''})
+    await after();note(editing?'บันทึกแท็กแล้ว':r.created===false?'มีแท็ก “'+v+'” อยู่แล้ว':'สร้างแท็ก “'+v+'” แล้ว');list()
+   }catch(x){err.textContent=x.code==='tag_exists'?'มีแท็กชื่อนี้อยู่แล้ว':x.message;save.disabled=false}
+  })
+  f.append(...fields,preview,err,foot)
+  drawPreview()
+  dlg.replaceChildren(head(editing?'แก้ไขแท็ก':'สร้างแท็ก',list),f)
+  name.focus()
+ }
+ list();if(!dlg.open)dlg.showModal()
 }
 
 // lead card: บล็อก "การติดตาม" — ปุ่มลัด + กำหนดเอง + โน้ต + เสร็จแล้ว · บันทึกผ่าน case_follow
