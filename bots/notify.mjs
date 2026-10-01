@@ -45,6 +45,11 @@ export const withTestPrefix = (text, isTest) => {
 
 /** สีของหัวข้อบอกความเร่งด่วนตั้งแต่บรรทัดแรก ไม่ต้องอ่านจบถึงจะรู้ */
 function headline(p) {
+  // ★ follow = ลูกค้ากดเพิ่มเพื่อน ยังไม่ได้พิมพ์อะไร — ห้ามขึ้นว่า "มีคนทัก"
+  //   ไม่งั้นทีมเปิด chat.line.biz แล้วไม่เจอข้อความ นึกว่าระบบแจ้งมั่ว
+  if (p.kind === 'follow') {
+    return withTestPrefix(`👋 มีคนเพิ่มเพื่อน${p.channel_label ?? ''} (${bangkok()} น.)`, p.is_test)
+  }
   const line = p.kind === 'watchdog'
     ? `🟠 ค้างตอบ ${p.min_since_msg ?? '?'} นาที (${bangkok()} น.)`
     : `${p.phone || p.line_id || p.verbatim_repeat ? '🔴' : p.reply_go ? '🟡' : '🟠'} มีคนทัก${p.channel_label ?? ''} (${bangkok()} น.)`
@@ -53,7 +58,8 @@ function headline(p) {
 
 function botLine(p) {
   if (p.kind === 'watchdog') return 'ยังไม่มีใครตอบ'
-  if (!p.reply_go) return `ไม่ตอบ (${p.reply_reason}) → คนต้องตอบ`
+  if (p.kind === 'follow') return 'ยังไม่ได้ทัก ไม่ต้องตอบ (ถ้าเขาพิมพ์มาจะแจ้งอีกรอบ)'
+  if (!p.reply_go) return `ไม่ตอบ (${p.reply_reason ?? 'ไม่ระบุเหตุผล'}) → คนต้องตอบ`
   if (p.wait_min) return `รอคนตอบ ${p.wait_min} นาที ถ้าไม่มีใครตอบบอทจะตอบเอง`
   return `จะตอบใน ${p.delay_sec ?? 0} วิ`
 }
@@ -62,7 +68,7 @@ export function formatNotify(payload = {}, { inboxUrl = null } = {}) {
   const p = payload ?? {}
   const who = [
     `👤 ${p.display_name ? 'คุณ ' + p.display_name : 'ลูกค้า'}`,
-    p.kind === 'watchdog' ? null : (p.is_new_chat ? 'แชทใหม่' : 'แชทเดิม'),
+    p.kind === 'watchdog' || p.kind === 'follow' ? null : (p.is_new_chat ? 'แชทใหม่' : 'แชทเดิม'),
     p.verbatim_repeat ? 'ถามซ้ำคำต่อคำ' : null,
     p.queued ? 'รวมส่งรอบ digest' : null,
   ].filter(Boolean).join(' · ')
@@ -72,7 +78,8 @@ export function formatNotify(payload = {}, { inboxUrl = null } = {}) {
     who,
     p.topic ? `📌 เรื่อง: ${p.topic}` : null,
     p.ad_title ? 'ad: ' + String(p.ad_title).slice(0, 50) : null,
-    p.text ? 'ข้อความ: ' + String(p.text).slice(0, 200) : null,
+    // follow ไม่มีข้อความจากลูกค้า — text ของ follow เป็นแค่ป้ายที่ฐานใส่มา
+    p.text && p.kind !== 'follow' ? 'ข้อความ: ' + String(p.text).slice(0, 200) : null,
     p.phone ? 'เบอร์: ' + p.phone : null,
     p.line_id ? 'LINE: ' + p.line_id : null,
     'บอท: ' + botLine(p),

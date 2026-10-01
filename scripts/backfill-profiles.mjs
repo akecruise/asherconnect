@@ -61,6 +61,7 @@ async function syncMessengerName(row, displayName) {
                'Content-Profile': 'inbox', 'Accept-Profile': 'inbox' },
     body: JSON.stringify({ p_data: {
       channel: row.channel,
+      account_key: row.account_key,
       people: [{ external_id: row.external_id, name: displayName }],
     } }),
     signal: AbortSignal.timeout(20000),

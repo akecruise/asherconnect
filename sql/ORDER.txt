@@ -297,3 +297,6 @@ _ledger.sql
 # ── ห้องว่าง/ราคาสดจาก Asher CRM ──
 # ★ ต้องอยู่หลัง 202609261000_media_library (ใช้ inbox.media_library_role)
 202609261100_unit_availability.sql
+
+# Node contact extraction -> scoped DB write -> CRM outbox
+20260929103510_contact_receive_contract.sql

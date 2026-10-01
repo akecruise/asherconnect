@@ -263,8 +263,10 @@ async function loadList(){const seq=++listSequence
  if(seq!==listSequence)return
  const projectId=isProject?projectIdFor(PROJECT_CHIPS.find(([k])=>k===filter)?.[2]):null
  const page=isProject?data.filter(x=>x.project_id===projectId):data
+ const hasNext=data.length>50
  items=page.slice(0,50)
- $('next').disabled=data.length<=50;$('previous').disabled=offset===0
+ $('next').disabled=!hasNext;$('previous').disabled=offset===0
+ $('page-status').textContent=`หน้า ${Math.floor(offset/50)+1}${hasNext?' · มีหน้าถัดไป':''}`
  renderList();await refreshCounts()}
 // ชื่อย่อโครงการบนแท็ก — ย้อนจาก project_id ของแถวไปหารหัสโครงการ แล้วเทียบกับชิปที่มีอยู่แล้ว
 // ไม่ออกแบบใหม่: ใช้ป้ายเดียวกับที่อยู่บนชิปตัวกรอง (Naii/Vibe) ให้อ่านตรงกันทั้งหน้า

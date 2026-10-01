@@ -1273,6 +1273,7 @@ body.lead-open .lead-card { transform: none; visibility: visible }
 /* ปุ่มเองยังใช้ padding ของ <button> ฐาน (10px 13px) ซึ่งหนาเกินไปสำหรับแถบตรึงบาง ๆ นี้
    บีบเฉพาะที่นี่ ไม่ไปแตะ <button> ฐานที่ใช้ทั่วแอป */
 .queue > .paging button { padding: 5px 11px; font-size: 11px; border-radius: 6px }
+.queue > .paging #page-status { flex: 1; min-width: 0; text-align: center; color: var(--muted); font-size: 11px; line-height: 26px }
 
 /* Quick Replies popup */
 .quick-replies-popover { width: min(500px, calc(100vw - 24px)); max-height: min(70vh, 520px); overflow: auto; padding: 10px; z-index: 20 }

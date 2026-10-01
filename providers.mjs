@@ -266,7 +266,7 @@ function messengerEvents(body, config) {
       }
 
       if (!e.sender?.id) continue
-      const withUser = { ...base, external_id: e.sender.id, customer_psid: e.sender.id }
+      const withUser = { ...base, external_id: e.sender.id, customer_psid: e.sender.id, source_type: 'user' }
       const referral = e.referral || e.postback?.referral || e.message?.referral || null
       const adId = referral?.ad_id ?? null
       const adTitle = referral?.ads_context_data?.ad_title ?? null

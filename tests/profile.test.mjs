@@ -109,13 +109,13 @@ test('Messenger มีแต่ชื่อต้น — ไม่ได้ช�
   assert.equal(out.display_name, 'Ann')
 })
 
-test('Messenger error code 100 — นับเป็น not_found ไม่ใช่ error', async () => {
+test('Messenger code 100 with a failed fallback stays retryable', async () => {
   _resetProfileCache()
   const out = await fetchProfile({
     channel: 'messenger', externalId: '2449', config: FB,
     deps: { log: silent, fetch: async () => res(400, { error: { code: 100, message: 'does not exist' } }) },
   })
-  assert.equal(out.status, 'not_found')
+  assert.equal(out.status, 'error')
 })
 
 test('Messenger profile ไม่มีสิทธิ์ — ใช้ Page Conversations participants แทน', async () => {

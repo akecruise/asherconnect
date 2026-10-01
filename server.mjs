@@ -895,6 +895,7 @@ async function writeProfile(config, externalId, profile) {
     await rpcDirect(service, 'sync_contact_profile', {
       p_data: {
         channel: config.channel,
+        account_key: config.inbox_id,
         people: [{ external_id: externalId, name: profile.display_name }],
       },
     }).catch(e => log.warn('messenger_profile_backfill_failed', { reason: e.message }))
