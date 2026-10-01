@@ -1,0 +1,11 @@
+[Unit]
+Description=Check LINE Official Account Manager replies every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Unit=asher-line-oa-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,33 @@
+@page{size:A4;margin:15mm}
+*{box-sizing:border-box}
+body{margin:0;background:#edf1f3;color:#20303b;font:12px/1.6 "IBM Plex Sans Thai",Tahoma,sans-serif}
+.quote-actions{max-width:795px;margin:16px auto 0;display:flex;align-items:center;justify-content:space-between;gap:12px;color:#526574}
+.quote-actions button{border:0;border-radius:8px;background:#173f58;color:#fff;padding:10px 16px;font:600 13px "IBM Plex Sans Thai",Tahoma,sans-serif;cursor:pointer}
+.quote-sheet{max-width:795px;min-height:1120px;margin:16px auto 28px;padding:45px 50px;background:#fff;box-shadow:0 6px 25px #162c3d20}
+.quote-head{display:flex;justify-content:space-between;gap:18px;border-bottom:2px solid #173f58;padding-bottom:17px}
+.quote-head>div:first-child{min-width:200px;color:#173f58}
+.quote-logo{display:flex;align-items:center;gap:8px}
+.quote-logo img{display:block;object-fit:contain}
+.quote-head small{display:block;margin-top:8px;color:#657785;font-size:10px}
+.quote-title{text-align:right}
+.quote-title>span{font-size:10px;letter-spacing:1.4px;color:#647987}
+.quote-title h1{font-size:25px;line-height:1.3;margin:4px 0;color:#173f58}
+.quote-meta{display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;margin:22px 0 26px}
+.quote-meta label{display:flex;align-items:center;gap:10px;min-width:0;color:#526574}
+.quote-meta strong{color:#20303b}
+.quote-meta input{width:100%;min-width:0;flex:1;border:0;border-bottom:1px solid #aebec7;border-radius:0;background:#fff;padding:5px;font:inherit;color:#20303b}
+.quote-sheet h2{font-size:14px;color:#173f58;margin:20px 0 9px}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th,td{border:1px solid #cbd5da;padding:8px 9px;text-align:left;vertical-align:top}
+th{background:#edf2f5;color:#173f58}
+td small{display:block;color:#657785}
+.num{text-align:right;white-space:nowrap}
+tfoot td{font-weight:700;background:#f5f8f9}
+.quote-note{border:1px solid #cad5dc;background:#f8fafb;padding:10px 12px;color:#405766;break-inside:avoid}
+.quote-signatures{display:grid;grid-template-columns:1fr 1fr;gap:55px;text-align:center;margin-top:65px;break-inside:avoid}
+.quote-signatures div{border-top:1px solid #627888;padding-top:12px}
+footer{border-top:1px solid #cad5dc;color:#657785;padding-top:9px;margin-top:36px;font-size:10px}
+tr{break-inside:avoid}
+thead{display:table-header-group}
+@media(max-width:700px){.quote-actions{padding:0 12px}.quote-sheet{min-height:0;margin:12px;padding:20px 14px}.quote-head{flex-wrap:wrap}.quote-title{text-align:left}.quote-meta{grid-template-columns:1fr}table{font-size:10px}th,td{padding:5px}.quote-signatures{gap:20px}}
+@media print{body{background:#fff}.quote-actions{display:none}.quote-sheet{max-width:none;min-height:0;margin:0;padding:0;box-shadow:none}.quote-meta input::placeholder{color:transparent}th,tfoot td{print-color-adjust:exact;-webkit-print-color-adjust:exact}}

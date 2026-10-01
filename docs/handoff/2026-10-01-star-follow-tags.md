@@ -172,3 +172,45 @@ Branch `claude/cool-turing-zcfief` แตกจาก `fe29fea` (`connect-profil
 
 ### เฟส 2 (ยังไม่ทำ)
 เตือน Telegram เมื่อถึงเวลาติดตาม (`follow_notified_for`, เว้น 00:00–06:00), นับดาว/tag ใน `queue_counts`, sync ไป Asher CRM ถ้าผู้ใช้ตอบข้อ 3 ว่าต้องการ
+
+---
+
+## ย้ายฐานมาบน production (1 ต.ค. 2569 ช่วงค่ำ)
+
+★ `fe29fea` **ไม่ใช่สิ่งที่รันบน VPS** — `20a7799` (snapshot จาก `/opt/asher-inbox/app` 28 ก.ย.) บอกว่า prod แตกจาก `fe29fea` ไปด้วยการแก้มือ
+และ `hotfix/login-button-color` (`514868f`) ต่อจาก snapshot นั้นอีก 7 commit (login button, Messenger page_id, quotation PNG)
+ถ้า deploy จาก branch ที่แตกจาก `fe29fea` ตรง ๆ จะทับของพวกนั้นกลับเป็นของเก่า
+
+จึง merge `origin/hotfix/login-button-color` เข้ามา แล้ว **ใช้ไฟล์ฝั่ง prod เป็นหลัก** (`server.mjs` `public/app.js` `app.css` `index.html` `package.json`)
+และลงงานดาว/tag/ติดตามซ้ำบนไฟล์ prod — SQL ไม่ต้องแก้ (sql/ ของสองสายเหมือนกัน ยกเว้น prod มีเพิ่ม 2 ไฟล์ที่ไม่เกี่ยว)
+
+ตรวจหลัง merge:
+- เทสต์ใหม่ผ่านหมด · เทสต์เดิมที่ fail (profile 1, providers 1, media 1, report/outcomes/decide ที่ต้องใช้ docker) fail เท่ากันบน `514868f` เปล่า ๆ
+- `node sql/run.mjs check` ล้มเพราะ `202609270700_line_oa_history_archive.sql` กับ `202609271000_quick_reply_qualification.sql` ไม่อยู่ใน ORDER.txt — เป็นของเดิมบน `514868f` ไม่ได้มาจากงานนี้
+- Playwright บน UI ของ prod (1400px, 390px, API จำลอง) ผ่านครบ ไม่มี JS error
+
+### คำสั่ง deploy (รันจากเครื่องที่ ssh เข้า VPS ได้)
+
+```bash
+# 0. ต้องเห็น 514868f… — ถ้าไม่ใช่ หยุด แล้วส่งค่ามาให้ merge ใหม่
+ssh root@187.53.139.175 'cat /opt/asher-inbox/app/.deployed-commit'
+
+# 1. backup ฐาน + จุดย้อนกลับของแอป (docs/deploy.md ข้อ 1)
+ssh root@187.53.139.175 'docker exec supabase-db pg_dump -U postgres -d postgres -n connect_private -n inbox \
+  > /opt/asher-inbox/pre-star-tags.$(date +%Y%m%d-%H%M).sql && ls -la /opt/asher-inbox/pre-star-tags.*'
+
+# 2. ทดสอบสัญญาบนฐานจริงแบบ ROLLBACK (ไม่มีอะไรค้าง)
+git fetch origin claude/cool-turing-zcfief && git checkout claude/cool-turing-zcfief
+scp sql/202610011000_contact_star_tags.sql tests/star-follow-tags.db.test.mjs root@187.53.139.175:/tmp/
+#   (หรือรัน ALLOW_DB_TESTS=1 node --test tests/star-follow-tags.db.test.mjs บนเครื่องที่มี supabase-db)
+
+# 3. เทียบคอลัมน์ list บน VPS กับ inbox.flag_list
+ssh root@187.53.139.175 "docker exec supabase-db psql -U postgres -d postgres -Atc \
+  \"select pg_get_functiondef('connect_private.api(text,jsonb)'::regprocedure)\"" | grep -A3 "p_action='list'"
+
+# 4. ลง SQL
+ssh root@187.53.139.175 'docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1' \
+  < sql/202610011000_contact_star_tags.sql
+
+# 5. แอป: docs/deploy.md ข้อ 2–5 ด้วย COMMIT=$(git rev-parse origin/claude/cool-turing-zcfief)
+```

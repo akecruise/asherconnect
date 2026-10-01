@@ -25,7 +25,7 @@ const RATE_PER_EMAIL = 10
 const RATE_PER_IP = 60
 const COOKIE = 'asher_session'
 
-export function createSessions({ authCall, rpc, origin, log, sessionDir, authorize, now = Date.now }) {
+export function createSessions({ authCall, rpc, origin, log, sessionDir, now = Date.now }) {
   const refreshing = new Map(), attempts = new Map()
   const fail = (status, code) => Object.assign(new Error(code), { status })
   const hash = value => createHash('sha256').update(value).digest('hex')
@@ -113,7 +113,6 @@ export function createSessions({ authCall, rpc, origin, log, sessionDir, authori
     const s = await read(id)
     if (!s) throw fail(401, 'session_expired')
     if (s.deadline <= now()) { await drop(id); throw fail(401, 'session_expired') }
-    if (authorize && !(await authorize(s))) { await drop(id); throw fail(401, 'session_expired') }
     if (s.expires > now() + RENEW_BEFORE) return s.access_token
     try { return (await refresh(id, s)).access_token }
     catch { throw fail(401, 'session_expired') }
@@ -153,9 +152,8 @@ export function createSessions({ authCall, rpc, origin, log, sessionDir, authori
     // ด่านที่สอง: มีตัวตนแล้วยังต้องมีโปรไฟล์ที่ใช้ระบบนี้ได้ด้วย
     // คนที่มีบัญชี Supabase แต่ไม่มีแถวใน core.profile จะตกตรงนี้ ไม่ใช่ตกตอนกดปุ่มแรกในหน้าจอ
     // ถ้าตกแล้วต้องคืน token ทิ้งด้วย ไม่งั้น gotrue จะค้างเซสชันของคนที่เราเพิ่งปฏิเสธไป
-    let boot
     try {
-      boot = await rpc(s.access_token, 'bootstrap')
+      const boot = await rpc(s.access_token, 'bootstrap')
       if (!boot?.user?.id) throw fail(403, 'not_allowed')
     } catch (e) { await revoke(s); throw e }
 
@@ -164,8 +162,7 @@ export function createSessions({ authCall, rpc, origin, log, sessionDir, authori
     if (old) { await revoke(await read(old)); await drop(old) }
 
     const id = randomBytes(32).toString('hex')
-    await write(id, { user_id: s.user?.id ?? boot.user.id, issued_at: now(),
-                      access_token: s.access_token, refresh_token: s.refresh_token,
+    await write(id, { access_token: s.access_token, refresh_token: s.refresh_token,
                       expires: now() + s.expires_in * 1000, deadline: now() + TTL })
     setCookie(res, id, TTL / 1000)
     log.info('signed_in', { email })
@@ -199,24 +196,5 @@ export function createSessions({ authCall, rpc, origin, log, sessionDir, authori
     return { deleted }
   }
 
-  async function revokeUser(userId) {
-    await ready
-    let globalToken = null
-    for (const file of await readdir(sessionDir)) {
-      if (!/^[a-f0-9]{64}\.json$/.test(file)) continue
-      const full = join(sessionDir, file)
-      try {
-        const s = JSON.parse(await readFile(full, 'utf8'))
-        if (s.user_id !== userId) continue
-        globalToken ||= s.access_token
-        await unlink(full)
-      } catch (e) { log.warn('user_session_revoke_skipped', { reason: e.message }) }
-    }
-    if (globalToken) {
-      try { await authCall('/auth/v1/logout?scope=global', { method: 'POST', token: globalToken }) }
-      catch (e) { log.warn('user_global_revoke_failed', { reason: e.message }) }
-    }
-  }
-
-  return { access, login, logout, sweep, revokeUser }
+  return { access, login, logout, sweep }
 }

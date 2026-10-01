@@ -7,10 +7,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node --env-file=.env server.mjs",
-    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/outbound-media.test.mjs && node --test tests/bots.test.mjs && node --test tests/testcmd.test.mjs && node --test tests/reviewcode.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node --test tests/media.test.mjs tests/media-http.test.mjs && node --test tests/answer-hub.render.test.mjs tests/answer-hub.import.test.mjs tests/quick-reply-import.test.mjs tests/quick-replies-ui.test.mjs tests/return-to.test.mjs && node --test tests/answer-hub.service.test.mjs tests/responder-attribution.test.mjs tests/customer-contact-extraction.test.mjs tests/conversation-presentation.test.mjs && node --test tests/case-flags.test.mjs tests/case-flags-ui.test.mjs && node tests/http.integration.mjs",
-    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check lib/tiktok.mjs && node --check lib/tiktok-oauth.mjs && node --check public/app.js && node --check public/case-flags.mjs && node --check lib/case-flags.mjs && node --check public/answer-hub.js && node --check public/quick-answer.js && node --check public/quick-replies.js && node --check public/quick-replies-admin.js && node --check services/answer-hub/service.mjs && node --check services/answer-hub/import.mjs && node --check services/answer-hub/quick-reply-import.mjs && node --check lib/media.mjs && node --check lib/media-http.mjs && node --check lib/media-public.mjs && node --check lib/outbound-media.mjs && node sql/run.mjs check",
-    "test:media": "node --test tests/media.test.mjs tests/media-http.test.mjs tests/media-public.test.mjs",
+    "start": "node server.mjs",
+    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/testcmd.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node --test tests/media.test.mjs tests/media-http.test.mjs && node --test tests/quick-replies-import.test.mjs tests/quick-replies-sale.test.mjs tests/quick-replies-admin.test.mjs && node --test tests/case-flags.test.mjs tests/case-flags-ui.test.mjs && node tests/http.integration.mjs",
+    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js && node --check public/case-flags.mjs && node --check lib/case-flags.mjs && node --check public/quick-replies.js && node --check public/quick-replies-admin.js && node --check lib/media.mjs && node --check lib/media-http.mjs && node --check lib/quick-replies-import.mjs && node sql/run.mjs check",
+    "test:qr": "node --test tests/quick-replies-import.test.mjs tests/quick-replies-sale.test.mjs tests/quick-replies-admin.test.mjs",
+    "test:qr-admin": "node --test tests/quick-replies-admin.test.mjs",
+    "test:media": "node --test tests/media.test.mjs tests/media-http.test.mjs",
     "test:live": "node test-webhook.mjs",
     "sync:names": "node sync-contact-names.mjs",
     "test:stats": "node tests/stats/run.mjs",
@@ -24,12 +26,6 @@
     "sql:apply": "node sql/run.mjs apply",
     "test:testcmd": "node --test tests/testcmd.test.mjs",
     "test:testreset": "node --test tests/testreset.db.test.mjs",
-    "test:reviewcode": "node --test tests/reviewcode.test.mjs",
-    "test:reviewcode:db": "node --test tests/reviewcode.db.test.mjs",
-    "test:shared-sales-queue": "node --test tests/shared-sales-queue.db.test.mjs",
-    "test:crm-publisher": "node --test tests/crm-publisher.test.mjs",
-    "test:tiktok": "node --test tests/tiktok.test.mjs tests/tiktok-oauth.test.mjs tests/providers.test.mjs tests/profile.test.mjs tests/conversation-presentation.test.mjs",
-    "test:star-follow-tags": "node --test tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/star-follow-tags.db.test.mjs",
-    "test:media-of-worker": "node --test tests/media-of-worker.db.test.mjs"
+    "test:star-follow-tags": "node --test tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/star-follow-tags.db.test.mjs"
   }
 }
