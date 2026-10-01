@@ -1470,3 +1470,58 @@ body.contacts-view #workspace > main { display: none }
 }
 /* แผงขวาหน้าแชทมีปุ่ม × (#lead-close) มุมขวาบน — เว้นที่ให้ดาวไม่ทับกัน */
 .cust-panel .cust-head { padding-right: 32px }
+
+/* ── แถบเมนูซ้ายแบบ LINE OA Manager (จอ ≥768) ─────────────────────────────
+   กาง 220 มีชื่อเมนู / ยุบ 64 ไอคอนอย่างเดียว (html.nav-collapsed ตั้งจาก public/app-nav.js ก่อนวาด)
+   ★ ต้องอยู่ท้ายไฟล์ — ทับกฎ "แถบบน" ด้านบนโดยตั้งใจ · จอแคบยังเป็นแถบบนตามเดิม
+   ★ --topbar = 0 เพราะไม่มีแถบบนแล้ว: ความสูงคอลัมน์แชท/drawer ลูกค้า/แผงตั้งค่าอิงตัวแปรนี้ทั้งหมด */
+#app-nav .nav-extra { display: none }
+@media (min-width: 768px) {
+  #workspace { --topbar: 0px; --navw: 220px; padding-left: var(--navw) }
+  html.nav-collapsed #workspace { --navw: 64px }
+  #app-nav {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 46;
+    width: var(--navw); height: auto;
+    flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 2px;
+    padding: 12px 10px; overflow-y: auto; overflow-x: hidden;
+    border: 0; border-right: 1px solid var(--rule); background: var(--surface);
+    transition: width .15s ease;
+  }
+  #app-nav .nav-brand { margin: 0 0 10px; padding: 4px 6px; min-height: 32px }
+  #app-nav .nav-brand-name { display: block }
+  #app-nav .nav-page-title { display: none }
+  #app-nav .nav-item, #app-nav .nav-extra:not([hidden]) {
+    display: flex; flex-direction: row; justify-content: flex-start; gap: 12px;
+    width: 100%; height: 40px; min-height: 40px; padding: 0 12px; border-radius: 8px;
+    color: var(--muted); font-size: 14px; text-decoration: none;
+  }
+  #app-nav .nav-item[hidden] { display: none }
+  #app-nav .nav-icon { width: 20px; height: 20px; flex: none }
+  #app-nav .nav-label { display: block; font-size: 14px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  #app-nav .nav-item.active { color: var(--ink); font-weight: 600; background-color: var(--rule-soft) }
+  #app-nav .nav-item:disabled { opacity: .45; cursor: not-allowed }
+  #app-nav .nav-item#nav-settings { margin: auto 0 0 }
+  #app-nav .nav-collapse { margin-top: 2px; border-top: 1px solid var(--rule-soft); border-radius: 0 0 8px 8px }
+  #app-nav .nav-badge { position: static; margin-left: auto; transform: none }
+  body.settings-open #workspace > header { top: 0; left: var(--navw); right: 0 }
+  .lead-card { top: 0 }
+
+  /* ยุบ: ไอคอนอย่างเดียว · ชื่อเมนูยังอยู่ใน title/aria-label */
+  html.nav-collapsed #app-nav { padding: 12px 8px }
+  html.nav-collapsed #app-nav .nav-brand { justify-content: center; padding: 4px 0 }
+  html.nav-collapsed #app-nav .nav-brand-name,
+  html.nav-collapsed #app-nav .nav-label { display: none }
+  html.nav-collapsed #app-nav .nav-item, html.nav-collapsed #app-nav .nav-extra:not([hidden]) { justify-content: center; padding: 0 }
+  html.nav-collapsed #app-nav .nav-collapse .nav-icon { transform: scaleX(-1) }
+  html.nav-collapsed #app-nav .nav-badge { position: absolute; top: 2px; right: 6px; margin: 0 }
+}
+@media (prefers-reduced-motion: reduce) { #app-nav { transition: none } }
+/* จอกว้าง: ปุ่มรีเฟรชอยู่ข้างช่องค้นหาในหัวรายการแชท (ไม่ย้ายเข้าเมนูแล้ว) — ให้ช่องค้นหากินที่ที่เหลือ */
+@media (min-width: 768px) {
+  .queue-head .queue-tools { padding: 0 12px 0 16px; gap: 6px }
+  .queue-head .search-box { flex: 1 1 auto; min-width: 0 }
+  .queue-head #search { margin: 0; width: 100% }
+  .queue-head .search-icon { left: 12px }
+  .queue-tools #refresh { flex: none; width: 36px; height: 36px; min-width: 36px; min-height: 36px; padding: 0; border-radius: 50%; color: var(--muted) }
+  .queue-tools #refresh .nav-icon { width: 18px; height: 18px }
+}

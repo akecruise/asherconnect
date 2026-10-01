@@ -1160,14 +1160,52 @@ $('message').addEventListener('keydown',e=>{
 //   (รวมทุกเมนูอยู่ tab เดียว ไม่มีแถวหัว "แชท" แยกอีกแถวแล้ว) ต่อท้าย #nav-settings
 //   เพื่อให้ margin-left:auto ของ #nav-settings ดันทั้งคู่ไปชิดขวาด้วยกัน
 function relocateRefreshButton(){
+ // จอกว้างเมนูเป็นแถบข้างซ้ายแล้ว ปุ่มรีเฟรชอยู่ที่หัวรายการแชทตามเดิม · ย้ายเข้าแถบบนเฉพาะมือถือ
+ if(!MOBILE.matches)return
  const btn=$('refresh'),nav=$('app-nav')
  if(btn&&nav)nav.append(btn)
+}
+// ── แถบเมนูซ้าย (แบบ LINE OA Manager) ──────────────────────────────────
+// จอ ≥768: แถบข้างซ้าย กาง 220 / ยุบ 64 (ไอคอนอย่างเดียว) จำสถานะใน localStorage ร่วมทุกหน้า
+// จอแคบยังเป็นแถบบนแบบเดิม — ปุ่มซ่อนเมนู/รายการเสริมถูกซ่อนด้วย CSS
+const NAV_KEY='connect.nav.collapsed'
+const ICON_BROADCAST='M4 10v4h3l5 4V6L7 10zM16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12'
+const ICON_TAG='M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1 1 0 0 1 0 1.4l-6.9 6.9a1 1 0 0 1-1.4 0zM8 8h.01'
+const ICON_COLLAPSE='M4 5h16v14H4zM9 5v14M15.5 9.5 13 12l2.5 2.5'
+function navButton(id,label,path,extra=''){
+ const b=document.createElement('button');b.type='button';b.className='nav-item '+extra;b.id=id;b.title=label;b.setAttribute('aria-label',label)
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','nav-icon');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false')
+ const pa=document.createElementNS('http://www.w3.org/2000/svg','path');pa.setAttribute('d',path);pa.setAttribute('fill','none');pa.setAttribute('stroke','currentColor');pa.setAttribute('stroke-width','1.8');pa.setAttribute('stroke-linecap','round');pa.setAttribute('stroke-linejoin','round')
+ svg.append(pa);b.append(svg,text('span',label,'nav-label'));return b
+}
+function setNavCollapsed(on){
+ document.documentElement.classList.toggle('nav-collapsed',on)
+ try{localStorage.setItem(NAV_KEY,on?'1':'0')}catch{/* โหมดส่วนตัว: จำไม่ได้ก็ไม่เป็นไร */}
+ const t=$('nav-collapse');if(!t)return
+ const label=on?'แสดงเมนู':'ซ่อนเมนู'
+ t.setAttribute('aria-expanded',String(!on));t.title=label;t.setAttribute('aria-label',label);t.querySelector('.nav-label').textContent=label
+}
+function buildSideNav(role){
+ const nav=$('app-nav');if(!nav||$('nav-collapse'))return
+ const stats=$('nav-stats'),settings=$('nav-settings')
+ const bc=navButton('nav-broadcast','ส่งข้อความหลายคน',ICON_BROADCAST,'nav-extra');bc.disabled=true;bc.title='ส่งข้อความหลายคน (เร็ว ๆ นี้)'
+ bc.hidden=!['manager','admin'].includes(role)
+ const tg=navButton('nav-tags','จัดการแท็ก',ICON_TAG,'nav-extra');tg.hidden=!!boot?.user?.test_only
+ tg.addEventListener('click',async()=>{await refreshTags();openTagAdmin()})
+ // ลำดับเหมือน LINE OA: แชท · รายชื่อติดต่อ · ส่งข้อความหลายคน · สถิติ · แท็ก ··· ตั้งค่า · ซ่อนเมนู
+ if(stats)stats.before(bc);else settings?.before(bc)
+ settings?.before(tg)
+ const col=navButton('nav-collapse','ซ่อนเมนู',ICON_COLLAPSE,'nav-extra nav-collapse');col.setAttribute('aria-controls','app-nav')
+ col.addEventListener('click',()=>setNavCollapsed(!document.documentElement.classList.contains('nav-collapsed')))
+ nav.append(col)
+ setNavCollapsed(document.documentElement.classList.contains('nav-collapsed'))
 }
 // เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
 // "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง
 function wireAppNav(role){
  const managerUp=['manager','admin'].includes(role)
  $('nav-stats').hidden=!managerUp
+ buildSideNav(role)
  // ★ "รายชื่อติดต่อ" เปิดแล้ว (หน้า /contacts) — แต่ก่อนซ่อนไว้รอโมดูล CRM
  const cust=$('nav-customers')
  if(cust){

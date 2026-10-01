@@ -17,7 +17,7 @@ SQL_FILES=("$@")
 APP="${APP:-/opt/asher-inbox/app}"
 BASE=$(dirname "$APP")
 REPO=akecruise/asherconnect
-EXPECT_LIVE="${EXPECT_LIVE:-f52bab0edbdaacba264f363dd6d6c4cca02a00d4}"
+EXPECT_LIVE="${EXPECT_LIVE:-107203ae60016943dcb93670930cfee208b27d5a}"
 PORT="${PORT:-3200}"
 STAMP=$(date +%Y%m%d-%H%M%S)
 WORK=/tmp/deploy-$STAMP
@@ -109,7 +109,7 @@ for i in $(seq 1 20); do
   curl -fs -o /dev/null "http://127.0.0.1:$PORT/health" && break
   sleep 3
 done
-for p in / /app.js /case-flags.mjs /contacts; do
+for p in / /app.js /app-nav.js /case-flags.mjs /contacts; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$p")
   echo "$p $code"
   [ "$code" = 200 ] || ok=0
