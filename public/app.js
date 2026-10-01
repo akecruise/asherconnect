@@ -1172,6 +1172,8 @@ const NAV_KEY='connect.nav.collapsed'
 const ICON_BROADCAST='M4 10v4h3l5 4V6L7 10zM16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12'
 const ICON_TAG='M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1 1 0 0 1 0 1.4l-6.9 6.9a1 1 0 0 1-1.4 0zM8 8h.01'
 const ICON_COLLAPSE='M4 5h16v14H4zM9 5v14M15.5 9.5 13 12l2.5 2.5'
+const ICON_MENU='M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z'
+const ICON_LOGOUT='M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10'
 function navButton(id,label,path,extra=''){
  const b=document.createElement('button');b.type='button';b.className='nav-item '+extra;b.id=id;b.title=label;b.setAttribute('aria-label',label)
  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','nav-icon');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false')
@@ -1199,6 +1201,39 @@ function buildSideNav(role){
  col.addEventListener('click',()=>setNavCollapsed(!document.documentElement.classList.contains('nav-collapsed')))
  nav.append(col)
  setNavCollapsed(document.documentElement.classList.contains('nav-collapsed'))
+ // มือถือ: ปุ่ม "เมนู" เปิดหน้าหลักแบบ LINE OA (ไทล์ใหญ่) — สถิติ/ตั้งค่าย้ายเข้าไปอยู่ในนั้น
+ const home=navButton('nav-home','เมนู',ICON_MENU,'nav-mobile');home.setAttribute('aria-haspopup','dialog')
+ home.addEventListener('click',openMobileMenu)
+ ;(settings||col).before(home)
+}
+// หน้าหลักบนมือถือ — ไทล์ทุกเมนูที่ role นี้เห็นในแถบซ้าย กดแล้วทำงานเหมือนกดเมนูเดิมทุกอย่าง
+// (เรียก .click() ของปุ่มเดิม ไม่เขียนพฤติกรรมซ้ำ) · เมนูที่ซ่อน/ปิดอยู่ก็ซ่อน/ปิดในนี้ด้วย
+function openMobileMenu(){
+ let dlg=$('mobile-menu')
+ if(!dlg){dlg=document.createElement('dialog');dlg.id='mobile-menu';dlg.className='mobile-menu';dlg.setAttribute('aria-labelledby','mobile-menu-title');document.body.append(dlg)}
+ const head=text('div','','tag-admin-head');const t=text('h2','เมนู');t.id='mobile-menu-title'
+ const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dlg.close())
+ head.append(t,x)
+ const who=text('p','','mobile-menu-user muted');who.textContent=(boot?.user?.email||'')+(boot?.user?.role?' · '+boot.user.role:'')
+ const grid=text('div','','mobile-menu-grid')
+ const sources=[document.querySelector('.nav-item[data-nav="chat"]'),$('nav-customers'),$('nav-broadcast'),$('nav-stats'),$('nav-tags'),$('nav-settings')]
+ for(const src of sources){
+  if(!src||src.hidden)continue
+  const label=src.querySelector('.nav-label')?.textContent||src.getAttribute('aria-label')||''
+  const tile=text('button','','mobile-tile'+(src.classList.contains('active')?' active':''));tile.type='button';tile.disabled=!!src.disabled
+  const icon=src.querySelector('svg')?.cloneNode(true);if(icon)tile.append(icon)
+  tile.append(text('span',label,'mobile-tile-label'))
+  if(src.disabled)tile.append(text('small','เร็ว ๆ นี้','muted'))
+  const badge=src.querySelector('.nav-badge');if(badge&&!badge.hidden)tile.append(text('span',badge.textContent,'nav-badge mobile-tile-badge'))
+  tile.addEventListener('click',()=>{dlg.close();src.click()})
+  grid.append(tile)
+ }
+ const out=text('button','','mobile-tile mobile-tile-logout');out.type='button'
+ const ov=navButton('x','',ICON_LOGOUT).querySelector('svg');out.append(ov,text('span','ออกจากระบบ','mobile-tile-label'))
+ out.addEventListener('click',()=>{dlg.close();$('logout').click()})
+ grid.append(out)
+ dlg.replaceChildren(head,who,grid)
+ if(!dlg.open)dlg.showModal()
 }
 // เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
 // "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง
