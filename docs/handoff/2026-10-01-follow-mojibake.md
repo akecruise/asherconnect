@@ -39,6 +39,14 @@
 `node sql/run.mjs check` → ผ่าน
 Hotfix ลองกับฐาน local (`supabase-db`) แบบ rollback → `follow_text_fixed = t`
 
+## สถานะบน VPS (1 ต.ค. 2569 ~20:00)
+
+- ✅ ข้อ 1 hotfix ลงแล้ว — `follow_text_fixed = t`
+- ✅ ข้อ 3 dry run: **ไม่มีแถวเพี้ยนให้ซ่อม** (`inbox.message` / preview / `bot_decisions` = 0 ทุกตัว)
+  follow/unfollow ถูกทริกเกอร์ `canonical_system_message_label` (202609252200) แก้ไว้แล้ว — ไม่ต้องรัน `-v apply=1`
+  เหลือเฉพาะ `connect_private.job` 18 แถว (แจ้งเตือน follow ที่ส่งไปแล้ว 21 ก.ย.–1 ต.ค.) — ประวัติ ไม่ต้องแก้
+- ⏳ ข้อ 2 deploy `bots/notify.mjs` — ยังไม่ยืนยัน
+
 ## ยังไม่ได้ทำ — ทำต่อตามลำดับ
 
 ### 1. ลง hotfix บน VPS (ด่วน — หยุดข้อความเพี้ยน)
