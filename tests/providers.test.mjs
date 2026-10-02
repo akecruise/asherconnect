@@ -38,7 +38,11 @@ test('Instagram sends text through the Instagram Messages endpoint',async()=>{
   called={url,body:JSON.parse(init.body)}
   return new Response(JSON.stringify({message_id:'ig-mid'}),{status:200,headers:{'content-type':'application/json'}})
  })
- assert.equal(called.url,'https://graph.instagram.com/v23.0/17841426509548035/messages')
+ // ★ /me ไม่ใช่ account_id — โทเคนของ Instagram Login ผูกกับบัญชีอยู่แล้ว และเลขบัญชีที่ใช้
+ //   จับคู่ webhook เปลี่ยนได้เมื่อเชื่อมบัญชีใหม่ (ดูคอมเมนต์ใน providers.mjs sendInstagram)
+ //   บรรทัดนี้เคยคาด /<account_id>/messages ซึ่งเป็นของรุ่นก่อน — เทสต์กับโค้ดเข้ามาพร้อมกัน
+ //   ตอน 20a7799 แต่คนละรุ่น จึงแดงมาตั้งแต่ commit นั้น
+ assert.equal(called.url,'https://graph.instagram.com/v23.0/me/messages')
  assert.deepEqual(called.body,{recipient:{id:'IGSID-1'},message:{text:'ใบเสนอราคา https://example.com/q.pdf'}})
  assert.equal(result.status,'sent')
  assert.equal(result.provider_id,'ig-mid')
