@@ -1035,6 +1035,20 @@ async function internalRoute(req, res, url) {
     return json(res, 200, await lineQuota({ accessToken: config.access_token }))
   }
 
+  // ★ แปลงตัวตนในช่องทาง → contact_ref
+  //   CRM เก็บ external_id ไม่ใช่ uuid ของ core.contact จึงเรียก /internal/contacts/<uuid>/...
+  //   ตรง ๆ ไม่ได้ · เส้นนี้แปลงจาก tuple ที่ CRM มีอยู่ (ตามคีย์ใน BOUNDARIES)
+  if (req.method === 'POST' && path === '/internal/contacts/resolve') {
+    const body = JSON.parse((await readBody(req, 8192)).toString('utf8'))
+    return json(res, 200, await rpcDirect(service, 'service_resolve_contact', {
+      p: {
+        provider: body?.provider ?? null,
+        account_scope: body?.account_scope ?? null,
+        external_id: body?.external_id ?? null,
+      },
+    }))
+  }
+
   // ★ CRM สั่งแจ้งทีม (escalation เมื่อเลย SLA) — เนื้อหามาจาก CRM ส่งตามตัวอักษร
   //   BOUNDARIES: CRM สร้างเนื้อหา → ส่งผ่าน bot เดิมของ Connect ไม่ต้องมี token สองที่
   if (req.method === 'POST' && path === '/internal/notify') {

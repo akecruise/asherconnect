@@ -157,12 +157,44 @@ begin
   return jsonb_build_object('conversation_id', v_conv, 'reused', false, 'message_ids', v_ids);
 end $$;
 
--- ── 4. สิทธิ์ — service_role เท่านั้น ─────────────────────────────────
+-- ── 4. แปลงตัวตนในช่องทาง → contact_ref ──────────────────────────────
+--
+-- ★★ ทำไมต้องมี: CRM เก็บ crm_conversations.connect_contact_ref = **external_id**
+--   (LINE userId) ไม่ใช่ uuid ของ core.contact — ตรวจจากโค้ดจริงของ CRM
+--   (upsertConversation ส่ง payload.externalId ลงคอลัมน์นั้น) ดังนั้น CRM
+--   เรียก /internal/contacts/<uuid>/... ไม่ได้เลยเพราะไม่มี uuid ในมือ
+--
+--   คีย์ที่ CRM มีคือ tuple (platform, channel_key, external_user_id) ซึ่งเป็น
+--   คีย์ที่ BOUNDARIES ระบุว่าใช้ผูกสองระบบอยู่แล้ว — ฟังก์ชันนี้จึงแปลงให้
+--   ปลดล็อกทุกเส้นทางที่รับ :ref (recent-messages, profile, messages) ในครั้งเดียว
+--   โดยไม่ต้อง backfill อะไรที่ฝั่ง CRM
+--
+-- p = {provider, account_scope, external_id}
+create or replace function inbox.service_resolve_contact(p jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_provider text := nullif(btrim(coalesce(p->>'provider','')), '');
+  v_scope text := nullif(btrim(coalesce(p->>'account_scope','')), '');
+  v_external text := nullif(btrim(coalesce(p->>'external_id','')), '');
+  v_contact uuid;
+begin
+  if v_provider is null or v_scope is null or v_external is null then
+    raise exception 'invalid_request' using errcode = '22023';
+  end if;
+  select ci.contact_id into v_contact
+    from core.contact_identity ci
+   where ci.channel = v_provider and ci.account_key = v_scope and ci.external_id = v_external
+   limit 1;
+  if v_contact is null then raise exception 'contact_not_found' using errcode = '42704'; end if;
+  return jsonb_build_object('contact_ref', v_contact);
+end $$;
+
+-- ── 5. สิทธิ์ — service_role เท่านั้น ─────────────────────────────────
 -- ★ ห้าม grant ให้ authenticated: ถ้าหน้าเว็บเรียกได้ เซลส์คนเดียวจะส่งข้อความ
 --   ในนามระบบได้โดยไม่ผ่านด่านของ CRM
-revoke all on function inbox.service_notify(jsonb), inbox.service_send_to_contact(jsonb)
-  from public, anon, authenticated;
-grant execute on function inbox.service_notify(jsonb), inbox.service_send_to_contact(jsonb)
-  to service_role;
+revoke all on function inbox.service_notify(jsonb), inbox.service_send_to_contact(jsonb),
+  inbox.service_resolve_contact(jsonb) from public, anon, authenticated;
+grant execute on function inbox.service_notify(jsonb), inbox.service_send_to_contact(jsonb),
+  inbox.service_resolve_contact(jsonb) to service_role;
 
 commit;

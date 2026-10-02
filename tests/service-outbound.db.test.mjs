@@ -145,6 +145,24 @@ BEGIN
     PERFORM pg_temp.check(v_blocked, 'message count ' || v_n || ' is rejected');
   END LOOP;
 
+  -- ── แปลงตัวตนในช่องทาง → contact_ref ───────────────────────────────
+  -- ★ นี่คือเส้นที่ทำให้ CRM ใช้ /internal/contacts/... ได้จริง เพราะ CRM เก็บ
+  --   external_id ไม่ใช่ uuid (crm_conversations.connect_contact_ref)
+  r := inbox.service_resolve_contact(jsonb_build_object(
+         'provider', v_chan, 'account_scope', v_inbox::text, 'external_id', 'USERVICEOUT'));
+  PERFORM pg_temp.check((r->>'contact_ref')::uuid = v_contact, 'tuple resolves to the contact uuid');
+
+  v_blocked := false;
+  BEGIN PERFORM inbox.service_resolve_contact(jsonb_build_object(
+    'provider', v_chan, 'account_scope', v_inbox::text, 'external_id', 'UNOBODY'));
+  EXCEPTION WHEN others THEN v_blocked := true; END;
+  PERFORM pg_temp.check(v_blocked, 'unknown identity is not silently resolved');
+
+  v_blocked := false;
+  BEGIN PERFORM inbox.service_resolve_contact('{}'::jsonb);
+  EXCEPTION WHEN others THEN v_blocked := true; END;
+  PERFORM pg_temp.check(v_blocked, 'incomplete tuple is rejected');
+
   -- ── สิทธิ์: หน้าเว็บของพนักงานเรียกไม่ได้ ───────────────────────────
   PERFORM pg_temp.check(
     NOT has_function_privilege('authenticated', 'inbox.service_notify(jsonb)', 'execute'),
@@ -155,6 +173,9 @@ BEGIN
   PERFORM pg_temp.check(
     NOT has_function_privilege('anon', 'inbox.service_send_to_contact(jsonb)', 'execute'),
     'anon cannot either');
+  PERFORM pg_temp.check(
+    NOT has_function_privilege('authenticated', 'inbox.service_resolve_contact(jsonb)', 'execute'),
+    'authenticated cannot resolve another customer identity');
   PERFORM pg_temp.check(
     has_function_privilege('service_role', 'inbox.service_send_to_contact(jsonb)', 'execute'),
     'service_role can');
