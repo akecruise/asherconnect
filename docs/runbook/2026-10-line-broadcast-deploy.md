@@ -121,7 +121,7 @@ curl -fsSL "https://raw.githubusercontent.com/akecruise/asherconnect/$COMMIT/scr
 
 # 2.1 ดูแผนอย่างเดียว ไม่แก้อะไรเลย
 DRY_RUN=1 EXPECT_LIVE=$(cat /opt/asher-inbox/app/.deployed-commit) \
-  bash /tmp/deploy.sh "$COMMIT" sql/202610021200_line_broadcast.sql
+  bash /tmp/deploy.sh "$COMMIT" sql/202610021200_line_broadcast.sql sql/202610030900_follow_welcome_flex.sql
 ```
 
 **อ่านผล DRY RUN ให้ครบก่อนไปต่อ**
@@ -132,7 +132,7 @@ DRY_RUN=1 EXPECT_LIVE=$(cat /opt/asher-inbox/app/.deployed-commit) \
 ```bash
 # 2.2 รันจริง
 EXPECT_LIVE=$(cat /opt/asher-inbox/app/.deployed-commit) \
-  bash /tmp/deploy.sh "$COMMIT" sql/202610021200_line_broadcast.sql 2>&1 \
+  bash /tmp/deploy.sh "$COMMIT" sql/202610021200_line_broadcast.sql sql/202610030900_follow_welcome_flex.sql 2>&1 \
   | grep -v "^ *=> \|^#[0-9]" | tail -30
 
 # 2.3 PostgREST ต้องโหลดรายชื่อฟังก์ชันใหม่ ไม่งั้น rpc ใหม่จะ 404
@@ -403,6 +403,67 @@ curl -s -H "$H" "$B/internal/line/quota?channel_key=$CH"
 
 ---
 
+## 6.5 Phase 2 — ต้อนรับแบบ Flex ตอนลูกค้าเพิ่มเพื่อน (ฟรี ไม่กินโควตา)
+
+ลงมาพร้อมกันในขั้น 2 แล้ว (`sql/202610030900_follow_welcome_flex.sql`) แต่ **สวิตช์ปิดอยู่**
+ทดสอบแยกจาก broadcast ได้เลย และ **ไม่กินโควตา 300 เลย** เพราะออกทาง reply token
+
+```bash
+# 6.5.1 ตรวจว่าแบบถูก seed ลงฐานแล้ว และสวิตช์ยังปิด
+docker exec supabase-db psql -U postgres -d postgres -X -c "
+select i.name, c.key, c.value #>> '{}' as value_text, jsonb_typeof(c.value) as kind
+  from inbox.bot_config c join inbox.inbox i on i.id = c.inbox_id
+ where c.key in ('reply.flex_welcome_on_follow','line.follow_welcome_flex')
+ order by i.name, c.key;"
+```
+**ควรเห็น:** `reply.flex_welcome_on_follow` = `false` · `line.follow_welcome_flex` เป็น `object`
+
+```bash
+# 6.5.2 ดูหน้าตาปุ่มก่อนเปิดใช้ (ยังไม่ส่งหาใคร)
+docker exec supabase-db psql -U postgres -d postgres -X -c "
+select b->'action'->>'label' as label, b->'action'->>'data' as data
+  from jsonb_array_elements(inbox.follow_welcome_default()->'contents'->'footer'->'contents') b;"
+```
+**ควรเห็น 3 แถว:** `ASHER Vibe → asher:v1:interest=vibe` · `ASHER Naii → ...=naii` · `ยังไม่แน่ใจ → ...=unsure`
+
+```bash
+# 6.5.3 เปิดเฉพาะ inbox ของ LINE OA ที่จะทดสอบ
+docker exec supabase-db psql -U postgres -d postgres -X -c "
+update inbox.bot_config set value = to_jsonb(true), updated_at = now()
+ where key = 'reply.flex_welcome_on_follow'
+   and inbox_id = (select inbox_id from inbox.bot_config
+                    where key='line.follow_welcome_flex' limit 1)
+ returning inbox_id;"
+```
+★ ถ้ามี LINE OA หลายช่อง ให้ระบุ `inbox_id` ตรง ๆ แทน subquery
+
+**ทดสอบด้วยมือถือ:** บล็อก OA → เลิกบล็อก (หรือลบเพื่อนแล้วเพิ่มใหม่) → ต้องได้การ์ด 3 ปุ่ม → กดปุ่มหนึ่ง
+
+```bash
+# 6.5.4 ตรวจผล
+docker exec supabase-db psql -U postgres -d postgres -X -c "
+select event_type, status, payload->>'postback_data' as data, payload->>'following' as following, created_at
+  from inbox.crm_publish_outbox
+ where event_type in ('channel_identity.follow_changed','channel_identity.postback')
+ order by created_at desc limit 5;"
+```
+**ควรเห็น:** `channel_identity.follow_changed` (`following=true`) และ `channel_identity.postback` พร้อม `data = asher:v1:interest=...`
+สถานะ `pending` เป็นเรื่องปกติ — ยังไม่มีตัวดูดคิว (handoff ข้อค้าง 2)
+
+```bash
+# 6.5.5 ★ ยืนยันว่าไม่กินโควตา — เทียบก่อน/หลัง ต้องเท่ากัน
+curl -s -H "$H" "$B/internal/line/quota?channel_key=$CH"
+```
+
+**ปิดกลับ:** `update inbox.bot_config set value=to_jsonb(false) where key='reply.flex_welcome_on_follow';`
+**แก้ข้อความ/ปุ่มเองได้โดยไม่ต้อง deploy:** `update inbox.bot_config set value = '<flex json>'::jsonb where key='line.follow_welcome_flex' and inbox_id='<id>';`
+คืนค่าโรงงาน: `update inbox.bot_config set value = inbox.follow_welcome_default() where key='line.follow_welcome_flex';`
+
+> **CRM ยังไม่ได้ทำ** — Connect ส่ง event ครบแล้ว แต่ฝั่งที่ "สร้าง/อัปเดต lead + ติด tag โครงการ"
+> อยู่ใน repo `asher-crm` (Phase 2 ครึ่งหลัง) ยังไม่ได้เขียน · และ event จะยังไม่ถึง CRM จนกว่าจะกู้ `crmPublisherWorker`
+
+---
+
 ## 7. ย้อนกลับ — แยกตามขั้น
 
 | ขั้นที่พลาด | วิธีย้อน | หมายเหตุ |
@@ -411,6 +472,7 @@ curl -s -H "$H" "$B/internal/line/quota?channel_key=$CH"
 | ต้องหยุดงานที่กำลังส่ง | `POST /internal/broadcasts/:id/cancel` | ยกเลิกได้เฉพาะ batch ที่ยังไม่ยิง — ของที่ LINE รับไปแล้วเรียกคืนไม่ได้ |
 | ต้องปิดประตู `/internal/*` ทั้งบาน | ลบ `CONNECT_SERVICE_TOKEN` ออกจาก `.env` แล้ว `docker compose up -d` | ไม่ตั้ง = ประตูปิดสนิท (ไม่ใช่เปิดให้ทุกคน) |
 | **3–4 โค้ดมีปัญหา** | สคริปต์พิมพ์คำสั่งย้อนให้ตอนล้มเอง:<br>`cd /opt/asher-inbox && rm -rf app && mv app.bak-<stamp> app && cd app && docker tag app-asher-connect:rollback-<stamp> app-asher-connect && docker compose up -d` | |
+| **6.5 Flex ต้อนรับ** | `update inbox.bot_config set value=to_jsonb(false) where key='reply.flex_welcome_on_follow';` | ไม่ต้อง deploy ไม่ต้องรีสตาร์ต |
 | **2 SQL** | **ไม่ต้องย้อน** — additive ทั้งไฟล์ (ตารางใหม่ ฟังก์ชันใหม่ + `alter ... add constraint` ที่ของเดิมยังผ่านเท่าเดิม) | ถ้าจะถอนจริง: `drop trigger trg_broadcast_follow_track on inbox.message;` แล้ว drop ตาราง `broadcast_*` / `channel_follow` · มี `pre-deploy-<stamp>.sql` เป็นตัวสำรอง |
 | อยากถอนทั้ง release | `git revert <merge commit>` → push → deploy commit ใหม่ | SQL ทิ้งไว้ได้ ไม่มีใครเรียก |
 
