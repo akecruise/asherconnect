@@ -21,7 +21,13 @@
 
 ผลที่ตามมา: trigger ยังเขียนแถวเข้า `inbox.crm_publish_outbox` บน VPS แต่**ไม่มีใครดูด** น่าจะมี `pending` ค้างสะสมอยู่
 
-**ผู้ใช้ตัดสินเมื่อ 2026-10-02: เขียนเข้า outbox อย่างเดียว ไม่กู้ worker ในงานนี้** → งานนี้จึง publish event ลงคิวตามสเปก แต่ event จะยังไม่ถึง CRM จนกว่าจะมีคนกู้ตัวดูดกลับมา (เป็นงานแยก)
+**ตัดสินใจรอบแรก (2026-10-02): เขียนเข้า outbox อย่างเดียว ไม่กู้ worker**
+**★ ตัดสินใจรอบสอง (วันเดียวกัน): กู้แล้ว** — `e40f1eb` เอาโค้ดกลับจาก `20a7799^:server.mjs`
+(รุ่นล่าสุดก่อนถูกลบ ซึ่งมี `project_ref` ครบ ต่างจากรุ่นแรกใน `8295043`)
+
+เปลี่ยนไปหนึ่งอย่างโดยตั้งใจ: batch ของเดิมตั้งแข็งไว้ 20 ใบต่อรอบ 3 วินาที (~400 ใบ/นาที)
+ซึ่งเท่ากับยิง backlog ทั้งก้อนเข้า CRM ทันทีที่เปิดสวิตช์ → ทำเป็น `ASHER_CRM_PUBLISH_BATCH`
+ค่าตั้งต้น **5** แล้วค่อยเร่งเมื่อคิวเดินสะอาด · **ยังปิดอยู่** จนกว่าจะตั้ง `ASHER_CRM_PUBLISH_ENABLED` บน VPS
 
 ## สิ่งที่ทำในงานนี้
 
@@ -92,6 +98,9 @@ dry run ไม่แตะ network แม้แต่การถามโคว
 | `LINE_BROADCAST_LIVE` | **ไม่ต้องตั้ง** (= dry run) | `'1'` เท่านั้นที่ส่งจริง — เปิดเมื่อผู้ใช้สั่ง |
 | `BROADCAST_TEST_ALLOWLIST` | userId คั่นด้วย `,` | `test:true` ส่งได้เฉพาะคนในลิสต์ · ไม่ตั้ง = ส่งทดสอบไม่ได้เลย |
 | `CONNECT_SERVICE_RATE_MAX` | ไม่ต้องตั้ง (120) | เพดานคำขอ `/internal/*` ต่อนาที |
+| `ASHER_CRM_PUBLISH_ENABLED` | **ไม่ต้องตั้ง** จนกว่าจะนับ backlog เสร็จ | เปิดตัวดูดคิวไป CRM · ต้องมี `ASHER_CRM_URL` + `_CONNECT_TOKEN` + `_WORKSPACE_ID` ครบด้วย |
+| `ASHER_CRM_PUBLISH_BATCH` | เริ่มที่ `5` (ค่าตั้งต้น) | จำนวนใบต่อรอบ · เร่งได้ถึง 100 เมื่อคิวเดินสะอาด |
+| `ASHER_CRM_PROJECT_MAP` | `<inbox_id>=<project_code>;...` | ถ้าว่าง `conversation.created` จะไม่มี `project_ref` → CRM ไม่เปิด Lead |
 
 ## ผลการทดสอบ (รันแล้ว)
 
@@ -134,7 +143,7 @@ node sql/run.mjs check                                   → ตรวจผ่�
 | # | เรื่อง | ต้องการอะไร |
 |---|---|---|
 | 1 | **รัน SQL + deploy** | `sql/202610021200_line_broadcast.sql` ต้อง backup ก่อนแล้วรันมือบน VPS ตาม `docs/deploy.md` · ยังไม่ได้ทำตามคำสั่ง |
-| 2 | **กู้ `crmPublisherWorker`** | event ที่งานนี้เขียนลง `inbox.crm_publish_outbox` จะไม่ถึง CRM จนกว่าจะกู้ตัวดูดกลับมา (โค้ดเดิมอยู่ที่ `git show 8295043 -- server.mjs`) · ★ **query นับ backlog + แผนเคลียร์ 2 แบบ อยู่ใน `docs/handoff/2026-10-02-phase0-audit.md` ข้อ 5** — ต้องนับก่อนเปิด ไม่งั้นจะยิง backlog ทั้งก้อนเข้า CRM ทีเดียว |
+| 2 | ~~กู้ `crmPublisherWorker`~~ **โค้ดกู้แล้ว** (`e40f1eb`) | เหลือแค่ **เปิดสวิตช์บน VPS** — ปิดไว้จนกว่าจะตั้ง `ASHER_CRM_PUBLISH_ENABLED` · ★ **ต้องนับ backlog ก่อนเปิด** (query ใน `docs/handoff/2026-10-02-phase0-audit.md` ข้อ 5) แล้วเปิดด้วย `ASHER_CRM_PUBLISH_BATCH` ต่ำ ๆ ก่อน — ดูขั้น 6.8 ใน runbook |
 | 3 | **เปิด `LINE_BROADCAST_LIVE=1`** | ยังเป็น dry run · เปิดเมื่อทดสอบ `test:true` กับ allowlist ผ่านแล้วเท่านั้น |
 | 4 | OA ไหน + เพดานต่อครั้ง | ★ โควตา: OA `@wdq0911k` รีช 2,690 แต่ฟรี 300/เดือน → `quotaAllows` จะปฏิเสธทั้งงานถ้าเกิน ต้องให้ CRM แสดงจำนวนเทียบโควตาก่อนกดส่ง |
 | 5 | thumbnail ของ recent-messages | ตอนนี้คืน `media: [{path, mime}]` ไม่ใช่ URL — `/media/<path>` ของ Connect ต้องมี session ของพนักงาน CRM จึงยังดึงรูปตรงไม่ได้ ต้องตัดสินว่าจะทำลิงก์เซ็นชื่อ (แบบ `createOutboundMediaUrl`) หรือให้ CRM ฝัง iframe |

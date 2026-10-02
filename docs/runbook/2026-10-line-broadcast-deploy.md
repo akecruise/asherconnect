@@ -464,6 +464,67 @@ curl -s -H "$H" "$B/internal/line/quota?channel_key=$CH"
 
 ---
 
+## 6.8 เปิดตัวดูดคิวไป CRM (`crmPublisherWorker`) — ★ ขั้นที่เสี่ยงที่สุดในไฟล์นี้
+
+โค้ดกู้กลับแล้ว (`e40f1eb`) แต่ **ยังปิดอยู่** · ความเสี่ยงไม่ใช่โค้ด แต่เป็น **backlog ที่ค้างมาตั้งแต่ 29 ก.ย.**
+เปิดทื่อ ๆ = ยิงของเก่าทั้งก้อนเข้า CRM รวดเดียว
+
+```bash
+# 6.8.1 นับก่อน — ยังไม่ต้องเปิดอะไร
+docker exec supabase-db psql -U postgres -d postgres -X -c "select inbox.crm_publish_stats();"
+docker exec supabase-db psql -U postgres -d postgres -X -c "
+select event_type, status, count(*), min(created_at) oldest
+  from inbox.crm_publish_outbox group by 1,2 order by 3 desc limit 20;"
+```
+
+**ตัดสินใจจากยอด `pending`:**
+
+| ยอด | ทำอะไร |
+|---|---|
+| หลักสิบ–ร้อย | เปิดได้เลยด้วยค่าตั้งต้น (`BATCH=5`) |
+| **หลักพันขึ้นไป** | ★ ปิดของเก่าทิ้งก่อนด้วย **แผน 1** ใน `docs/handoff/2026-10-02-phase0-audit.md` ข้อ 5 แล้วค่อยเปิด — ไม่งั้น CRM จะได้ของย้อนหลังเป็นพันใบที่ไม่มีใครอยากเห็น |
+
+```bash
+# 6.8.2 เปิดแบบช้า ๆ (ค่าตั้งต้น 5 ใบ/3 วินาที = ~100 ใบ/นาที)
+cd /opt/asher-inbox/app
+cp -a .env ".env.bak-$(date +%Y%m%d-%H%M%S)"
+cat >> .env <<'ENV'
+ASHER_CRM_PUBLISH_ENABLED=true
+ASHER_CRM_PUBLISH_BATCH=5
+ENV
+# ★ ต้องมีสามตัวนี้อยู่แล้ว ไม่งั้นจะขึ้น misconfigured แล้วไม่เดิน (ตั้งใจ)
+grep -E '^ASHER_CRM_(URL|CONNECT_TOKEN|WORKSPACE_ID|PROJECT_MAP)=' .env | sed 's/=.*/=<ตั้งไว้แล้ว>/'
+docker compose up -d
+```
+
+```bash
+# 6.8.3 ดูว่าคิวลดลงจริง — รัน 3 ครั้งห่างกัน ~30 วินาที
+curl -s http://127.0.0.1:3200/health | python3 -m json.tool | grep -A 12 '"crmPublisher"'
+```
+**ควรเห็น:** `status: "healthy"` · `pending` **ลดลงทุกครั้ง** · `delivered` เพิ่มขึ้น · `deadLetter` ไม่พุ่ง
+- `status: "misconfigured"` = ขาด url/token/workspace → ดู log `crm_publisher_misconfigured`
+- `deadLetter` พุ่งเร็ว = CRM ปฏิเสธ (contract/auth) → `last_error_code` ในตาราง และ **ปิดสวิตช์ก่อน**
+- `pending` ไม่ลด = ดู log `crm_publisher_failed`
+
+```bash
+# 6.8.4 เร่งเมื่อมั่นใจแล้ว
+sed -i 's/^ASHER_CRM_PUBLISH_BATCH=.*/ASHER_CRM_PUBLISH_BATCH=20/' .env && docker compose up -d
+```
+
+★ ตรวจว่า event ของ Phase 1–2 ถึง CRM แล้ว:
+```bash
+docker exec supabase-db psql -U postgres -d postgres -X -c "
+select event_type, status, count(*) from inbox.crm_publish_outbox
+ where event_type like 'broadcast%' or event_type like 'channel_identity%'
+ group by 1,2 order by 1,2;"
+```
+**ควรเห็น `delivered`** — ถ้ายัง `pending` ให้ดู `status`/`last_error_code` ของแถวนั้น
+(CRM ยังไม่ได้ทำตัวรับ `channel_identity.*` — คาดว่าจะได้ `dead_letter` พร้อม `http_4xx` ซึ่งถูกต้องตามสถานะงาน)
+
+**ปิดกลับทันที:** ลบ `ASHER_CRM_PUBLISH_ENABLED` ออกจาก `.env` แล้ว `docker compose up -d` — คิวหยุดเดินทันที ของที่ยังไม่ส่งยังอยู่ครบ
+
+---
+
 ## 7. ย้อนกลับ — แยกตามขั้น
 
 | ขั้นที่พลาด | วิธีย้อน | หมายเหตุ |
@@ -473,6 +534,7 @@ curl -s -H "$H" "$B/internal/line/quota?channel_key=$CH"
 | ต้องปิดประตู `/internal/*` ทั้งบาน | ลบ `CONNECT_SERVICE_TOKEN` ออกจาก `.env` แล้ว `docker compose up -d` | ไม่ตั้ง = ประตูปิดสนิท (ไม่ใช่เปิดให้ทุกคน) |
 | **3–4 โค้ดมีปัญหา** | สคริปต์พิมพ์คำสั่งย้อนให้ตอนล้มเอง:<br>`cd /opt/asher-inbox && rm -rf app && mv app.bak-<stamp> app && cd app && docker tag app-asher-connect:rollback-<stamp> app-asher-connect && docker compose up -d` | |
 | **6.5 Flex ต้อนรับ** | `update inbox.bot_config set value=to_jsonb(false) where key='reply.flex_welcome_on_follow';` | ไม่ต้อง deploy ไม่ต้องรีสตาร์ต |
+| **6.8 ตัวดูดคิวไป CRM** | ลบ `ASHER_CRM_PUBLISH_ENABLED` ออกจาก `.env` แล้ว `docker compose up -d` | คิวหยุดทันที ของที่ยังไม่ส่งอยู่ครบ ไม่ต้อง deploy |
 | **2 SQL** | **ไม่ต้องย้อน** — additive ทั้งไฟล์ (ตารางใหม่ ฟังก์ชันใหม่ + `alter ... add constraint` ที่ของเดิมยังผ่านเท่าเดิม) | ถ้าจะถอนจริง: `drop trigger trg_broadcast_follow_track on inbox.message;` แล้ว drop ตาราง `broadcast_*` / `channel_follow` · มี `pre-deploy-<stamp>.sql` เป็นตัวสำรอง |
 | อยากถอนทั้ง release | `git revert <merge commit>` → push → deploy commit ใหม่ | SQL ทิ้งไว้ได้ ไม่มีใครเรียก |
 
