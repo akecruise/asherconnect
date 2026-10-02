@@ -41,6 +41,7 @@ import { flagRpc } from './lib/case-flags.mjs'
 import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
 import { tokenMatches, bearerToken, validateMessages, normalizeRecipients, parseAllowlist,
          classifyMulticast, quotaAllows, MULTICAST_MAX } from './lib/broadcast.mjs'
+import { verifyIdToken, validateSiteVisit } from './lib/liff.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -1289,6 +1290,70 @@ async function sendBroadcastBatch(batch) {
     http_status: verdict.http_status ?? null, job_status: done?.status ?? null, live: broadcastLive })
 }
 
+// ───────────────────────────────────────────── LIFF นัดชมโครงการ (Phase 4)
+//
+// ★ ต่างจาก /internal/* สิ้นเชิง: ผู้เรียกคือ **เบราว์เซอร์ของลูกค้า** ไม่มี service token
+//   ตัวตนมาจาก ID token ที่ LINE ออกให้ และเราเอาไปถาม LINE ว่าเป็นของใคร
+//   ★★ ไม่เคยเชื่อ userId ที่ส่งมาจากหน้าเว็บ (ดู lib/liff.mjs)
+//
+// ★ ปิดไว้เป็นค่าตั้งต้น: ไม่ตั้ง LIFF_ID / LIFF_LOGIN_CHANNEL_ID / LIFF_CHANNEL_KEY
+//   = หน้านี้ตอบ 503 ไม่ใช่เปิดรับคำขอที่ยืนยันตัวไม่ได้
+const liffId = process.env.LIFF_ID || ''
+const liffLoginChannelId = process.env.LIFF_LOGIN_CHANNEL_ID || ''
+const liffChannelKey = process.env.LIFF_CHANNEL_KEY || ''
+const liffConfigured = Boolean(liffId && liffLoginChannelId && liffChannelKey)
+
+// หน้านี้เป็นหน้าสาธารณะที่ใครยิงก็ได้ จึงต้องมีเพดานของตัวเอง
+// แยกหน้าต่างจาก /internal/* เพราะคนละผู้เรียกและคนละความเสี่ยง
+const LIFF_RATE_WINDOW_MS = 60000
+const LIFF_RATE_MAX = Number(process.env.LIFF_RATE_MAX || 60)
+let liffWindowStart = 0, liffHits = 0
+
+async function liffRoute(req, res, url) {
+  if (req.method === 'GET' && url.pathname === '/liff/config') {
+    // ★ ส่งออกแค่ LIFF ID ซึ่งเป็นค่าสาธารณะ (ฝังในหน้าเว็บอยู่แล้วตามปกติ)
+    //   ห้ามส่ง LOGIN_CHANNEL_ID หรือค่าลับใด ๆ ออกไป
+    return json(res, liffConfigured ? 200 : 503, liffConfigured ? { liff_id: liffId } : { error: 'liff_disabled' })
+  }
+
+  if (req.method !== 'POST' || url.pathname !== '/liff/site-visit') throw fail(404, 'not_found')
+  if (!liffConfigured) throw fail(503, 'liff_disabled')
+
+  const now = Date.now()
+  if (now - liffWindowStart > LIFF_RATE_WINDOW_MS) { liffWindowStart = now; liffHits = 0 }
+  if (++liffHits > LIFF_RATE_MAX) throw fail(429, 'rate_limited')
+
+  const body = JSON.parse((await readBody(req, 16384)).toString('utf8'))
+
+  // ตรวจรูปคำขอก่อนไปถาม LINE — ไม่ต้องรบกวนปลายทางด้วยของที่ผิดอยู่แล้ว
+  const visit = validateSiteVisit(body)
+  if (!visit.ok) throw fail(400, visit.error)
+
+  const identity = await verifyIdToken({ idToken: body?.id_token, channelId: liffLoginChannelId })
+  if (!identity.ok) {
+    log.warn('liff_identity_rejected', { reason: identity.reason })
+    // 401 เฉพาะตอนที่ token มีปัญหา · 503 ตอนที่เราถาม LINE ไม่ได้ (ไม่ใช่ความผิดลูกค้า)
+    throw fail(identity.reason === 'verify_unavailable' ? 503 : 401, identity.reason)
+  }
+
+  const config = activeChannels.find(c => c.key === liffChannelKey)
+  if (!config) throw fail(503, 'liff_channel_not_configured')
+
+  const result = await rpcDirect(service, 'liff_site_visit_request', {
+    p: {
+      provider: config.channel, account_scope: config.inbox_id,
+      external_id: identity.userId, display_name: identity.displayName,
+      ...visit.visit,
+    },
+  })
+  // ★ log ไม่มี userId เต็มและไม่มีโน้ตของลูกค้า
+  log.info('liff_site_visit', {
+    event_id: result?.event_id ?? null, at: visit.visit.scheduled_at,
+    visitors: visit.visit.visitor_count, project: visit.visit.project_ref,
+  })
+  return json(res, 200, { ok: true, scheduled_at: result?.scheduled_at ?? visit.visit.scheduled_at })
+}
+
 /**
  * สถานะสุขภาพที่ยอมตอบว่าไม่ไหว
  *
@@ -1984,7 +2049,9 @@ const staticFiles = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.c
   '/sla.mjs': 'sla.mjs', '/case-flags.mjs': 'case-flags.mjs', '/app-nav.js': 'app-nav.js', '/quick-replies.js': 'quick-replies.js', '/media-library.js': 'media-library.js', '/quick-replies': 'quick-replies-admin.html', '/quick-replies-admin.js': 'quick-replies-admin.js',
   '/quick-replies.css': 'quick-replies.css', '/quick-replies-admin.css': 'quick-replies-admin.css',
   '/stats': 'stats.html', '/stats.js': 'stats.js', '/stats.css': 'stats.css', '/contacts': 'index.html',
-  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css' }
+  '/logs': 'logs.html', '/logs.js': 'logs.js', '/logs.css': 'logs.css',
+  // ★ ไฟล์ใหม่ใน public/ ต้องลงทะเบียนที่นี่ ไม่งั้น 404 (tests/static-files.test.mjs จับให้)
+  '/liff': 'liff.html', '/liff.js': 'liff.js', '/liff.css': 'liff.css' }
 
 async function handleStatic(req, res, url) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw fail(405, 'method_not_allowed')
@@ -2002,6 +2069,16 @@ async function handleStatic(req, res, url) {
   // ฟอนต์เปลี่ยนเมื่อเปลี่ยนชื่อไฟล์เท่านั้น จึงแคชได้ยาว
   // ส่วนหน้าเว็บกับสคริปต์ยังคง no-store ตามที่ตั้งไว้ด้านบน
   if (font) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+  // ★★ หน้า LIFF ต้องโหลด SDK จาก static.line-scdn.net และคุยกับ api.line.me
+  //   CSP ของทั้งระบบเป็น script-src 'self' ซึ่งจะบล็อก SDK → ผ่อนเฉพาะหน้านี้
+  //   เท่าที่จำเป็น ไม่แตะ CSP ของหน้าแชท (setHeader ทับค่าที่ตั้งไว้กลาง ๆ)
+  if (url.pathname === '/liff') {
+    res.setHeader('Content-Security-Policy',
+      "default-src 'self'; script-src 'self' https://static.line-scdn.net; "
+      + "style-src 'self'; img-src 'self' data: https:; "
+      + "connect-src 'self' https://api.line.me; frame-ancestors 'none'; "
+      + "base-uri 'none'; form-action 'self'")
+  }
   res.writeHead(200, { 'Content-Type': type })
   res.end(req.method === 'HEAD' ? undefined : data)
 }
@@ -2081,6 +2158,8 @@ async function route(req, res, url) {
   // ★ อยู่ก่อน /api/ และไม่ผ่าน checkOrigin โดยตั้งใจ — ผู้เรียกคือ CRM ในวงใน
   //   ไม่ใช่เบราว์เซอร์ จึงไม่มี Origin ให้ตรวจ ด่านคือ CONNECT_SERVICE_TOKEN อย่างเดียว
   if (url.pathname.startsWith('/internal/')) return internalRoute(req, res, url)
+
+  if (url.pathname.startsWith('/liff/')) return liffRoute(req, res, url)
 
   if (url.pathname.startsWith('/api/')) {
     if (req.method !== 'POST') throw fail(405, 'method_not_allowed')

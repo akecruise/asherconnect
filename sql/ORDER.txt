@@ -343,6 +343,15 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 202610021200 (ลำดับเวลา) · เพิ่ม unique index บน connect_private.job
 202610031100_service_outbound.sql
 
+# ── LIFF นัดชมโครงการ (Phase 4 ฝั่ง Connect) ──
+# ★ Connect ไม่เก็บนัด — "นัดชม" เป็นของ CRM ตาม BOUNDARIES
+#   ที่นี่แค่ยืนยัน ID token แล้วส่ง event appointment.requested เข้า outbox เดิม
+# ★ ต้องอยู่หลัง 202610021200 (ใช้ inbox.broadcast_emit + inbox.crm_event_id)
+# ★★ ไฟล์นี้ตั้ง check ของ crm_publish_outbox.event_type ใหม่ทั้งรายการ
+#   สามไฟล์ (202610021200 / 202610030900 / ไฟล์นี้) ต่างก็ตั้งทั้งก้อน ตัวท้ายชนะ
+#   ตกค่าไปหนึ่งค่า = ADD CONSTRAINT ล้มเพราะมีแถวเดิมใช้ค่านั้นอยู่ ห้ามตัดรายการ
+202610031400_liff_site_visit.sql
+
 # ── CRM อ่าน/เขียนดาวและ tag ที่ Connect เป็นเจ้าของ ──────────────────
 # ★ ใช้ internal API + CONNECT_SERVICE_TOKEN · ไม่สร้างตาราง tag/ดาวซ้ำใน CRM
 202610031200_crm_contact_flags_service.sql

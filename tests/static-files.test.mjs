@@ -6,7 +6,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const server = readFileSync(new URL('../server.mjs', import.meta.url), 'utf8')
-const table = /const staticFiles = \{([\s\S]*?)\}\n/.exec(server)[1]
+// ★ \r?\n เพราะ working tree บน Windows เป็น CRLF (git normalize เป็น LF ตอน commit)
+//   ของเดิมจับแค่ \n จึงพังเงียบ ๆ เมื่อมีคนแก้ไฟล์บนเครื่อง Windows
+const table = /const staticFiles = \{([\s\S]*?)\}\r?\n/.exec(server)[1]
 const served = new Set([...table.matchAll(/'(\/[^']*)'\s*:/g)].map(m => m[1]))
 
 test('every module app.js imports is served', () => {

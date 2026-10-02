@@ -38,8 +38,12 @@ begin;
 alter table inbox.crm_publish_outbox drop constraint if exists crm_publish_outbox_event_type_check;
 alter table inbox.crm_publish_outbox add constraint crm_publish_outbox_event_type_check
   check (event_type in ('message.received', 'message.sent',
+                        -- ★★ สองชนิดนี้มีแถวอยู่บน production แล้ว ห้ามตกจากรายการ
+                        --   ADD CONSTRAINT CHECK ตรวจแถวเดิมทั้งตาราง ตกไปหนึ่งค่า = deploy ล้ม
                         'conversation.created', 'contact.profile_updated',
                         'channel_identity.follow_changed',
+                        'channel_identity.postback',
+                        'appointment.requested',
                         'broadcast.batch_result', 'broadcast.completed'));
 
 -- ★★ event_id ของ inbox.crm_publish_outbox เป็น unique ทั้งตาราง ไม่ใช่ unique ต่อชนิด

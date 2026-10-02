@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>นัดชมโครงการ · ASHER</title>
+<link rel="stylesheet" href="/liff.css">
+</head>
+<body>
+<!-- ★ ไม่มี inline script และไม่มี inline style เลย — CSP ของทั้งระบบห้ามไว้
+     (ดู docs/handoff/2026-10-02-session-handoff.md "กับดักที่เจอแล้ว")
+     SDK ของ LIFF โหลดจาก static.line-scdn.net ซึ่ง CSP ของหน้านี้เปิดให้เฉพาะหน้านี้ -->
+<main class="wrap">
+  <h1>นัดชมโครงการ</h1>
+
+  <p class="state" id="state">กำลังเชื่อมต่อ LINE…</p>
+
+  <form class="form" id="form" hidden>
+    <label class="field">
+      <span>โครงการ</span>
+      <select id="project" name="project">
+        <option value="">— เลือกโครงการ —</option>
+        <option value="asher-vibe">ASHER Vibe</option>
+        <option value="asher-naii">ASHER Naii</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>วันและเวลาที่สะดวก</span>
+      <input type="datetime-local" id="when" name="when" required>
+    </label>
+
+    <label class="field">
+      <span>มากี่คน</span>
+      <input type="number" id="visitors" name="visitors" value="1" min="1" max="10" required>
+    </label>
+
+    <label class="field">
+      <span>บอกอะไรเพิ่มไหม <em>(ไม่บังคับ)</em></span>
+      <textarea id="note" name="note" rows="3" maxlength="500"></textarea>
+    </label>
+
+    <button type="submit" id="submit">ยืนยันนัด</button>
+    <p class="hint">ทีมงานจะติดต่อยืนยันอีกครั้งก่อนวันนัดครับ</p>
+  </form>
+
+  <p class="error" id="error" hidden></p>
+  <section class="done" id="done" hidden>
+    <h2>รับคำขอแล้ว</h2>
+    <p id="doneWhen"></p>
+    <p class="hint">ทีมงานจะติดต่อกลับเพื่อยืนยันครับ ปิดหน้านี้ได้เลย</p>
+  </section>
+</main>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="/liff.js" type="module"></script>
+</body>
+</html>

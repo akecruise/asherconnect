@@ -16,7 +16,16 @@ const SKIP = process.env.ALLOW_DB_TESTS !== '1'
 const SKIP_WHY = 'ต้องมีฐาน supabase จริง — ตั้ง ALLOW_DB_TESTS=1 ถ้าตั้งใจรัน'
 const strip = name => readFileSync(new URL(`../sql/${name}`, import.meta.url), 'utf8')
   .replace(/^begin;\s*$/gm, '').replace(/^commit;\s*$/gm, '')
-const migration = strip('202610031100_service_outbound.sql')
+// ★ ลง 202610031400 ด้วย เพื่อตรวจว่า check ของ event_type ยังยอมรับชนิดเดิมบน production
+//   (สามไฟล์ต่างก็ตั้ง constraint ทั้งก้อน ตกค่าไปหนึ่งค่า = deploy ล้ม)
+// ลงทั้งสายตามลำดับใน ORDER.txt — 202610031400 ต้องมี crm_publish_outbox (202609211300)
+// และ inbox.crm_event_id / broadcast_emit (202610021200) อยู่ก่อน
+const migration = [
+  strip('202609211300_crm_publisher.sql'),
+  strip('202610021200_line_broadcast.sql'),
+  strip('202610031100_service_outbound.sql'),
+  strip('202610031400_liff_site_visit.sql'),
+].join(';\n')
 
 function runSql(sql) {
   const args = ['-v', 'ON_ERROR_STOP=1', '-X', '-q']
@@ -163,6 +172,66 @@ BEGIN
   EXCEPTION WHEN others THEN v_blocked := true; END;
   PERFORM pg_temp.check(v_blocked, 'incomplete tuple is rejected');
 
+  -- ── ★ check ของ event_type ต้องยังยอมรับชนิดที่ production มีแถวอยู่แล้ว ──
+  --   ถ้าไฟล์ไหนตั้งรายการแล้วตกค่าไป ADD CONSTRAINT จะล้มตอน deploy
+  --   (เคยตกจริงสองไฟล์ เจอตอนเขียนเทสต์นี้)
+  FOR v_n IN 1..7 LOOP
+    v_blocked := false;
+    BEGIN
+      INSERT INTO inbox.crm_publish_outbox(event_id, event_type, aggregate_id, occurred_at, payload)
+      VALUES (gen_random_uuid(), (ARRAY['message.received','message.sent','conversation.created',
+              'contact.profile_updated','channel_identity.follow_changed',
+              'channel_identity.postback','appointment.requested'])[v_n],
+              'x', now(), '{}'::jsonb);
+    EXCEPTION WHEN others THEN v_blocked := true; END;
+    PERFORM pg_temp.check(NOT v_blocked, 'event type ' || v_n || ' must stay allowed');
+  END LOOP;
+  -- ชนิดที่ไม่รู้จักยังต้องถูกปฏิเสธ
+  v_blocked := false;
+  BEGIN
+    INSERT INTO inbox.crm_publish_outbox(event_id, event_type, aggregate_id, occurred_at, payload)
+    VALUES (gen_random_uuid(), 'something.invented', 'x', now(), '{}'::jsonb);
+  EXCEPTION WHEN others THEN v_blocked := true; END;
+  PERFORM pg_temp.check(v_blocked, 'an unknown event type is still refused');
+
+  -- ── LIFF: คำขอนัดกลายเป็น event ให้ CRM ────────────────────────────
+  r := inbox.liff_site_visit_request(jsonb_build_object(
+         'provider', v_chan, 'account_scope', v_inbox::text, 'external_id', 'USERVICEOUT',
+         'scheduled_at', (now() + interval '2 days')::text, 'visitor_count', 2,
+         'note', 'สนใจ 2 นอน', 'project_ref', 'asher-vibe'));
+  PERFORM pg_temp.check((r->>'contact_ref')::uuid = v_contact, 'resolved the contact');
+  PERFORM pg_temp.check(
+    (SELECT count(*) FROM inbox.crm_publish_outbox
+      WHERE event_id = (r->>'event_id')::uuid AND event_type = 'appointment.requested') = 1,
+    'appointment request published to the existing outbox');
+  PERFORM pg_temp.check(
+    (SELECT payload->>'visitor_count' = '2' AND payload->>'source' = 'liff'
+       FROM inbox.crm_publish_outbox WHERE event_id = (r->>'event_id')::uuid),
+    'payload carries what CRM needs');
+
+  -- ★ กดซ้ำเวลาเดิม = event เดียว (ลูกค้าไม่ต้องเห็น error และ CRM ไม่ได้นัดซ้ำ)
+  r2 := inbox.liff_site_visit_request(jsonb_build_object(
+          'provider', v_chan, 'account_scope', v_inbox::text, 'external_id', 'USERVICEOUT',
+          'scheduled_at', (now() + interval '2 days')::text, 'visitor_count', 5));
+  PERFORM pg_temp.check(r2->>'event_id' = r->>'event_id', 'same slot is the same event');
+  -- นับเฉพาะของ contact นี้ — loop ตรวจชนิด event ข้างบนใส่แถว placeholder ไว้ด้วย
+  PERFORM pg_temp.check(
+    (SELECT count(*) FROM inbox.crm_publish_outbox
+      WHERE event_type = 'appointment.requested' AND aggregate_id = v_contact::text) = 1,
+    'no duplicate appointment event');
+
+  -- คนที่ไม่เคยทักมา = ไม่มี contact → ปฏิเสธ ไม่สร้างคนใหม่จากหน้าเว็บ
+  v_blocked := false;
+  BEGIN
+    PERFORM inbox.liff_site_visit_request(jsonb_build_object(
+      'provider', v_chan, 'account_scope', v_inbox::text, 'external_id', 'UNEVERCHATTED',
+      'scheduled_at', (now() + interval '2 days')::text));
+  EXCEPTION WHEN others THEN v_blocked := true; END;
+  PERFORM pg_temp.check(v_blocked, 'a stranger cannot book without ever writing in');
+  PERFORM pg_temp.check(
+    (SELECT count(*) FROM core.contact_identity WHERE external_id = 'UNEVERCHATTED') = 0,
+    'and no contact was invented');
+
   -- ── สิทธิ์: หน้าเว็บของพนักงานเรียกไม่ได้ ───────────────────────────
   PERFORM pg_temp.check(
     NOT has_function_privilege('authenticated', 'inbox.service_notify(jsonb)', 'execute'),
@@ -176,6 +245,9 @@ BEGIN
   PERFORM pg_temp.check(
     NOT has_function_privilege('authenticated', 'inbox.service_resolve_contact(jsonb)', 'execute'),
     'authenticated cannot resolve another customer identity');
+  PERFORM pg_temp.check(
+    NOT has_function_privilege('authenticated', 'inbox.liff_site_visit_request(jsonb)', 'execute'),
+    'authenticated cannot book on behalf of a customer');
   PERFORM pg_temp.check(
     has_function_privilege('service_role', 'inbox.service_send_to_contact(jsonb)', 'execute'),
     'service_role can');

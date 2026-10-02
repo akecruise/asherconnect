@@ -1,0 +1,33 @@
+/* หน้า LIFF นัดชมโครงการ — สีอยู่ใน :root เหมือน app.css · แดงแบรนด์สงวนให้ error */
+:root {
+  --bg: #ffffff; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e3e3e3;
+  --accent: #1a1a1a; --error: #8E1116; --ok: #06713c;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161616; --fg: #f2f2f2; --muted: #a0a0a0; --line: #2e2e2e; --accent: #f2f2f2; }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: "IBM Plex Sans Thai", system-ui, -apple-system, sans-serif;
+  font-size: 16px; line-height: 1.5;
+}
+.wrap { max-width: 480px; margin: 0 auto; padding: 24px 20px 48px; }
+h1 { font-size: 20px; margin: 0 0 20px; }
+h2 { font-size: 18px; margin: 0 0 8px; color: var(--ok); }
+.state, .hint { color: var(--muted); font-size: 14px; }
+.field { display: block; margin-bottom: 18px; }
+.field > span { display: block; font-size: 14px; margin-bottom: 6px; }
+.field em { color: var(--muted); font-style: normal; }
+input, select, textarea {
+  width: 100%; padding: 12px; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+}
+textarea { resize: vertical; }
+button {
+  width: 100%; padding: 14px; font: inherit; font-weight: 600;
+  color: var(--bg); background: var(--accent); border: 0; border-radius: 10px;
+}
+button:disabled { opacity: .5; }
+.error { color: var(--error); font-size: 14px; }
+.done { text-align: center; padding-top: 12px; }
