@@ -19,6 +19,41 @@
 
 ---
 
+## ★ ค่าใช้จ่ายของแต่ละขั้น — ทดสอบทั้ง runbook นี้ไม่ต้องเสียเงิน
+
+LINE นับโควตาเฉพาะข้อความที่ **เราเป็นคนเริ่ม**: push · multicast · narrowcast · broadcast
+**ข้อความที่ตอบด้วย reply token ไม่นับ** และไม่จำกัดจำนวน
+
+| ขั้น | ข้อความที่ถูกนับ | ค่าใช้จ่าย |
+|---|---|---|
+| 1 pre-check · 2 ลง SQL · 2.4 ตรวจ | 0 | **ฟรี** |
+| 3 ตั้ง token | 0 | **ฟรี** |
+| 4.1 ทดสอบ 401 · 4.2 ถามโควตา · 4.3 อ่านข้อมูล | 0 | **ฟรี** (quota API ไม่นับตัวเอง) |
+| 4.4–4.6 dry run | **0** — ไม่แตะ network เลย | **ฟรี** |
+| 5 ยิงจริงหาทีมงาน 2–3 คน | **2–3** จาก 300 | ~1% ของโควตาฟรี |
+| 6 กลุ่มทดลอง ≤20 คน | 20 | ~7% ของโควตาฟรี |
+| ยิงทั้ง reach 2,690 | 2,690 | **เกินโควตาฟรี 9 เท่า — ต้องซื้อ** |
+
+**สรุป:** ทดสอบจนจบ Phase 1 ใช้โควตาไม่ถึง 1% · เรื่องซื้อแพ็กเกจเป็นการตัดสินใจของขั้น 6 เท่านั้น
+และ `quotaAllows()` จะ **ปฏิเสธงานทั้งก้อนล่วงหน้า** ถ้าผู้รับเกินโควตาคงเหลือ — ไม่มีทางส่งไปครึ่งทางแล้วเงินหมด
+
+### ตรวจโควตาจริงได้เลยตอนนี้ ไม่ต้อง deploy (ฟรี, อ่านอย่างเดียว)
+
+```bash
+# บน VPS — อ่าน token จาก channels.json โดยไม่พิมพ์ token ออกจอ
+CH=<channel_key ของ LINE OA>
+TOK=$(python3 -c "import json,sys;print(next(c['access_token'] for c in json.load(open('/opt/asher-inbox/app/channels.json')) if c['key']=='$CH'))")
+curl -s -H "Authorization: Bearer $TOK" https://api.line.me/v2/bot/message/quota; echo
+curl -s -H "Authorization: Bearer $TOK" https://api.line.me/v2/bot/message/quota/consumption; echo
+```
+**ควรเห็น:** `{"type":"limited","value":300}` และ `{"totalUsage":<n>}`
+→ `300 - n` คือจำนวนที่ยังส่งได้เดือนนี้ · `{"type":"none"}` = แพ็กเกจไม่จำกัด (ไม่ต้องห่วงเรื่องนี้เลย)
+
+**พิสูจน์ว่า reply ไม่กินโควตาเองได้:** จด `totalUsage` → ทักหา OA จากมือถือแล้วให้บอทตอบ (ทางนั้นใช้ reply token) → อ่าน `totalUsage` อีกครั้ง ต้องเท่าเดิม
+★ เรื่องนี้สำคัญกับ **Phase 2** โดยตรง: ข้อความต้อนรับ Flex ตอนลูกค้า follow ใช้ reply token → **ฟรี ไม่กินโควตา 300 เลย** แม้จะมีคนเพิ่มเพื่อนวันละร้อยคน
+
+---
+
 ## 0. ตัดสินใจเรื่อง branch ก่อน (★ ต้องทำก่อนทุกอย่าง)
 
 สาย production คือ `hotfix/login-button-color` **ไม่ใช่** `main` (`origin/main` = `ab2f655 "first commit"` ว่างเปล่า)
