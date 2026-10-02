@@ -40,8 +40,21 @@ alter table inbox.crm_publish_outbox add constraint crm_publish_outbox_event_typ
                         'channel_identity.follow_changed',
                         'broadcast.batch_result', 'broadcast.completed'));
 
+-- ★★ event_id ของ inbox.crm_publish_outbox เป็น unique ทั้งตาราง ไม่ใช่ unique ต่อชนิด
+--   และ trg_crm_publish_message (ของเดิม) จองค่า = id ของ message ไปแล้วทุกแถว
+--   ถ้าเราใช้ id ของ message ตรง ๆ เป็น event_id ของ event ชนิดใหม่ จะกลายเป็นว่า
+--   ตัวที่ทริกเกอร์ทำงานทีหลังถูก on conflict do nothing กลืนหายไปเงียบ ๆ
+--   (เรียงตามตัวอักษร: trg_broadcast_follow_track < trg_crm_publish_message < trg_postback_publish
+--    → follow_changed เคยไปกลืน message.sent ทิ้ง และ postback ไม่เคยถูกเขียนลงคิวเลย)
+--   ทางแก้: ผสมชนิดของ event เข้าไปในคีย์ ยังคงเดาได้แน่นอน (md5 ของค่าเดิมได้ค่าเดิม)
+--   จึงยิงซ้ำไม่เกิดแถวที่สอง แต่ event ต่างชนิดของ message เดียวกันอยู่ร่วมกันได้
+create or replace function inbox.crm_event_id(p_source uuid, p_event_type text)
+returns uuid language sql immutable set search_path = '' as $$
+  select md5(p_source::text || ':' || p_event_type)::uuid
+$$;
+
 -- ตัวเขียนคิวตัวเดียวของไฟล์นี้ — event_id ต้อง deterministic เสมอ
--- (retry_key ของ batch / id ของ job / id ของ message) ยิงซ้ำแล้วไม่เกิดแถวที่สอง
+-- (retry_key ของ batch / id ของ job / id ของ message ผ่าน inbox.crm_event_id)
 create or replace function inbox.broadcast_emit(
   p_event_id uuid, p_event_type text, p_aggregate_type text,
   p_aggregate_id text, p_occurred_at timestamptz, p_payload jsonb)
@@ -119,7 +132,8 @@ begin
 
   if coalesce(v_changed, false) then
     perform inbox.broadcast_emit(
-      NEW.id, 'channel_identity.follow_changed', 'channel_identity',
+      inbox.crm_event_id(NEW.id, 'channel_identity.follow_changed'),
+      'channel_identity.follow_changed', 'channel_identity',
       v_inbox.id::text || ':' || v_external, NEW.created_at,
       jsonb_build_object(
         'provider', v_inbox.channel, 'account_scope', v_inbox.id::text,
@@ -599,6 +613,7 @@ end $$;
 --   CONNECT_SERVICE_TOKEN ไม่ใช่ login ของพนักงาน (BOUNDARIES: หน้าจอ campaign อยู่ที่ CRM)
 revoke all on function
   inbox.broadcast_emit(uuid, text, text, text, timestamptz, jsonb),
+  inbox.crm_event_id(uuid, text),
   inbox.broadcast_enqueue(jsonb), inbox.broadcast_next_job(jsonb),
   inbox.broadcast_job_start(jsonb), inbox.broadcast_job_fail(jsonb),
   inbox.broadcast_claim_batch(jsonb), inbox.broadcast_batch_finish(jsonb),

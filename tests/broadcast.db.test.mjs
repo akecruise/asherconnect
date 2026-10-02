@@ -260,8 +260,14 @@ BEGIN
         WHERE inbox_id = v_inbox AND external_user_id = 'UFOLLOWTEST'), 'follow recorded');
     PERFORM pg_temp.check(
       (SELECT count(*) FROM inbox.crm_publish_outbox
-        WHERE event_id = v_msg AND event_type = 'channel_identity.follow_changed') = 1,
+        WHERE event_id = inbox.crm_event_id(v_msg, 'channel_identity.follow_changed')) = 1,
       'follow_changed published to the existing outbox');
+    -- ★ follow/unfollow เป็น message ของ 'system' ซึ่ง trg_crm_publish_message
+    --   ข้ามอยู่แล้ว (guard sender_type not in contact/agent/bot) จึงไม่เคยชนกัน
+    --   ตัวที่ชนจริงคือ postback ของลูกค้า — ดู tests/follow-welcome.db.test.mjs
+    PERFORM pg_temp.check(
+      (SELECT count(*) FROM inbox.crm_publish_outbox WHERE event_id = v_msg) = 0,
+      'the existing publisher skips system messages, so nothing claimed that id');
 
     INSERT INTO inbox.message(conversation_id, sender_type, content, content_type, event_type)
     VALUES (v_conv, 'system', '[ลูกค้าบล็อกบัญชี]', 'unfollow', 'unfollow');

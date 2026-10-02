@@ -326,3 +326,12 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 031_test_reset.sql (ใช้ inbox.conversation.is_test)
 #   และหลัง 202609231500_responder_attribution.sql (ใช้ message.responder_display_name)
 202610021200_line_broadcast.sql
+
+# ── Follow → Lead: ต้อนรับแบบ Flex + ส่ง postback ต่อให้ CRM (Phase 2 ฝั่ง Connect) ──
+# ★ ไม่แตะ connect_private.receive_event และไม่แตะ inbox.enqueue_outbound
+#   ใช้ทริกเกอร์ after insert บน inbox.message · ชื่อทริกเกอร์ต้องเรียงหลัง
+#   enqueue_outbound ตามตัวอักษร (enqueue_outbound < trg_follow_welcome_flex) เพราะ
+#   ไฟล์นี้ "อัปเกรด payload" ที่ของเดิมเข้าคิวไว้แล้วให้เป็น Flex
+# ★ ต้องอยู่หลัง 202610021200_line_broadcast.sql เสมอ — ใช้ inbox.broadcast_emit
+#   และ ALTER check constraint ตัวเดียวกันต่อจากรุ่นที่ไฟล์นั้นตั้งไว้
+202610030900_follow_welcome_flex.sql
