@@ -119,11 +119,17 @@ async function crmPublisherWorker() {
       let errorCode = null
       let errorDetail = null
       let nextAttemptAt = null
-      // conversation.created เท่านั้นที่พก project_ref — CRM ใช้ตัวนี้ตัดสินว่าจะเปิด Lead ไหม
+      // event ที่ทำให้ CRM เปิด Lead ได้ ต้องพก project_ref ไปด้วย — CRM ใช้ตัวนี้ตัดสิน
       // ไม่มีคู่ที่แมปไว้ = ส่งไปโดยไม่มี project_ref แล้ว CRM ลง project_ref_missing
       // (ไม่มี Lead แต่ contact/conversation ยังเข้าตามปกติ) ดีกว่าผูก Lead ผิดโครงการ
+      //
+      // ★ follow_changed ต้องอยู่ในรายการนี้ด้วย (เพิ่ม 2026-10-02 ตอนทำ Phase 2):
+      //   ฝั่ง CRM เปิด Lead จาก "คนเพิ่มเพื่อน" ซึ่งยังไม่มีบทสนทนา จึงไม่มีทางได้
+      //   project_ref จากที่อื่นเลย — และตารางแมปอยู่ใน env ของ Connect โดยเจตนา
+      //   (ASHER_CRM_PROJECT_MAP) CRM ไม่ควรต้องรู้ว่า inbox id ไหนคือโครงการอะไร
+      const needsProjectRef = ['conversation.created', 'channel_identity.follow_changed']
       let payload = row.payload
-      if (row.event_type === 'conversation.created') {
+      if (needsProjectRef.includes(row.event_type)) {
         const projectRef = projectRefFor(crmProjectMap, payload?.account_scope)
         if (projectRef) {
           payload = { ...payload, project_ref: projectRef }
