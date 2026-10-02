@@ -38,6 +38,7 @@ import { formatNotify, notifyTargets } from './bots/notify.mjs'
 import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
 import { flagRpc } from './lib/case-flags.mjs'
+import { classifyCrmFailure, crmBackoffMs, parseProjectMap, projectRefFor } from './lib/crm-publisher.mjs'
 import { tokenMatches, bearerToken, validateMessages, normalizeRecipients, parseAllowlist,
          classifyMulticast, quotaAllows, MULTICAST_MAX } from './lib/broadcast.mjs'
 
@@ -54,6 +55,136 @@ const outboundMediaSigningKey = process.env.OUTBOUND_MEDIA_SIGNING_KEY || servic
 const crmUrl = (process.env.ASHER_CRM_URL || '').replace(/\/$/, '')
 const crmToken = process.env.ASHER_CRM_CONNECT_TOKEN || ''
 const crmWorkspaceId = process.env.ASHER_CRM_WORKSPACE_ID || ''
+
+// ───────────────────────────────────────────── Connect -> CRM publisher
+//
+// ★★ ตัวนี้ "หายไป" จาก server.mjs ตอน 20a7799 (snapshot ของ VPS เขียนทับ repo ด้วยไฟล์
+//    ที่เก่ากว่า −870 บรรทัด) ผลคือ trigger ยังเขียนแถวเข้า inbox.crm_publish_outbox
+//    เรื่อย ๆ แต่ไม่มีใครดูด — คิวค้างเงียบ ๆ มาตั้งแต่ 29 ก.ย.
+//    กู้กลับจาก 20a7799^:server.mjs ซึ่งเป็นรุ่นล่าสุดก่อนถูกลบ (มี project_ref ครบ
+//    ต่างจากรุ่นแรกใน 8295043 ที่ยังไม่มี)
+//
+// ★ ปิดไว้เป็นค่าตั้งต้น: ต้องตั้ง ASHER_CRM_PUBLISH_ENABLED เอง และต้องมี url/token/workspace
+//   ครบถึงจะเดิน ขาดอย่างใดอย่างหนึ่ง = ไม่เดิน แต่ยังรายงานสถิติให้เห็นว่าคิวค้างเท่าไร
+const crmPublisherEnabled = process.env.ASHER_CRM_PUBLISH_ENABLED === 'true' || process.env.ASHER_CRM_PUBLISH_ENABLED === '1'
+// ★ ปิดไว้เป็นค่าตั้งต้น — crm_retry_profile_updates ยังไม่มีในฐานโปรดักชัน
+//   เปิดได้เมื่อ migration ของฝั่งนั้นขึ้นแล้ว ไม่งั้นรอบ publisher จะเสียเที่ยวทุกครั้ง
+const crmProfileRetryEnabled = process.env.ASHER_CRM_PROFILE_RETRY_ENABLED === 'true'
+const crmProducer = process.env.ASHER_CRM_PRODUCER || 'connect-sandbox'
+const crmPublisherConfigured = Boolean(crmPublisherEnabled && crmUrl && crmToken && crmWorkspaceId)
+// ช่องทาง -> โครงการ: CRM สร้าง Lead ได้ต่อเมื่อ conversation.created พก project_ref
+// ที่ชี้ไป crm_project_refs ซึ่ง active และ verified_at ไม่ว่าง
+const { map: crmProjectMap, invalid: crmProjectMapInvalid } = parseProjectMap(process.env.ASHER_CRM_PROJECT_MAP)
+const CRM_PUBLISH_INTERVAL = Number(process.env.ASHER_CRM_PUBLISH_INTERVAL_MS || 3000)
+// ★★ ของเดิมตั้งแข็งไว้ 20 ต่อรอบ 3 วินาที = ~400 ใบ/นาที
+//    ตอนกู้กลับมีคิวค้างสะสมตั้งแต่ 29 ก.ย. การเปิดสวิตช์จึงเท่ากับยิง backlog
+//    ทั้งก้อนเข้า CRM ทันที — ทำให้ปรับได้และตั้งค่าตั้งต้นต่ำ เพื่อให้ค่อย ๆ เร่งได้
+//    (เพดาน 100 เป็นของ crm_publish_claim เองอยู่แล้ว)
+const CRM_PUBLISH_BATCH = Math.max(1, Math.min(Number(process.env.ASHER_CRM_PUBLISH_BATCH || 5), 100))
+const CRM_PUBLISH_LEASE_SECONDS = 60
+let crmPublisherRunning = false
+let crmPublisherLastSuccess = null
+let crmPublisherLastError = null
+let crmPublisherStats = { pending: 0, processing: 0, delivered: 0, dead_letter: 0, last_success_at: null, last_error_at: null, oldest_pending_at: null }
+
+async function refreshCrmPublisherStats() {
+  try {
+    const stats = await rpcDirect(service, 'crm_publish_stats')
+    if (stats && typeof stats === 'object') crmPublisherStats = { ...crmPublisherStats, ...stats }
+  } catch (e) {
+    crmPublisherLastError = new Date().toISOString()
+    log.warn('crm_publisher_stats_failed', { reason: e.message })
+  }
+}
+
+async function crmPublisherWorker() {
+  if (crmPublisherRunning) return
+  if (!crmPublisherConfigured) {
+    // ยังไม่เปิด แต่ถ้ามีใครตั้งค่าไว้บางส่วน ให้ยังเห็นยอดคิวค้างบน /health
+    if (crmPublisherEnabled || crmUrl || crmToken || crmWorkspaceId) await refreshCrmPublisherStats()
+    return
+  }
+  crmPublisherRunning = true
+  try {
+    if (crmProfileRetryEnabled) {
+      try { await rpcDirect(service, 'crm_retry_profile_updates', { p_limit: CRM_PUBLISH_BATCH }) }
+      catch { log.warn('crm_profile_retry_failed', { code: 'profile_retry_unavailable' }) }
+    }
+    const rows = await rpcDirect(service, 'crm_publish_claim', {
+      p_limit: CRM_PUBLISH_BATCH,
+      p_lease_seconds: CRM_PUBLISH_LEASE_SECONDS,
+    })
+    for (const row of Array.isArray(rows) ? rows : []) {
+      let result = 'delivered'
+      let errorCode = null
+      let errorDetail = null
+      let nextAttemptAt = null
+      // conversation.created เท่านั้นที่พก project_ref — CRM ใช้ตัวนี้ตัดสินว่าจะเปิด Lead ไหม
+      // ไม่มีคู่ที่แมปไว้ = ส่งไปโดยไม่มี project_ref แล้ว CRM ลง project_ref_missing
+      // (ไม่มี Lead แต่ contact/conversation ยังเข้าตามปกติ) ดีกว่าผูก Lead ผิดโครงการ
+      let payload = row.payload
+      if (row.event_type === 'conversation.created') {
+        const projectRef = projectRefFor(crmProjectMap, payload?.account_scope)
+        if (projectRef) {
+          payload = { ...payload, project_ref: projectRef }
+        } else {
+          log.warn('crm_project_map_miss', { account_scope: payload?.account_scope, event_id: row.event_id })
+        }
+      }
+      try {
+        const response = await fetch(`${crmUrl}/internal/events`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${crmToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_id: row.event_id,
+            producer: crmProducer,
+            type: row.event_type,
+            schema_version: 1,
+            workspace_id: crmWorkspaceId,
+            aggregate_type: row.aggregate_type,
+            aggregate_id: row.aggregate_id,
+            aggregate_version: 1,
+            occurred_at: row.occurred_at,
+            emitted_at: new Date().toISOString(),
+            correlation_id: row.aggregate_id,
+            causation_id: row.event_id,
+            source_is_test: false,
+            payload,
+          }),
+          signal: AbortSignal.timeout(10000),
+        })
+        if (!response.ok) {
+          result = classifyCrmFailure({ status: response.status })
+          errorCode = `http_${response.status}`
+          errorDetail = (await response.text()).slice(0, 1000)
+        }
+      } catch (e) {
+        result = 'retry'
+        errorCode = e.name === 'TimeoutError' ? 'timeout' : 'network_error'
+        errorDetail = e.message
+      }
+      if (result === 'retry') {
+        const attempts = Number(row.attempts || 1)
+        nextAttemptAt = new Date(Date.now() + crmBackoffMs(attempts)).toISOString()
+      }
+      await rpcDirect(service, 'crm_publish_finish', {
+        p_id: row.id,
+        p_status: result,
+        p_error_code: errorCode,
+        p_error_detail: errorDetail,
+        p_next_attempt_at: nextAttemptAt,
+      })
+      if (result === 'delivered') crmPublisherLastSuccess = new Date().toISOString()
+      if (result === 'dead_letter' || result === 'retry') crmPublisherLastError = new Date().toISOString()
+    }
+    await refreshCrmPublisherStats()
+  } catch (e) {
+    crmPublisherLastError = new Date().toISOString()
+    log.warn('crm_publisher_failed', { reason: e.message })
+  } finally {
+    crmPublisherRunning = false
+  }
+}
 
 let channels = []
 if (process.env.CONNECT_CHANNELS_FILE) channels = JSON.parse(await readFile(process.env.CONNECT_CHANNELS_FILE, 'utf8'))
@@ -1062,7 +1193,23 @@ function health() {
            // เหตุผลเดียวกับ bot: "ยังไม่ได้ส่งจริง" ต้องอ่านได้จากข้างนอก ไม่ใช่เดาจาก log
            // ★ ไม่ถ่วง ok ของ health — ตัวส่งหลายคนเงียบเป็นเรื่องปกติ (ส่วนใหญ่ไม่มีงาน)
            broadcast: { live: broadcastLive, serviceTokenSet: serviceToken !== '',
-                        testAllowlist: broadcastTestAllowlist.length, lastSuccess: broadcastLastSuccess } }
+                        testAllowlist: broadcastTestAllowlist.length, lastSuccess: broadcastLastSuccess },
+           // ท่อ Connect -> CRM: ต้องเห็นยอดคิวค้างจากข้างนอกเสมอ ไม่ใช่เดาจาก log
+           // ★ ไม่ถ่วง ok ของ health — CRM ล่มต้องไม่ทำให้ container ของ Connect ขึ้น unhealthy
+           crmPublisher: {
+             enabled: crmPublisherEnabled,
+             configured: crmPublisherConfigured,
+             status: !crmPublisherEnabled ? 'disabled' : crmPublisherConfigured ? 'healthy' : 'misconfigured',
+             batchPerTick: CRM_PUBLISH_BATCH,
+             profileRetryEnabled: crmProfileRetryEnabled,
+             pending: Number(crmPublisherStats.pending || 0),
+             processing: Number(crmPublisherStats.processing || 0),
+             delivered: Number(crmPublisherStats.delivered || 0),
+             deadLetter: Number(crmPublisherStats.dead_letter || 0),
+             lastSuccessAt: crmPublisherLastSuccess || crmPublisherStats.last_success_at || null,
+             lastErrorAt: crmPublisherLastError || crmPublisherStats.last_error_at || null,
+             oldestPendingAt: crmPublisherStats.oldest_pending_at || null,
+           } }
 }
 
 // ───────────────────────────────────────────────────────── ตัวช่วย HTTP
@@ -1836,6 +1983,17 @@ const inboundTimer = setInterval(inboundWorker, WORKER_INTERVAL); inboundTimer.u
 // ตัวส่งหลายคนเดินช้ากว่าคิวแชทได้ — งานเป็นก้อน ไม่มีใครรออยู่หน้าจอ
 // และเดินถี่เท่ากันจะกลายเป็นการถาม "มีงานไหม" ทุก 3 วิ ทั้งที่ส่วนใหญ่ไม่มี
 const broadcastTimer = setInterval(broadcastWorker, 5000); broadcastTimer.unref()
+const crmPublisherTimer = setInterval(crmPublisherWorker, CRM_PUBLISH_INTERVAL); crmPublisherTimer.unref()
+if (crmPublisherConfigured) {
+  log.info('crm_publisher_started', { batchPerTick: CRM_PUBLISH_BATCH, intervalMs: CRM_PUBLISH_INTERVAL })
+  crmPublisherWorker().catch(e => log.warn('crm_publisher_start_failed', { reason: e.message }))
+} else if (crmPublisherEnabled) {
+  log.warn('crm_publisher_misconfigured', { urlConfigured: Boolean(crmUrl), tokenConfigured: Boolean(crmToken), workspaceConfigured: Boolean(crmWorkspaceId) })
+}
+if (crmProjectMapInvalid.length) log.warn('crm_project_map_invalid', { entries: crmProjectMapInvalid.length })
+else if (crmPublisherConfigured && crmProjectMap.size === 0) {
+  log.warn('crm_project_map_empty', { hint: 'ASHER_CRM_PROJECT_MAP ว่าง — conversation.created จะไม่มี project_ref และ CRM จะไม่เปิด Lead' })
+}
 // ของดิบมีข้อความลูกค้าจริงอยู่ในนั้น เก็บ 30 วันตามที่ตั้งไว้ในฝั่งฐาน
 // เดินวันละสี่ครั้งก็พอ ไม่ใช่งานที่ต้องตรงเวลา ขอแค่ไม่มีวันที่ลืมทำ
 const sweepTimer = setInterval(() => {
@@ -1860,6 +2018,7 @@ process.on('SIGTERM', () => {
   clearInterval(workerTimer)
   clearInterval(inboundTimer)
   clearInterval(broadcastTimer)
+  clearInterval(crmPublisherTimer)
   clearInterval(sweepTimer)
   clearInterval(sessionTimer)
   server.close(() => process.exit(0))
