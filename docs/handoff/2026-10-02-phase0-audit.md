@@ -108,7 +108,34 @@ ORDER.txt : inbox.reply_report(date, timestamptz default null) ← รุ่น�
 | **C** | ไม่แตะฐาน ยอมรับว่า `report`/`outcomes` รันได้เฉพาะบนฐานที่ตรงรุ่น | ไม่เสี่ยงอะไรเลย | `npm test` ไม่มีวันเขียวในเครื่องนี้ |
 
 **ที่แนะนำ: A ก่อน** (ย้อนกลับได้ — นิยามเดิมอยู่ใน `009_report.sql`) แล้วค่อยวางแผน B เป็นงาน ops แยก
-**ยังไม่ทำให้ เพราะเป็นการแก้ฐานของผู้ใช้ และผลพลอยได้คือ cron ในเครื่องถูกตั้งใหม่**
+
+#### แผน A — คำสั่งที่รันได้เลย (ฐานในเครื่องเท่านั้น ไม่ใช่ VPS)
+
+```bash
+# 1) สำรองนิยามเดิมไว้ก่อน (เผื่อย้อน)
+docker exec -i supabase-db psql -U postgres -d postgres -X -A -t -c "
+select pg_get_functiondef(p.oid) || E';\n' from pg_proc p
+  join pg_namespace n on n.oid=p.pronamespace
+ where n.nspname='inbox'
+   and p.proname in ('reply_report','enqueue_daily_report','reply_episodes')" > /tmp/pre012-funcs.sql
+
+# 2) ลง 012
+docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -X -q \
+  < sql/012_report_weekly_sla.sql
+
+# 3) ตรวจว่าได้ลายเซ็นใหม่แล้ว — ต้องเห็น (p_day date, p_until timestamptz)
+docker exec -i supabase-db psql -U postgres -d postgres -X -c "
+select proname, pg_get_function_identity_arguments(oid) from pg_proc
+ where pronamespace='inbox'::regnamespace and proname='reply_report'"
+
+# 4) เทสต์
+node --test --test-concurrency=1 tests/report.test.mjs tests/outcomes.test.mjs
+```
+
+ย้อนกลับ: `docker exec -i supabase-db psql -U postgres -d postgres -X -q < /tmp/pre012-funcs.sql`
+ผลข้างเคียงที่ต้องรู้: `012` สั่ง `cron.unschedule`/`cron.schedule` ของงาน `asher-report-weekly` · `asher-report-monthly` · `asher-report-2000` (ของเดิมในเครื่องคือ `asher-daily-report`, `asher-label-outcomes`, `asher-report-daily`, `asher-watchdog` — ไม่ชนกัน)
+
+> **ยังไม่ได้รันให้** — sandbox ของ session นี้บล็อกการเขียนลงฐานที่ใช้ร่วมกัน (`Modify Shared Resources`) และตัวมันเองก็เป็นการแก้ฐานของผู้ใช้ ซึ่งควรเป็นคนตัดสินใจเอง
 
 ---
 
