@@ -8,18 +8,19 @@ const B = '22222222-2222-4222-8222-222222222222'
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('image')])
 const v1 = 'a'.repeat(24), v2 = 'b'.repeat(24)
 
-const setup = ({ units = [{ id: A, quotation_version: v1 }, { id: B, quotation_version: v1 }], stored = [], render } = {}) => {
+const setup = ({ units = [{ id: A, quotation_version: v1 }, { id: B, quotation_version: v1 }], stored = [], render, crmDown = false } = {}) => {
   const calls = { list: 0, render: 0, write: [] }
   let clock = 0
   let catalog = units
+  let down = crmDown
   const images = createUnitQuotationImages({
-    async listFromCrm () { calls.list++; return catalog },
+    async listFromCrm () { calls.list++; if (down) throw new Error('crm_404'); return catalog },
     async fetchFromCrm (id) { calls.render++; return render ? render(id) : { bytes: png, version: catalog.find(u => u.id === id)?.quotation_version ?? v1 } },
     async listStored () { return stored },
     async writeObject (path) { calls.write.push(path) },
     now: () => clock,
   })
-  return { images, calls, tick: ms => { clock += ms }, setCatalog: c => { catalog = c } }
+  return { images, calls, tick: ms => { clock += ms }, setCatalog: c => { catalog = c }, setDown: d => { down = d } }
 }
 
 test('stored path is accepted by the signed outbound-media route', () => {
@@ -85,4 +86,38 @@ test('a non-PNG response is not stored', async () => {
   await images.refresh()
   await assert.rejects(images.pathFor(A), /not_png/)
   assert.equal(calls.write.length, 0)
+})
+
+test('CRM down on a fresh start: the newest stored image of the room is sent', async () => {
+  const { images } = setup({ crmDown: true, stored: [
+    { path: unitQuotationPath(A, v1), at: '2026-09-28T10:00:00Z' },
+    { path: unitQuotationPath(A, v2), at: '2026-09-29T10:00:00Z' },
+  ] })
+  assert.equal(await images.pathFor(A), unitQuotationPath(A, v2))
+})
+
+test('CRM down after a stale list: the last known version is sent without CRM', async () => {
+  const { images, calls, tick, setDown } = setup()
+  await images.warmAll()
+  const rendered = calls.render
+  setDown(true)
+  tick(3 * 60_000)
+  assert.equal(await images.pathFor(A), unitQuotationPath(A, v1))
+  assert.equal(calls.render, rendered)
+})
+
+test('CRM fails to render: fall back to a stored image of the room', async () => {
+  const { images, setCatalog } = setup({ stored: [unitQuotationPath(A, v1)], render: () => { throw new Error('crm_500') } })
+  setCatalog([{ id: A, quotation_version: v2 }])
+  assert.equal(await images.pathFor(A), unitQuotationPath(A, v1))
+})
+
+test('CRM down and nothing stored for the room: the CRM error surfaces', async () => {
+  const { images } = setup({ crmDown: true, stored: [unitQuotationPath(B, v1)] })
+  await assert.rejects(images.pathFor(A), /crm_404/)
+})
+
+test('CRM up and says the room is gone: a stored image is never sent', async () => {
+  const { images } = setup({ units: [{ id: B, quotation_version: v1 }], stored: [unitQuotationPath(A, v1)] })
+  await assert.rejects(images.pathFor(A), e => e.status === 409 && e.message === 'unit_unavailable')
 })

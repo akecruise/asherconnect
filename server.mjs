@@ -1200,14 +1200,24 @@ async function handleCommand(req, res) {
       rpc(accessToken, 'bootstrap'),
     ])
     if (!detail?.conversation?.id || !who.user?.id) throw fail(403, 'not_allowed')
-    const response = await crmQuotation('/api/integrations/connect/quotation-units', { actorId: who.user.id })
-    const result = await response.json().catch(() => ({}))
+    // CRM ล่ม → ใช้รายการห้องล่าสุดที่เคยได้ เซลส์ยังเลือกห้องแล้วส่งรูปที่เก็บไว้ได้
+    let response, result = {}
+    try {
+      response = await crmQuotation('/api/integrations/connect/quotation-units', { actorId: who.user.id })
+      result = await response.json().catch(() => ({}))
+    } catch (e) {
+      if (e.status || !lastQuotationUnits) throw e
+      log.warn('crm_quotation_units_failed', { status: null, reason: e.message, served_cached: true })
+      return json(res, 200, lastQuotationUnits)
+    }
     if (!response.ok) {
-      log.warn('crm_quotation_units_failed', { status: response.status, code: result.error?.code ?? null })
+      log.warn('crm_quotation_units_failed', { status: response.status, code: result.error?.code ?? null, served_cached: response.status !== 403 && !!lastQuotationUnits })
       if (response.status === 403) throw fail(403, 'not_allowed')
+      if (lastQuotationUnits) return json(res, 200, lastQuotationUnits)
       throw fail(503, 'service_unavailable')
     }
-    return json(res, 200, Array.isArray(result.data) ? result.data : [])
+    lastQuotationUnits = Array.isArray(result.data) ? result.data : []
+    return json(res, 200, lastQuotationUnits)
   }
 
   const data = await rpc(accessToken, input.action, input.data)
@@ -1387,13 +1397,14 @@ const unitQuotations = createUnitQuotationImages({
       })
       if (!response.ok) throw new Error(`storage_${response.status}`)
       const page = await response.json()
-      for (const item of page) if (item?.name) paths.push(`outbound/${item.name}`)
+      for (const item of page) if (item?.name) paths.push({ path: `outbound/${item.name}`, at: item.updated_at || item.created_at || null })
       if (page.length < 1000) return paths
     }
   },
   writeObject: (path, bytes) => uploadMediaObject(path, { bytes, type: 'image/png' }),
   log,
 })
+let lastQuotationUnits = null
 const warmUnitQuotations = () => { if (crmUrl && crmToken && crmWorkspaceId) unitQuotations.warmAll().catch(e => log.warn('unit_quotation_prerender_failed', { reason: e.message })) }
 
 async function outboundImageUpload(req, res) {
