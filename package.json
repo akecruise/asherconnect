@@ -8,8 +8,8 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/testcmd.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node --test tests/media.test.mjs tests/media-http.test.mjs && node --test tests/quick-replies-import.test.mjs tests/quick-replies-sale.test.mjs tests/quick-replies-admin.test.mjs && node --test tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/static-files.test.mjs && node tests/http.integration.mjs",
-    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js && node --check public/case-flags.mjs && node --check lib/case-flags.mjs && node --check public/quick-replies.js && node --check public/quick-replies-admin.js && node --check lib/media.mjs && node --check lib/media-http.mjs && node --check lib/quick-replies-import.mjs && node sql/run.mjs check",
+    "test": "node --test tests/auth.test.mjs && node --test tests/profile.test.mjs && node --test tests/providers.test.mjs && node --test tests/bots.test.mjs && node --test tests/testcmd.test.mjs && node --test tests/report.test.mjs && node --test tests/outcomes.test.mjs && node --test tests/decide.test.mjs && node --test tests/media.test.mjs tests/media-http.test.mjs && node --test tests/quick-replies-import.test.mjs tests/quick-replies-sale.test.mjs tests/quick-replies-admin.test.mjs && node --test tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/static-files.test.mjs && node --test tests/broadcast.test.mjs && node tests/http.integration.mjs",
+    "check": "node --check server.mjs && node --check auth.mjs && node --check providers.mjs && node --check public/app.js && node --check public/case-flags.mjs && node --check lib/case-flags.mjs && node --check lib/broadcast.mjs && node --check public/quick-replies.js && node --check public/quick-replies-admin.js && node --check lib/media.mjs && node --check lib/media-http.mjs && node --check lib/quick-replies-import.mjs && node sql/run.mjs check",
     "test:qr": "node --test tests/quick-replies-import.test.mjs tests/quick-replies-sale.test.mjs tests/quick-replies-admin.test.mjs",
     "test:qr-admin": "node --test tests/quick-replies-admin.test.mjs",
     "test:media": "node --test tests/media.test.mjs tests/media-http.test.mjs",
@@ -26,6 +26,7 @@
     "sql:apply": "node sql/run.mjs apply",
     "test:testcmd": "node --test tests/testcmd.test.mjs",
     "test:testreset": "node --test tests/testreset.db.test.mjs",
-    "test:star-follow-tags": "node --test --test-concurrency=1 tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/star-follow-tags.db.test.mjs tests/contacts-page.db.test.mjs"
+    "test:star-follow-tags": "node --test --test-concurrency=1 tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/star-follow-tags.db.test.mjs tests/contacts-page.db.test.mjs",
+    "test:broadcast": "node --test --test-concurrency=1 tests/broadcast.test.mjs tests/broadcast.db.test.mjs"
   }
 }

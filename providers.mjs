@@ -506,6 +506,65 @@ async function sendEmail(job, base, target, config, fetcher) {
   return { ...base, status: 'sent', provider_id: data?.id ?? null }
 }
 
+// ───────────────────────────────────────────── ส่งหลายคน (multicast) + โควตา
+//
+// แยกจาก deliver() โดยตั้งใจ: deliver เป็นท่อของ "คิวขาออกต่อข้อความ" ซึ่งผูกกับ
+// message_id หนึ่งแถวเสมอ ส่วน multicast เป็นงานเป็นก้อนที่ไม่มีแถวใน inbox.message
+// (BOUNDARIES: Connect เป็นตัวส่ง หน้าจอ campaign อยู่ที่ CRM) ยัดรวมกันจะทำให้
+// สถิติการตอบและ SLA นับ broadcast เป็น "การตอบลูกค้า" ซึ่งผิดทั้งสองหน้าจอ
+
+const LINE_MULTICAST = 'https://api.line.me/v2/bot/message/multicast'
+const LINE_QUOTA = 'https://api.line.me/v2/bot/message/quota'
+const LINE_QUOTA_USED = 'https://api.line.me/v2/bot/message/quota/consumption'
+
+/**
+ * ยิง multicast หนึ่งชุด (≤500 userId, ≤5 ข้อความ)
+ *
+ * ★ retryKey ต้องเป็นตัวเดิมทุกครั้งที่ยิง batch นี้ซ้ำ — นั่นคือสิ่งเดียวที่กัน
+ *   ลูกค้าได้ข้อความสองรอบตอน timeout แล้วลองใหม่ เปลี่ยนคีย์เมื่อไหร่ LINE ถือว่า
+ *   เป็นคำขอใหม่ทันที (คีย์เก็บถาวรใน connect_private.broadcast_batch.retry_key)
+ * ★ คืนผลดิบ ไม่ตัดสินใจเอง — คนตัดสินคือ classifyMulticast() ใน lib/broadcast.mjs
+ *   เพื่อให้ทดสอบกฎ retry ได้โดยไม่ต้องมี network
+ */
+export async function sendMulticast({ to, messages, retryKey, accessToken }, fetcher = fetch) {
+  if (!accessToken) return { status: 0, network: false, error: 'line_token_missing' }
+  try {
+    const response = await fetcher(LINE_MULTICAST, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+        'X-Line-Retry-Key': retryKey,
+      },
+      body: JSON.stringify({ to, messages }),
+      signal: AbortSignal.timeout(30000),
+    })
+    const requestId = response.headers.get('x-line-accepted-request-id')
+      ?? response.headers.get('x-line-request-id') ?? null
+    // เก็บ body ไว้เฉพาะตอนพลาด และตัดให้สั้น — ของที่ LINE ตอบกลับมีแต่รหัสกับคำอธิบาย
+    const detail = response.ok ? null : (await response.text().catch(() => '')).slice(0, 500) || null
+    return { status: response.status, network: false, requestId, detail }
+  } catch (e) {
+    // timeout / ปลายทางไม่ตอบ — แยกไม่ได้ว่า LINE รับไปแล้วหรือยัง
+    // ยิงซ้ำด้วย retry key เดิมปลอดภัย: ถ้ารับไปแล้วจะได้ 409 ซึ่งนับเป็นสำเร็จ
+    return { status: 0, network: true, requestId: null, detail: e.message }
+  }
+}
+
+/** โควตาเดือนนี้ — {limit, used, remaining} · limit null = แพ็กเกจไม่จำกัด */
+export async function lineQuota({ accessToken }, fetcher = fetch) {
+  if (!accessToken) throw Object.assign(new Error('line_token_missing'), { status: 503 })
+  const headers = { Authorization: `Bearer ${accessToken}` }
+  const opts = { headers, signal: AbortSignal.timeout(15000) }
+  const [quota, used] = await Promise.all([fetcher(LINE_QUOTA, opts), fetcher(LINE_QUOTA_USED, opts)])
+  if (!quota.ok) throw Object.assign(new Error(`line_http_${quota.status}`), { status: 502 })
+  const q = await quota.json().catch(() => ({}))
+  const u = used.ok ? await used.json().catch(() => ({})) : {}
+  // type 'none' = ไม่จำกัด · 'limited' = มีเพดานใน q.value
+  const limit = q?.type === 'limited' && Number.isFinite(Number(q.value)) ? Number(q.value) : null
+  const consumed = Number(u?.totalUsage ?? 0)
+  return { limit, used: consumed, remaining: limit === null ? null : Math.max(0, limit - consumed) }
+}
+
 /**
  * สัญญาณ "กำลังพิมพ์"
  *

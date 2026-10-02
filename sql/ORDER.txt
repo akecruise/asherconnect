@@ -298,6 +298,16 @@ _ledger.sql
 # ★ ต้องอยู่หลัง 202609261000_media_library (ใช้ inbox.media_library_role)
 202609261100_unit_availability.sql
 
+# ── เก็บประวัติ LINE OA Manager ที่ยังจับคู่ userId ไม่ได้ (2026-09-27) ──
+# ★ ตกหล่นจากทะเบียนตอนเขียน — เติมย้อนหลัง 2026-10-02 (run.mjs check ฟ้องว่าอยู่บนดิสก์แต่ไม่มีใครสั่งรัน)
+#   ตารางใหม่ล้วนใน connect_private ไม่แตะของเดิม รันซ้ำได้ ไม่ผูกลำดับกับใคร
+202609270700_line_oa_history_archive.sql
+
+# ── ชุดคำถามคัดกรองของ Quick Reply (2026-09-27) ──
+# ★ ตกหล่นจากทะเบียนเช่นกัน — ขยาย quick_reply_category_check + seed แถว
+#   ต้องอยู่หลังไฟล์ที่สร้าง inbox.quick_reply (asher-web 20260916154809_quick_reply)
+202609271000_quick_reply_qualification.sql
+
 # ── ติดดาว · การติดตาม · Tag แบบ LINE OA (docs/handoff/2026-10-01-star-follow-tags.md) ──
 # ★ ไม่แตะ connect_private.api — ฟังก์ชันแยกใน inbox เรียกผ่าน rpcDirect แบบ queue_counts
 #   คอลัมน์ select ของ inbox.flag_list คัดจากกิ่ง list ของ 202609221400_manual_name_guard
@@ -307,3 +317,12 @@ _ledger.sql
 # ── หน้ารายชื่อติดต่อ + drawer ลูกค้า (อ่านอย่างเดียว ไม่แตะเวลาข้อความ) ──
 # ★ ต้องอยู่หลัง 202610011000_contact_star_tags (ใช้ inbox.flag_actor / flag_tags_of / flag_contact_of)
 202610021000_contacts_page.sql
+
+# ── ตัวส่ง LINE หลายคน + สถานะ follow ต่อช่องทาง (docs/handoff/2026-10-02-line-broadcast-sender.md) ──
+# ★ ไม่แตะ connect_private.api และไม่แตะ connect_private.receive_event — สถานะ follow
+#   เก็บด้วยทริกเกอร์ after insert บน inbox.message แบบเดียวกับ trg_crm_publish_message
+# ★ ต้องอยู่หลัง 202609211300_crm_publisher.sql เสมอ — ALTER check constraint ของ
+#   inbox.crm_publish_outbox.event_type ที่ไฟล์นั้นสร้าง (สลับลำดับแล้วจะ error ชัด ๆ)
+# ★ ต้องอยู่หลัง 031_test_reset.sql (ใช้ inbox.conversation.is_test)
+#   และหลัง 202609231500_responder_attribution.sql (ใช้ message.responder_display_name)
+202610021200_line_broadcast.sql

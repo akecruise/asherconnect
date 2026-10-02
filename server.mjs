@@ -21,7 +21,7 @@ import { createSessions } from './auth.mjs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { verifySignature, matchesDestination, normalizeWebhook, deliver } from './providers.mjs'
+import { verifySignature, matchesDestination, normalizeWebhook, deliver, sendMulticast, lineQuota } from './providers.mjs'
 import { fetchProfile } from './lib/profile.mjs'
 import { mediaTasks, storagePath, enrichMessageMedia, MEDIA_MAX_BYTES } from './lib/media.mjs'
 import { createMediaHandler } from './lib/media-http.mjs'
@@ -38,6 +38,8 @@ import { formatNotify, notifyTargets } from './bots/notify.mjs'
 import { testUserIds, splitTestEvents } from './bots/testcmd.mjs'
 import { buildDailyDigest } from './reports/reply-digest.mjs'
 import { flagRpc } from './lib/case-flags.mjs'
+import { tokenMatches, bearerToken, validateMessages, normalizeRecipients, parseAllowlist,
+         classifyMulticast, quotaAllows, MULTICAST_MAX } from './lib/broadcast.mjs'
 
 // ───────────────────────────────────────────────────────── ตั้งค่า
 
@@ -801,6 +803,211 @@ async function inboundWorker() {
   }
 }
 
+// ───────────────────────────────────────────── ตัวส่ง LINE หลายคน
+//
+// spec: docs/handoff/2026-10-02-line-broadcast-sender.md · docs/BOUNDARIES.md
+// Connect เป็น "ตัวส่ง" อย่างเดียว — หน้าจอ campaign (เลือกกลุ่ม/เขียน/อนุมัติ/ตั้งเวลา)
+// อยู่ที่ CRM ที่นี่จึงไม่มี UI และไม่มีทางเข้าด้วย session ของพนักงาน
+//
+// ★★ โหมดปลอดภัยเป็นค่าตั้งต้น: LINE_BROADCAST_LIVE ต้องเป็น '1' เป๊ะ ๆ ถึงจะยิงจริง
+//    ค่าอื่นทั้งหมด (ไม่ตั้ง / 'true' / '0' / 'yes') = dry run ไม่แตะ network
+//    เขียนแบบ allowlist ไม่ใช่ blocklist เพราะพิมพ์ผิดหนึ่งตัวต้องแปลว่า "ไม่ส่ง"
+const broadcastLive = process.env.LINE_BROADCAST_LIVE === '1'
+const serviceToken = process.env.CONNECT_SERVICE_TOKEN || ''
+const broadcastTestAllowlist = parseAllowlist(process.env.BROADCAST_TEST_ALLOWLIST)
+
+/**
+ * ด่านของ /internal/* — token ของเครื่องต่อเครื่อง ไม่ใช่ของคน
+ *
+ * ไม่มี checkOrigin และไม่มีคุกกี้: ผู้เรียกคือ CRM ในวงใน ไม่ใช่เบราว์เซอร์
+ * ไม่ตั้ง CONNECT_SERVICE_TOKEN = ประตูปิดสนิท (tokenMatches คืน false เมื่อ expected ว่าง)
+ */
+function requireServiceToken(req) {
+  if (!tokenMatches(bearerToken(req.headers.authorization), serviceToken)) {
+    log.warn('service_token_rejected', { path: req.url?.split('?')[0] ?? null })
+    throw fail(401, 'unauthorized')
+  }
+}
+
+// rate limit ต่อ token แบบ fixed window — กันยิงรัวจนฐานล้ม ไม่ได้กันคนร้ายที่ตั้งใจ
+// (ด่านตัวจริงคือ token) เก็บในหน่วยความจำพอ เพราะมีผู้เรียกรายเดียวและรีสตาร์ตแล้วเริ่มใหม่ได้
+const INTERNAL_RATE_WINDOW_MS = 60000
+const INTERNAL_RATE_MAX = Number(process.env.CONNECT_SERVICE_RATE_MAX || 120)
+let internalWindowStart = 0, internalHits = 0
+function internalRateLimit() {
+  const now = Date.now()
+  if (now - internalWindowStart > INTERNAL_RATE_WINDOW_MS) { internalWindowStart = now; internalHits = 0 }
+  if (++internalHits > INTERNAL_RATE_MAX) throw fail(429, 'rate_limited')
+}
+
+const lineChannel = key => activeChannels.find(c => c.key === key && c.channel === 'line') ?? null
+
+async function internalRoute(req, res, url) {
+  requireServiceToken(req)
+  internalRateLimit()
+  const path = url.pathname
+
+  if (req.method === 'POST' && path === '/internal/broadcasts') {
+    return json(res, 200, await createBroadcast(JSON.parse((await readBody(req, 1048576)).toString('utf8'))))
+  }
+
+  const jobMatch = /^\/internal\/broadcasts\/([0-9a-f-]{36})(\/cancel)?$/i.exec(path)
+  if (jobMatch) {
+    const [, jobId, cancel] = jobMatch
+    if (cancel && req.method === 'POST') {
+      const result = await rpcDirect(service, 'broadcast_cancel', { p: { job_id: jobId } })
+      log.info('broadcast_cancelled', { job_id: jobId, batches: result?.cancelled_batches ?? 0 })
+      return json(res, 200, result)
+    }
+    if (!cancel && req.method === 'GET') {
+      return json(res, 200, await rpcDirect(service, 'broadcast_status', { p: { job_id: jobId } }))
+    }
+    throw fail(405, 'method_not_allowed')
+  }
+
+  if (req.method === 'GET' && path === '/internal/line/quota') {
+    const config = lineChannel(url.searchParams.get('channel_key') ?? '')
+    if (!config) throw fail(404, 'channel_not_found')
+    return json(res, 200, await lineQuota({ accessToken: config.access_token }))
+  }
+
+  const contactMatch = /^\/internal\/contacts\/([0-9a-f-]{36})\/(recent-messages|profile)$/i.exec(path)
+  if (contactMatch && req.method === 'GET') {
+    const [, ref, kind] = contactMatch
+    if (kind === 'profile') {
+      return json(res, 200, await rpcDirect(service, 'broadcast_contact_profile', { p: { contact_ref: ref } }))
+    }
+    const messages = await rpcDirect(service, 'broadcast_recent_messages', {
+      p: { contact_ref: ref, limit: Number(url.searchParams.get('limit') || 20),
+           include_test: url.searchParams.get('include_test') === '1' },
+    })
+    return json(res, 200, { messages })
+  }
+
+  throw fail(404, 'not_found')
+}
+
+/**
+ * รับงาน broadcast จาก CRM
+ *
+ * ★ log บันทึกแค่ id กับจำนวน — ห้ามมีเนื้อความหรือ userId เต็มลง log เด็ดขาด
+ *   (log ไปอยู่ใน docker logs ซึ่งคนอ่านได้มากกว่าคนที่ควรเห็นข้อมูลลูกค้า)
+ */
+async function createBroadcast(body) {
+  const config = lineChannel(String(body?.channel_key ?? ''))
+  if (!config) throw fail(400, 'channel_not_found')
+
+  const messages = validateMessages(body?.messages)
+  if (!messages.ok) throw fail(400, messages.error)
+
+  const test = body?.test === true
+  const people = normalizeRecipients(body?.recipients, { test, allowlist: broadcastTestAllowlist })
+  if (!people.ok) throw fail(400, people.error)
+
+  const result = await rpcDirect(service, 'broadcast_enqueue', {
+    p: {
+      idempotency_key: String(body?.idempotency_key ?? ''),
+      inbox_id: config.inbox_id, channel_key: config.key,
+      messages: body.messages, requested_by: body?.requested_by ?? null,
+      crm_campaign_id: body?.crm_campaign_id ?? null, is_test: test,
+      batch_size: MULTICAST_MAX, recipients: people.recipients,
+    },
+  })
+  log.info('broadcast_accepted', {
+    job_id: result?.job_id ?? null, channel: config.key, reused: result?.reused ?? false,
+    accepted: result?.accepted ?? 0, skipped: result?.skipped?.length ?? 0, test, live: broadcastLive,
+  })
+  return { job_id: result?.job_id ?? null, accepted: result?.accepted ?? 0,
+           skipped: result?.skipped ?? [], reused: result?.reused ?? false, dry_run: !broadcastLive }
+}
+
+let broadcastRunning = false
+let broadcastLastSuccess = null
+
+/**
+ * ตัวเดินงานส่ง — รอบละหนึ่งก้าว เหมือน worker/inboundWorker
+ *
+ * ก้าวที่หนึ่ง: งานที่ยังไม่เริ่ม → เช็คโควตาก่อน ไม่พอ = ล้มทั้งงาน ไม่ส่งบางส่วน
+ * ก้าวที่สอง: claim batch หนึ่งชุด (FOR UPDATE SKIP LOCKED + lease ในฐาน) แล้วยิง
+ *
+ * ★ crash ระหว่างทางปลอดภัย: batch ที่ส่งไปแล้วถูก mark 'sent' ในฐาน รอบใหม่จึงไม่หยิบซ้ำ
+ *   batch ที่ค้างอยู่ 'sending' จะถูกหยิบอีกครั้งเมื่อ lease หมด แต่ใช้ retry_key ตัวเดิม
+ *   LINE จึงตอบ 409 แทนที่จะส่งซ้ำ (classifyMulticast นับ 409 เป็นสำเร็จ)
+ */
+async function broadcastWorker() {
+  if (broadcastRunning || !activeChannels.length) return
+  broadcastRunning = true
+  try {
+    const pending = await rpcDirect(service, 'broadcast_next_job', { p: {} })
+    if (pending) await startBroadcastJob(pending)
+
+    const batch = await rpcDirect(service, 'broadcast_claim_batch', { p: {} })
+    if (batch) await sendBroadcastBatch(batch)
+    broadcastLastSuccess = new Date().toISOString()
+  } catch (e) {
+    log.error('broadcast_worker_failed', { reason: e.message, status: e.status ?? null })
+  } finally {
+    broadcastRunning = false
+  }
+}
+
+async function startBroadcastJob(job) {
+  const config = lineChannel(job.channel_key)
+  if (!config) {
+    await rpcDirect(service, 'broadcast_job_fail', { p: { job_id: job.job_id, reason: 'channel_not_found' } })
+    return log.warn('broadcast_job_failed', { job_id: job.job_id, reason: 'channel_not_found' })
+  }
+  // dry run ห้ามแตะ network แม้แต่การถามโควตา — ไม่งั้นเทสต์ "ไม่ยิงเน็ต" ไม่จริง
+  if (broadcastLive) {
+    const quota = await lineQuota({ accessToken: config.access_token })
+    const check = quotaAllows(quota, job.recipient_count)
+    if (!check.ok) {
+      await rpcDirect(service, 'broadcast_job_fail', { p: { job_id: job.job_id, reason: 'quota_exceeded' } })
+      return log.warn('broadcast_job_failed', {
+        job_id: job.job_id, reason: 'quota_exceeded',
+        need: job.recipient_count, remaining: check.remaining })
+    }
+  }
+  await rpcDirect(service, 'broadcast_job_start', { p: { job_id: job.job_id } })
+  log.info('broadcast_job_started', {
+    job_id: job.job_id, channel: job.channel_key,
+    recipients: job.recipient_count, live: broadcastLive, test: job.is_test })
+}
+
+async function sendBroadcastBatch(batch) {
+  const to = Array.isArray(batch.recipients) ? batch.recipients : []
+  const common = { job_id: batch.job_id, batch_no: batch.batch_no }
+  if (to.length === 0) {
+    return void await rpcDirect(service, 'broadcast_batch_finish', { p: { ...common, outcome: 'sent' } })
+  }
+
+  let verdict
+  if (!broadcastLive) {
+    // ตัวส่งปลอม: ไม่มี fetch ไม่มี token ถือว่าสำเร็จ แล้วบอกให้ชัดใน log ว่ายังไม่ได้ส่งจริง
+    log.info('broadcast_dry_run', { ...common, recipients: to.length, retry_key: batch.retry_key })
+    verdict = { outcome: 'sent', http_status: null, line_request_id: null }
+  } else {
+    const config = lineChannel(batch.channel_key)
+    if (!config) {
+      verdict = { outcome: 'failed', error: 'channel_not_found' }
+    } else {
+      const raw = await sendMulticast({
+        to, messages: batch.messages, retryKey: batch.retry_key, accessToken: config.access_token,
+      })
+      verdict = classifyMulticast({ ...raw, attempts: batch.attempts })
+      if (verdict.outcome !== 'sent') {
+        // detail เป็น body ที่ LINE ตอบ (รหัส+คำอธิบาย) ไม่มี userId ของลูกค้าอยู่ในนั้น
+        verdict.error = [verdict.error, raw.detail].filter(Boolean).join(' · ').slice(0, 500)
+      }
+    }
+  }
+
+  const done = await rpcDirect(service, 'broadcast_batch_finish', { p: { ...common, ...verdict } })
+  log.info('broadcast_batch_done', {
+    ...common, outcome: verdict.outcome, recipients: to.length,
+    http_status: verdict.http_status ?? null, job_status: done?.status ?? null, live: broadcastLive })
+}
+
 /**
  * สถานะสุขภาพที่ยอมตอบว่าไม่ไหว
  *
@@ -851,7 +1058,11 @@ function health() {
            memory: { rssMb, heapUsedMb: Math.round(mem.heapUsed / 1048576), limitMb: 160 },
            // สวิตช์ของบอทต้องมองเห็นจากข้างนอกเสมอ
            // ไม่งั้น "บอทไม่ตอบ" กับ "บอทถูกปิดไว้" จะแยกกันไม่ออกตอนมีคนถามว่าทำไมเงียบ
-           bot: jobQueue }
+           bot: jobQueue,
+           // เหตุผลเดียวกับ bot: "ยังไม่ได้ส่งจริง" ต้องอ่านได้จากข้างนอก ไม่ใช่เดาจาก log
+           // ★ ไม่ถ่วง ok ของ health — ตัวส่งหลายคนเงียบเป็นเรื่องปกติ (ส่วนใหญ่ไม่มีงาน)
+           broadcast: { live: broadcastLive, serviceTokenSet: serviceToken !== '',
+                        testAllowlist: broadcastTestAllowlist.length, lastSuccess: broadcastLastSuccess } }
 }
 
 // ───────────────────────────────────────────────────────── ตัวช่วย HTTP
@@ -1570,6 +1781,10 @@ async function route(req, res, url) {
     return res.end(bytes)
   }
 
+  // ★ อยู่ก่อน /api/ และไม่ผ่าน checkOrigin โดยตั้งใจ — ผู้เรียกคือ CRM ในวงใน
+  //   ไม่ใช่เบราว์เซอร์ จึงไม่มี Origin ให้ตรวจ ด่านคือ CONNECT_SERVICE_TOKEN อย่างเดียว
+  if (url.pathname.startsWith('/internal/')) return internalRoute(req, res, url)
+
   if (url.pathname.startsWith('/api/')) {
     if (req.method !== 'POST') throw fail(405, 'method_not_allowed')
     if (url.pathname === '/api/quick-replies/import/preview') return quickReplyImportPreview(req, res)
@@ -1618,6 +1833,9 @@ server.headersTimeout = 10000
 
 const workerTimer = setInterval(worker, WORKER_INTERVAL); workerTimer.unref()
 const inboundTimer = setInterval(inboundWorker, WORKER_INTERVAL); inboundTimer.unref()
+// ตัวส่งหลายคนเดินช้ากว่าคิวแชทได้ — งานเป็นก้อน ไม่มีใครรออยู่หน้าจอ
+// และเดินถี่เท่ากันจะกลายเป็นการถาม "มีงานไหม" ทุก 3 วิ ทั้งที่ส่วนใหญ่ไม่มี
+const broadcastTimer = setInterval(broadcastWorker, 5000); broadcastTimer.unref()
 // ของดิบมีข้อความลูกค้าจริงอยู่ในนั้น เก็บ 30 วันตามที่ตั้งไว้ในฝั่งฐาน
 // เดินวันละสี่ครั้งก็พอ ไม่ใช่งานที่ต้องตรงเวลา ขอแค่ไม่มีวันที่ลืมทำ
 const sweepTimer = setInterval(() => {
@@ -1641,6 +1859,7 @@ server.listen(port, '0.0.0.0', () => console.log(`ASHER Connect listening on ${p
 process.on('SIGTERM', () => {
   clearInterval(workerTimer)
   clearInterval(inboundTimer)
+  clearInterval(broadcastTimer)
   clearInterval(sweepTimer)
   clearInterval(sessionTimer)
   server.close(() => process.exit(0))
