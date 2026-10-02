@@ -1,7 +1,9 @@
 import { slaTag } from './sla.mjs'
-import { TAG_COLORS, TAG_COLOR_NAMES, tagColor, isFlagFilter, flagListArgs, followPresets, followBadge, cardTags, matchTags, tagDiff } from './case-flags.mjs'
+import { TAG_COLORS, TAG_COLOR_NAMES, tagColor, isFlagFilter, flagListArgs, followPresets, followBadge, cardTags, matchTags, tagDiff, STAGES, stageOf, slaBadge, CHANNELS, contactsQuery, bulkSummary } from './case-flags.mjs'
 
 const $ = id => document.getElementById(id)
+// หน้ารายชื่อติดต่อใช้เปลือกและเซสชันเดียวกับหน้าแชท (server เสิร์ฟ index.html ที่ /contacts)
+const CONTACTS_VIEW = location.pathname === '/contacts'
 const labels={mine:'งานของฉัน',unassigned:'ยังไม่มีคนรับ',waiting:'รอลูกค้าตอบ',sla:'ตอบเกิน SLA',today:'นัดหมายวันนี้',followup:'ถึงเวลาติดตาม',closed:'ปิดแล้ว',all:'ทั้งหมด'}
 const channelState={ok:'รับข้อความอยู่',idle:'เงียบเกิน 24 ชั่วโมง',down:'มีปัญหา',off:'ยังไม่ได้เชื่อม',unknown:'ตรวจสถานะไม่ได้'}
 const stageNames={follow_up:'ติดตาม',qualified:'Qualified',appointment:'นัดชม',walk_in:'Walk-in',booking:'Booking',sale:'Sale',lost:'ปิดแล้ว'}
@@ -397,6 +399,7 @@ function renderMessages(messages,prepend=false){
   $('older').hidden=messages.length<100
 }
 async function selectCase(id){if(busy)return;if(dirty&&!confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการเปลี่ยนเคสหรือไม่?'))return;if(selected)drafts.set(selected,$('message').value);const seq=++sequence;const data=await api('detail',{id});if(seq!==sequence)return;selected=id;detail=data;items=items.map(item=>item.id===id?{...item,unread_count:0}:item);dirty=false;$('empty').hidden=true;$('chat').hidden=false;setChatOpen(true);$('lead-empty').hidden=true;$('lead-details').hidden=false;renderDetail();renderList();$('messages').scrollTop=$('messages').scrollHeight
+ renderCustomerPanel()
  if(!flags[id])api('case_flags',{conversation_ids:[id]}).then(r=>{if(id!==selected)return;flags={...flags,...r};renderHeadFlags();renderFollow()}).catch(()=>{})}
 // รูปกับโครงการบนหัวแชท — รูปเอาจากแถวในรายการก่อน (ที่นั่นมี picture_url แน่นอน)
 // แล้วค่อยถอยไปหาของใน detail เผื่อเปิดเคสที่ยังไม่อยู่ในรายการหน้านี้
@@ -595,9 +598,19 @@ const tagChip=(t,cls='tag-chip')=>{const el=text('span',t.name,cls+' tag-'+tagCo
 
 // ☆/★ — คลิกแล้วไม่เปิดแชท, เปลี่ยนทันที (optimistic) แล้วถอยกลับถ้าฐานปฏิเสธ
 // ★ การ์ดเป็น <button> อยู่แล้ว ตัวนี้จึงเป็น span role=button (ปุ่มซ้อนปุ่มไม่ได้)
+const STAR_PATH='M12 2.8l2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z'
+function starIcon(){
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg')
+ svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');svg.setAttribute('class','star-icon')
+ const p=document.createElementNS('http://www.w3.org/2000/svg','path')
+ p.setAttribute('d',STAR_PATH);p.setAttribute('stroke-width','1.8');p.setAttribute('stroke-linejoin','round')
+ svg.append(p);return svg
+}
 function starToggle(id,on,cls){
  const head=cls==='chat-head-star'
- const el=text(head?'button':'span',on?'★':'☆',cls+(on?' on':''))
+ // ★ ไอคอน SVG ขนาดเท่า Facebook (20px การ์ด · 24px หัวแชท) — ตัวอักษร ☆ เดิมเล็กและบางจนมองไม่เห็น
+ const el=document.createElement(head?'button':'span');el.className=cls+(on?' on':'')
+ el.append(starIcon())
  if(head)el.type='button';else{el.setAttribute('role','button');el.tabIndex=0}
  el.setAttribute('aria-pressed',String(on));el.setAttribute('aria-label',on?'ถอดดาว':'ติดดาว');el.title=on?'ถอดดาว':'ติดดาวลูกค้า potential'
  const act=e=>{e.preventDefault();e.stopPropagation();toggleStar(id)}
@@ -608,7 +621,7 @@ function starToggle(id,on,cls){
 async function toggleStar(id){
  const before=flags[id]||{},next=!before.starred
  flags={...flags,[id]:{...before,starred:next}};renderList();renderHeadFlags()
- try{await api('case_star',{conversation_id:id,starred:next});await reloadFlags();await refreshTags();renderFilters()}
+ try{await api('case_star',{conversation_id:id,starred:next});await reloadFlags();await refreshTags();renderFilters();if(id===selected)renderCustomerPanel()}
  catch(e){flags={...flags,[id]:before};renderList();renderHeadFlags();note(e.message,true)}
 }
 
@@ -626,9 +639,10 @@ function renderHeadFlags(){
 }
 
 // popover แบบ LINE: ค้นหา · ติ๊กหลายอัน · "สร้าง tag ใหม่ '…'" ถ้าพิมพ์แล้วไม่เจอ
-function openTagPicker(anchor){
+// opts: ใช้จาก drawer ลูกค้า/หน้ารายชื่อติดต่อได้ — ระบุเคสและแท็กปัจจุบันเอง ไม่ผูกกับเคสที่เปิดอยู่
+function openTagPicker(anchor,opts={}){
  $('tag-picker')?.remove()
- const id=selected,before=(flags[id]?.tags||[]).map(t=>t.id)
+ const id=opts.id||selected,before=opts.current||(flags[id]?.tags||[]).map(t=>t.id)
  const chosen=new Set(before)
  const box=text('div','','tag-picker');box.id='tag-picker';box.setAttribute('role','dialog');box.setAttribute('aria-label','เลือก Tag')
  const q=document.createElement('input');q.type='search';q.placeholder='ค้นหาหรือพิมพ์ชื่อ tag ใหม่';q.maxLength=30;q.setAttribute('aria-label','ค้นหา tag')
@@ -661,7 +675,7 @@ function openTagPicker(anchor){
   const diff=tagDiff(before,[...chosen])
   close()
   if(!diff.add.length&&!diff.remove.length)return
-  try{await api('case_tags_set',{conversation_id:id,...diff});await reloadFlags();await refreshTags();renderFilters()}
+  try{await api('case_tags_set',{conversation_id:id,...diff});if(opts.onSaved)await opts.onSaved();else{await reloadFlags();await refreshTags();renderFilters();if(selected)renderCustomerPanel()}}
   catch(e){note(e.message,true)}
  })
  cancel.addEventListener('click',close)
@@ -695,8 +709,8 @@ function tagFilterChip(){
    menu.append(it)
   }
   if(!tagState.tags.length)menu.append(text('p','ยังไม่มี tag','muted'))
-  if(tagState.can_manage){
-   const m=text('button','จัดการ Tag…','chip-menu-item');m.type='button'
+  if(tagState.can_manage||tagState.can_create){
+   const m=text('button','จัดการแท็ก…','chip-menu-item');m.type='button'
    m.addEventListener('click',()=>{menu.remove();openTagAdmin()})
    menu.append(m)
   }
@@ -707,44 +721,109 @@ function tagFilterChip(){
  return wrap
 }
 
-// หน้าจัดการ Tag (manager/admin): ชื่อ · สีจาก palette · ลำดับ · เลิกใช้
+// หน้าจัดการแท็ก แบบ LINE OA Manager (ตั้งค่า → แท็ก)
+// รายการ: ค้นหา · ชิปสี · จำนวนแชท · แก้ไข/ลบ  |  ฟอร์ม: ชื่อ (นับ 0/30) · สี 7 สี · ตัวอย่างสด · ลำดับ
+// ★ สิทธิ์ตามฐาน (inbox.tag_upsert / tag_archive): ทุกคนสร้างได้ · แก้/ลบ/เรียงลำดับเฉพาะ manager/admin
+//   การซ่อนปุ่มตรงนี้เป็นแค่หน้าตา ด่านจริงอยู่ในฐาน
 function openTagAdmin(){
  let dlg=$('tag-admin')
- if(!dlg){dlg=document.createElement('dialog');dlg.id='tag-admin';dlg.className='tag-admin';document.body.append(dlg)}
- const draw=()=>{
-  const head=text('div','','section-heading');const x=text('button','×');x.type='button';x.setAttribute('aria-label','ปิด')
-  x.addEventListener('click',()=>dlg.close());head.append(text('h2','จัดการ Tag'),x)
-  const rows=text('div','','tag-admin-rows')
-  const row=(t)=>{
-   const r=text('div','','tag-admin-row')
-   const name=document.createElement('input');name.value=t?.name||'';name.maxLength=30;name.placeholder='ชื่อ tag';name.setAttribute('aria-label','ชื่อ tag')
-   const color=document.createElement('select');color.setAttribute('aria-label','สี')
-   for(const c of TAG_COLORS){const o=text('option',TAG_COLOR_NAMES[c]);o.value=c;color.append(o)}
-   color.value=tagColor(t?.color)
-   const sort=document.createElement('input');sort.type='number';sort.value=t?.sort_order??'';sort.className='tag-sort';sort.setAttribute('aria-label','ลำดับ')
-   const save=text('button',t?'บันทึก':'＋ เพิ่ม');save.type='button'
-   save.addEventListener('click',async()=>{
-    save.disabled=true
-    try{await api('tag_upsert',{id:t?.id||'',name:name.value,color:color.value,sort_order:sort.value});await refreshTags();await reloadFlags();renderFilters();draw()}
-    catch(e){note(e.message,true);save.disabled=false}
-   })
-   r.append(name,color,sort,save)
-   if(t){
-    const arc=text('button','เลิกใช้','subtle');arc.type='button'
-    arc.addEventListener('click',async()=>{
-     if(!confirm('เลิกใช้ tag “'+t.name+'”? ป้ายนี้จะหายจากทุกเคส'))return
-     try{await api('tag_archive',{id:t.id});if(filter==='tag:'+t.id)pickFilter('all');await refreshTags();await reloadFlags();renderFilters();draw()}
-     catch(e){note(e.message,true)}
-    })
-    r.append(arc)
-   }
-   return r
-  }
-  for(const t of tagState.tags)rows.append(row(t))
-  rows.append(row(null))
-  dlg.replaceChildren(head,rows)
+ if(!dlg){dlg=document.createElement('dialog');dlg.id='tag-admin';dlg.className='tag-admin';dlg.setAttribute('aria-labelledby','tag-admin-title');document.body.append(dlg)}
+ let query=''
+ const manage=()=>tagState.can_manage,create=()=>tagState.can_create
+ const after=async()=>{await refreshTags();await reloadFlags();renderFilters()}
+ const head=(title,back)=>{
+  const h=text('div','','tag-admin-head')
+  if(back){const b=text('button','←','icon-btn tag-admin-back');b.type='button';b.setAttribute('aria-label','กลับไปรายการแท็ก');b.addEventListener('click',back);h.append(b)}
+  const t=text('h2',title);t.id='tag-admin-title';h.append(t)
+  const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dlg.close());h.append(x)
+  return h
  }
- draw();if(!dlg.open)dlg.showModal()
+ function list(){
+  const tools=text('div','','tag-admin-tools')
+  const q=document.createElement('input');q.type='search';q.placeholder='ค้นหาแท็ก';q.value=query;q.setAttribute('aria-label','ค้นหาแท็ก')
+  tools.append(q)
+  if(create()){const add=text('button','＋ สร้างแท็ก','primary');add.type='button';add.addEventListener('click',()=>form(null));tools.append(add)}
+  const sub=text('p','','tag-admin-sub muted')
+  const table=text('div','','tag-admin-table');table.setAttribute('role','table');table.setAttribute('aria-label','รายการแท็ก')
+  const drawRows=()=>{
+   const rows=matchTags(tagState.tags,query).hits
+   sub.textContent='ทั้งหมด '+tagState.tags.length+' แท็ก'+(query?' · พบ '+rows.length:'')+' · แท็กใช้ร่วมกันทั้งทีม ติดได้หลายแท็กต่อลูกค้า'
+   const hr=text('div','','tag-admin-tr tag-admin-th');hr.setAttribute('role','row')
+   for(const c of ['แท็ก','จำนวนแชท','']){const h=text('span',c);h.setAttribute('role','columnheader');hr.append(h)}
+   table.replaceChildren(hr)
+   for(const t of rows){
+    const r=text('div','','tag-admin-tr');r.setAttribute('role','row')
+    const name=text('span','','tag-admin-name');name.setAttribute('role','cell');name.append(tagChip(t))
+    const n=text('span',String(t.count??0),'tag-admin-count');n.setAttribute('role','cell');n.title='แชทที่ยังไม่ปิดซึ่งติดแท็กนี้'
+    const act=text('span','','tag-admin-actions');act.setAttribute('role','cell')
+    if(manage()){
+     const e=text('button','แก้ไข','subtle');e.type='button';e.setAttribute('aria-label','แก้ไขแท็ก '+t.name);e.addEventListener('click',()=>form(t))
+     const d=text('button','ลบ','subtle danger');d.type='button';d.setAttribute('aria-label','ลบแท็ก '+t.name)
+     d.addEventListener('click',async()=>{
+      const used=t.count?' แท็กนี้จะหายจากแชท '+t.count+' รายการ':''
+      if(!confirm('ลบแท็ก “'+t.name+'”?'+used))return
+      d.disabled=true
+      try{await api('tag_archive',{id:t.id});if(filter==='tag:'+t.id)pickFilter('all');await after();note('ลบแท็ก “'+t.name+'” แล้ว');drawRows()}
+      catch(err){note(err.message,true);d.disabled=false}
+     })
+     act.append(e,d)
+    }
+    r.append(name,n,act);table.append(r)
+   }
+   if(!rows.length)table.append(text('p',query?'ไม่พบแท็ก “'+query+'”':'ยังไม่มีแท็ก','muted tag-admin-empty'))
+  }
+  q.addEventListener('input',()=>{query=q.value;drawRows()})
+  drawRows()
+  dlg.replaceChildren(head('จัดการแท็ก'),tools,sub,table)
+  q.focus()
+ }
+ function form(t){
+  const editing=!!t
+  const f=document.createElement('form');f.className='tag-admin-form';f.noValidate=true
+  const nameLabel=text('label','ชื่อแท็ก')
+  const nameRow=text('div','','tag-admin-name-row')
+  const name=document.createElement('input');name.maxLength=30;name.required=true;name.value=t?.name||'';name.placeholder='เช่น สนใจ 1BR'
+  const counter=text('span','','tag-admin-counter muted')
+  nameRow.append(name,counter);nameLabel.append(nameRow)
+  const colorBox=text('fieldset','','tag-admin-colors');colorBox.append(text('legend','สี'))
+  let color=tagColor(t?.color)
+  const preview=text('div','','tag-admin-preview')
+  const drawPreview=()=>{counter.textContent=name.value.trim().length+'/30';preview.replaceChildren(text('span','ตัวอย่าง','muted'),tagChip({name:name.value.trim()||'ชื่อแท็ก',color}))}
+  for(const c of TAG_COLORS){
+   const l=text('label','','tag-swatch tag-'+c);l.title=TAG_COLOR_NAMES[c]
+   const r=document.createElement('input');r.type='radio';r.name='tag-color';r.value=c;r.checked=c===color;r.setAttribute('aria-label',TAG_COLOR_NAMES[c])
+   r.addEventListener('change',()=>{color=c;drawPreview()})
+   l.append(r);colorBox.append(l)
+  }
+  const fields=[nameLabel,colorBox]
+  let sort=null
+  if(manage()){
+   const sl=text('label','ลำดับ (น้อยขึ้นก่อน)');sort=document.createElement('input');sort.type='number';sort.className='tag-sort';sort.value=t?.sort_order??''
+   sl.append(sort);fields.push(sl)
+  }
+  const err=text('p','','tag-admin-error');err.setAttribute('role','alert')
+  const cancel=text('button','ยกเลิก','subtle');cancel.type='button';cancel.addEventListener('click',list)
+  const save=text('button',editing?'บันทึก':'สร้าง','primary');save.type='submit'
+  const foot=text('div','','tag-admin-foot');foot.append(cancel,save)
+  name.addEventListener('input',drawPreview)
+  f.addEventListener('submit',async e=>{
+   e.preventDefault();err.textContent=''
+   const v=name.value.trim()
+   if(!v){err.textContent='กรุณาใส่ชื่อแท็ก';name.focus();return}
+   const dup=tagState.tags.find(x=>x.name.trim().toLowerCase()===v.toLowerCase()&&x.id!==t?.id)
+   if(dup&&editing){err.textContent='มีแท็กชื่อนี้อยู่แล้ว';name.focus();return}
+   save.disabled=true
+   try{
+    const r=await api('tag_upsert',{id:t?.id||'',name:v,color,sort_order:sort?sort.value:''})
+    await after();note(editing?'บันทึกแท็กแล้ว':r.created===false?'มีแท็ก “'+v+'” อยู่แล้ว':'สร้างแท็ก “'+v+'” แล้ว');list()
+   }catch(x){err.textContent=x.code==='tag_exists'?'มีแท็กชื่อนี้อยู่แล้ว':x.message;save.disabled=false}
+  })
+  f.append(...fields,preview,err,foot)
+  drawPreview()
+  dlg.replaceChildren(head(editing?'แก้ไขแท็ก':'สร้างแท็ก',list),f)
+  name.focus()
+ }
+ list();if(!dlg.open)dlg.showModal()
 }
 
 // lead card: บล็อก "การติดตาม" — ปุ่มลัด + กำหนดเอง + โน้ต + เสร็จแล้ว · บันทึกผ่าน case_follow
@@ -786,6 +865,213 @@ function renderFollow(){
  const when=text('label','กำหนดเอง · เวลาไทย');when.append(custom)
  const noteLabel=text('label','โน้ต');noteLabel.append(noteBox)
  box.append(presets,when,noteLabel,save,doneBtn)
+}
+
+// ───────────────────────────────────────── drawer ลูกค้า (แบบ LINE OA Manager)
+// ใช้ตัวเดียวกันสองที่: แผงขวาในหน้าแชท และ drawer ของหน้ารายชื่อติดต่อ
+// ข้อมูลมาจาก inbox.contact_detail (sql/202610021000) ทั้งหมด — ระยะ/SLA/เบอร์ mask คิดที่ฐาน
+const CHANNEL_NAME=Object.fromEntries(CHANNELS)
+const channelBadge=ch=>{const b=text('span',CHANNEL_NAME[ch]||ch||'?','channel-pill ch-'+(ch||'unknown'));b.title=CHANNEL_NAME[ch]||ch||'';return b}
+const stagePill=code=>{const s=stageOf(code);return s?Object.assign(text('span',s[1],'tag-chip stage-pill tag-'+s[2]),{title:s[3]}):text('span','—','muted')}
+const slaPill=(sla,w)=>{const s=slaBadge(sla,w);const el=text('span',s.label,'sla-pill '+s.tone);el.title=s.title;return el}
+function customerDrawer(d,{mode='chat',currentId=null,onChanged=()=>{}}={}){
+ const box=text('div','','cust-drawer')
+ const convs=d.conversations||[]
+ const latest=convs.find(c=>c.id===currentId)||convs[0]||{}
+ const name=customerName(d.display_name,'',latest.channel)
+ // หัว: รูป + ชื่อ + ช่องทาง + ดาว
+ const head=text('div','','cust-head')
+ head.append(avatar(boot?.user?.test_only?'':d.picture_url,name))
+ const who=text('div','','cust-who');who.append(text('strong',name,'cust-name'))
+ const chs=text('div','','cust-channels');for(const ch of [...new Set(convs.map(c=>c.channel))])chs.append(channelBadge(ch));who.append(chs)
+ const star=document.createElement('button');star.type='button';star.className='chat-head-star'+(d.starred?' on':'');star.append(starIcon())
+ star.setAttribute('aria-pressed',String(!!d.starred));star.setAttribute('aria-label',d.starred?'ถอดดาว':'ติดดาว');star.title=star.getAttribute('aria-label')
+ star.addEventListener('click',async()=>{star.disabled=true;try{await api('case_star',{conversation_id:latest.id,starred:!d.starred});await onChanged()}catch(e){note(e.message,true);star.disabled=false}})
+ head.append(who,star);box.append(head)
+ // สรุป: ระยะ · SLA · ผู้รับผิดชอบ · เบอร์ · ติดตาม
+ const facts=text('dl','','cust-facts')
+ const fact=(k,v)=>{facts.append(text('dt',k));const dd=document.createElement('dd');typeof v==='string'?dd.textContent=v:dd.append(v);facts.append(dd)}
+ fact('ระยะ',stagePill(latest.stage))
+ fact('SLA',slaPill(latest.sla,latest.waiting_minutes))
+ fact('ผู้รับผิดชอบ',latest.assignee_name||'ยังไม่มีคนรับ')
+ const phone=text('span',d.phone||'—');if(d.phone&&d.phone_masked)phone.title='แสดงบางส่วน — เห็นเต็มเฉพาะ manager/admin'
+ fact('เบอร์',phone)
+ if(latest.follow_up_at)fact('ติดตาม',date(latest.follow_up_at)+(d.follow_note?' · '+d.follow_note:''))
+ box.append(facts)
+ // แท็ก
+ const tagSec=text('section','','cust-sec');tagSec.append(text('h3','แท็ก'))
+ const tagRow=text('div','','chat-flags cust-tags')
+ for(const t of d.tags||[])tagRow.append(tagChip(t))
+ const add=text('button','＋ แท็ก','tag-add');add.type='button';add.setAttribute('aria-haspopup','true')
+ add.addEventListener('click',()=>openTagPicker(add,{id:latest.id,current:(d.tags||[]).map(t=>t.id),onSaved:onChanged}))
+ tagRow.append(add);tagSec.append(tagRow);box.append(tagSec)
+ // ประวัติย่อ: ทุกช่องทางของลูกค้าคนนี้
+ const hist=text('section','','cust-sec');hist.append(text('h3','ประวัติการคุย ('+convs.length+')'))
+ const ul=text('ul','','cust-history')
+ for(const c of convs){
+  const li=text('li','','cust-conv'+(c.id===currentId?' current':''))
+  const top=text('div','','cust-conv-top');top.append(channelBadge(c.channel),stagePill(c.stage),text('span',c.last_message_at?date(c.last_message_at):'—','muted cust-conv-time'))
+  li.append(top,text('p',c.last_message_preview||'ยังไม่มีข้อความ','cust-conv-preview'))
+  const meta=text('div','','cust-conv-meta');meta.append(slaPill(c.sla,c.waiting_minutes),text('span',c.status==='resolved'?'ปิดแล้ว':(c.assignee_name||'ยังไม่มีคนรับ'),'muted'))
+  if(c.id!==currentId){
+   const go=text(mode==='chat'?'button':'a','เปิดแชท','cust-open');
+   if(mode==='chat'){go.type='button';go.addEventListener('click',()=>selectCase(c.id).catch(e=>note(e.message,true)))}else go.href='/?open='+encodeURIComponent(c.id)
+   meta.append(go)
+  }else meta.append(text('span','กำลังเปิดอยู่','muted'))
+  li.append(meta);ul.append(li)
+ }
+ hist.append(ul);box.append(hist)
+ return box
+}
+
+// แผงขวาในหน้าแชท: วาง drawer ไว้บนสุด ฟอร์มแก้ข้อมูล/ติดตาม/นัดชมเดิมอยู่ถัดลงไป
+let custSeq=0
+async function renderCustomerPanel(){
+ const id=selected,seq=++custSeq;if(!id)return
+ let host=$('cust-panel')
+ if(!host){host=text('div','','cust-panel');host.id='cust-panel';$('lead-details').prepend(host)}
+ try{
+  const d=await api('contact_detail',{conversation_id:id})
+  if(seq!==custSeq||id!==selected)return
+  host.replaceChildren(customerDrawer(d,{mode:'chat',currentId:id,onChanged:async()=>{await reloadFlags();await refreshTags();renderFilters();await renderCustomerPanel()}}))
+ }catch(e){if(seq===custSeq)host.replaceChildren(text('p','โหลดข้อมูลลูกค้าไม่สำเร็จ: '+e.message,'muted'))}
+}
+
+// ───────────────────────────────────────── หน้า "รายชื่อติดต่อ" (/contacts)
+// ★ ไม่แก้เวลาใด ๆ ของข้อความ · SLA/ระยะ/เบอร์ mask มาจากฐาน · ทำหลายแถวใช้ RPC เดิมทีละแถวแล้วรายงานผลจริง
+const contactsState={search:'',tag_id:'',stage:'',assignee:'',channel:'',sla:'',starred:false,sort:'desc',offset:0}
+let contactRows=[],contactSel=new Set(),contactsSeq=0
+function mountContacts(){
+ document.body.classList.add('contacts-view')
+ const title=document.querySelector('.nav-page-title');if(title)title.textContent='รายชื่อติดต่อ'
+ const view=text('section','','contacts');view.id='contacts-view';view.setAttribute('aria-labelledby','contacts-title')
+ document.querySelector('#workspace > main').before(view)
+ const h=text('div','','contacts-head');const t=text('h1','รายชื่อติดต่อ');t.id='contacts-title'
+ const about=text('button','เกี่ยวกับระยะ','subtle contacts-about');about.type='button';about.addEventListener('click',openStageHelp)
+ h.append(t,about)
+ const tools=text('div','','contacts-tools')
+ const q=document.createElement('input');q.type='search';q.placeholder='ค้นหาชื่อหรือเบอร์';q.setAttribute('aria-label','ค้นหาชื่อหรือเบอร์')
+ let timer;q.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(()=>{contactsState.search=q.value;contactsState.offset=0;loadContacts()},300)})
+ const sel=(key,label,opts)=>{const s=document.createElement('select');s.setAttribute('aria-label',label);s.append(Object.assign(text('option',label),{value:''}));for(const [v,l] of opts)s.append(Object.assign(text('option',l),{value:v}));s.addEventListener('change',()=>{contactsState[key]=s.value;contactsState.offset=0;loadContacts()});return s}
+ const tagSel=sel('tag_id','แท็กทั้งหมด',tagState.tags.map(x=>[x.id,x.name]));tagSel.id='contacts-tag'
+ const assignees=[['none','ยังไม่มีคนรับ'],...(boot.assignees||[]).map(a=>[a.id,a.name])]
+ const sortSel=document.createElement('select');sortSel.setAttribute('aria-label','เรียง');for(const [v,l] of [['desc','แชทล่าสุดก่อน'],['asc','แชทเก่าสุดก่อน']])sortSel.append(Object.assign(text('option',l),{value:v}))
+ sortSel.addEventListener('change',()=>{contactsState.sort=sortSel.value;contactsState.offset=0;loadContacts()})
+ const starBtn=text('button','★ ติดดาว','chip');starBtn.type='button';starBtn.setAttribute('aria-pressed','false')
+ starBtn.addEventListener('click',()=>{contactsState.starred=!contactsState.starred;starBtn.classList.toggle('selected',contactsState.starred);starBtn.setAttribute('aria-pressed',String(contactsState.starred));contactsState.offset=0;loadContacts()})
+ tools.append(q,tagSel,sel('stage','ระยะทั้งหมด',STAGES.map(s=>[s[0],s[1]])),sel('assignee','ผู้รับผิดชอบทั้งหมด',assignees),sel('channel','ทุกช่องทาง',CHANNELS),sel('sla','SLA ทั้งหมด',[['over','เกิน SLA'],['near','ใกล้เกิน'],['ok','ปกติ']]),starBtn,sortSel)
+ const bulk=text('div','','contacts-bulk');bulk.id='contacts-bulk';bulk.hidden=true
+ const table=text('div','','contacts-table');table.id='contacts-table';table.setAttribute('role','table');table.setAttribute('aria-label','รายชื่อติดต่อ')
+ const paging=text('div','','paging contacts-paging')
+ const prev=text('button','← ก่อนหน้า');prev.type='button';prev.id='contacts-prev';prev.addEventListener('click',()=>{contactsState.offset=Math.max(0,contactsState.offset-50);loadContacts()})
+ const next=text('button','ถัดไป →');next.type='button';next.id='contacts-next';next.addEventListener('click',()=>{contactsState.offset+=50;loadContacts()})
+ paging.append(prev,next)
+ view.append(h,tools,bulk,table,paging)
+ loadContacts()
+}
+async function loadContacts(){
+ const seq=++contactsSeq
+ const table=$('contacts-table');table.setAttribute('aria-busy','true')
+ try{
+  const rows=await api('contacts_list',contactsQuery(contactsState))
+  if(seq!==contactsSeq)return
+  contactRows=rows.slice(0,50)
+  $('contacts-next').disabled=rows.length<=50;$('contacts-prev').disabled=contactsState.offset===0
+  contactSel=new Set([...contactSel].filter(id=>contactRows.some(r=>r.contact_id===id)))
+  renderContacts()
+ }catch(e){if(seq===contactsSeq){table.replaceChildren(text('p','โหลดรายชื่อไม่สำเร็จ: '+e.message,'muted contacts-empty'))}}
+ finally{if(seq===contactsSeq)table.removeAttribute('aria-busy')}
+}
+function renderContacts(){
+ const table=$('contacts-table')
+ const hr=text('div','','contacts-tr contacts-th');hr.setAttribute('role','row')
+ const all=document.createElement('input');all.type='checkbox';all.setAttribute('aria-label','เลือกทั้งหน้า')
+ all.checked=contactRows.length>0&&contactRows.every(r=>contactSel.has(r.contact_id))
+ all.addEventListener('change',()=>{for(const r of contactRows)all.checked?contactSel.add(r.contact_id):contactSel.delete(r.contact_id);renderContacts()})
+ const cell=(el,cls='')=>{const c=text('div','','contacts-td '+cls);c.setAttribute('role','cell');typeof el==='string'?c.textContent=el:c.append(el);return c}
+ hr.append(cell(all,'c-check'));for(const [l,c] of [['โปรไฟล์','c-profile'],['แท็ก','c-tags'],['ระยะ','c-stage'],['ผู้รับผิดชอบ','c-owner'],['เบอร์','c-phone'],['แชทล่าสุด','c-last'],['','c-actions']]){const x=cell(l,c);x.setAttribute('role','columnheader');hr.append(x)}
+ table.replaceChildren(hr)
+ for(const r of contactRows){
+  const tr=text('div','','contacts-tr'+(contactSel.has(r.contact_id)?' selected':''));tr.setAttribute('role','row')
+  const name=customerName(r.display_name,'',r.channels?.[0])
+  const cb=document.createElement('input');cb.type='checkbox';cb.checked=contactSel.has(r.contact_id);cb.setAttribute('aria-label','เลือก '+name)
+  cb.addEventListener('change',()=>{cb.checked?contactSel.add(r.contact_id):contactSel.delete(r.contact_id);tr.classList.toggle('selected',cb.checked);renderBulk();all.checked=contactRows.every(x=>contactSel.has(x.contact_id))})
+  const prof=text('div','','c-profile-box');prof.append(avatar(boot?.user?.test_only?'':r.picture_url,name))
+  const nm=text('div','','c-name');const strong=text('strong',name);if(r.starred){const s=starIcon();s.classList.add('c-star');strong.prepend(s)}
+  const chs=text('div','','cust-channels');for(const ch of r.channels||[])chs.append(channelBadge(ch));nm.append(strong,chs);prof.append(nm)
+  const tags=text('div','','c-tag-list');const ct=cardTags(r.tags,2);for(const t of ct.shown)tags.append(tagChip(t,'card-tag'));if(ct.more)tags.append(text('span','+'+ct.more,'card-tag more'))
+  const last=text('div','','c-last-box');last.append(text('span',r.last_message_at?listTime(r.last_message_at):'—','c-time'),slaPill(r.sla,r.waiting_minutes))
+  if(r.last_message_at)last.title=date(r.last_message_at)
+  const acts=text('div','','c-actions-box')
+  const open=text('a','เปิดแชท','c-open');open.href='/?open='+encodeURIComponent(r.conversation_id)
+  const more=text('button','รายละเอียด','subtle');more.type='button';more.addEventListener('click',()=>openContactDrawer(r.conversation_id,more))
+  acts.append(open,more)
+  tr.append(cell(cb,'c-check'),cell(prof,'c-profile'),cell(tags,'c-tags'),cell(stagePill(r.stage),'c-stage'),cell(r.assignee_name||'ยังไม่มีคนรับ','c-owner'),cell(r.phone||'—','c-phone'),cell(last,'c-last'),cell(acts,'c-actions'))
+  table.append(tr)
+ }
+ if(!contactRows.length)table.append(text('p','ไม่พบรายชื่อตามเงื่อนไขนี้','muted contacts-empty'))
+ renderBulk()
+}
+// แถบทำหลายแถว: ติดแท็ก · มอบหมาย · ส่ง LINE หลายคน (ยังปิดไว้ — ดู narrowcastBlocked)
+function renderBulk(){
+ const bar=$('contacts-bulk');if(!bar)return
+ bar.hidden=contactSel.size===0;if(bar.hidden)return
+ const picked=contactRows.filter(r=>contactSel.has(r.contact_id))
+ const tagS=document.createElement('select');tagS.setAttribute('aria-label','ติดแท็กให้ที่เลือก');tagS.append(Object.assign(text('option','ติดแท็ก…'),{value:''}));for(const x of tagState.tags)tagS.append(Object.assign(text('option',x.name),{value:x.id}))
+ tagS.addEventListener('change',async()=>{const tag=tagS.value;if(!tag)return;tagS.disabled=true
+  const res=[];for(const r of picked){try{await api('case_tags_set',{conversation_id:r.conversation_id,add:[tag]});res.push({ok:true})}catch(e){res.push({ok:false,code:e.code,message:e.message})}}
+  note(bulkSummary('ติดแท็ก',res),res.some(x=>!x.ok));await refreshTags();await loadContacts()})
+ const parts=[text('strong','เลือก '+picked.length+' รายการ'),tagS]
+ if(['manager','admin','senior_sales'].includes(boot.user.role)){
+  const as=document.createElement('select');as.setAttribute('aria-label','มอบหมายให้');as.append(Object.assign(text('option','มอบหมายให้…'),{value:''}));for(const a of boot.assignees||[])as.append(Object.assign(text('option',a.name),{value:a.id}))
+  as.addEventListener('change',async()=>{const to=as.value;if(!to)return
+   const who=(boot.assignees||[]).find(a=>a.id===to)?.name||'พนักงาน'
+   if(!confirm('มอบหมาย '+picked.length+' รายการให้ '+who+'?'))return as.value=''
+   as.disabled=true
+   // ★ ใช้คำสั่ง transfer เดิมของ connect_api ทีละเคส (มี audit + request_id + emit ไป CRM ตามเดิม)
+   //   เคสที่ยังไม่มีคนรับ ฐานจะตอบ claim_required — รายงานตามจริง ไม่ข้ามด่าน
+   const res=[];for(const r of picked){try{await api('transfer',{id:r.conversation_id,assignee_id:to,request_id:crypto.randomUUID()});res.push({ok:true})}catch(e){res.push({ok:false,code:e.code,message:e.message})}}
+   note(bulkSummary('มอบหมาย',res,{claim_required:'ยังไม่มีคนรับเคส (ต้องรับเคสก่อน)',case_closed:'เคสปิดแล้ว',assignee_not_allowed:'มอบให้คนนี้ไม่ได้'}),res.some(x=>!x.ok));await loadContacts()})
+  parts.push(as)
+ }
+ const nc=text('button','ส่ง LINE หลายคน','subtle');nc.type='button';nc.addEventListener('click',()=>narrowcastBlocked(picked));parts.push(nc)
+ const clear=text('button','ยกเลิกเลือก','subtle');clear.type='button';clear.addEventListener('click',()=>{contactSel.clear();renderContacts()});parts.push(clear)
+ bar.replaceChildren(...parts)
+}
+// ★ narrowcast ยังไม่เปิด — ขาดข้อมูลที่ต้องมีก่อนส่งจริง (ไม่เดา): แหล่ง consent, สิทธิ์ใครส่งได้, ช่อง LINE OA ไหน
+function narrowcastBlocked(picked){
+ const lineN=picked.filter(r=>(r.channels||[]).includes('line')).length
+ let dlg=$('nc-dialog');if(!dlg){dlg=document.createElement('dialog');dlg.id='nc-dialog';dlg.className='tag-admin';document.body.append(dlg)}
+ const head=text('div','','tag-admin-head');const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dlg.close())
+ head.append(text('h2','ส่ง LINE หลายคน — ยังเปิดใช้ไม่ได้'),x)
+ const body=text('div','','tag-admin-form')
+ body.append(text('p','เลือกไว้ '+picked.length+' รายการ · มีช่อง LINE '+lineN+' รายการ (ช่องอื่นส่งแบบนี้ไม่ได้)'))
+ body.append(text('p','ยังไม่ได้ส่งอะไรออกไป ต้องตกลงเรื่องเหล่านี้ก่อนจึงจะเปิดปุ่มส่ง:'))
+ const ul=text('ul','','nc-needs');for(const s of ['ข้อมูลความยินยอม (consent) ของลูกค้าเก็บไว้ที่ไหน — ตอนนี้ฐานยังไม่มีช่องนี้','ใครส่งได้ (role) และจำกัดจำนวนต่อครั้ง/ต่อวันเท่าไร','ใช้ LINE OA ช่องไหน (Naii / Vibe) และโควตาข้อความของแพ็กเกจ'])ul.append(text('li',s))
+ body.append(ul);dlg.replaceChildren(head,body);if(!dlg.open)dlg.showModal()
+}
+async function openContactDrawer(conversationId,from){
+ let dr=$('contact-drawer')
+ if(!dr){dr=document.createElement('dialog');dr.id='contact-drawer';dr.className='contact-drawer';dr.setAttribute('aria-label','รายละเอียดลูกค้า');document.body.append(dr)
+  dr.addEventListener('click',e=>{if(e.target===dr)dr.close()})}
+ const head=text('div','','tag-admin-head');const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dr.close())
+ head.append(text('h2','รายละเอียดลูกค้า'),x)
+ dr.replaceChildren(head,text('p','กำลังโหลด…','muted cust-loading'));if(!dr.open)dr.showModal()
+ dr.onclose=()=>from?.focus()
+ try{
+  const d=await api('contact_detail',{conversation_id:conversationId})
+  dr.replaceChildren(head,customerDrawer(d,{mode:'contacts',onChanged:async()=>{await refreshTags();await loadContacts();await openContactDrawer(conversationId,from)}}))
+ }catch(e){dr.replaceChildren(head,text('p','โหลดไม่สำเร็จ: '+e.message,'muted cust-loading'))}
+}
+function openStageHelp(){
+ let dlg=$('stage-help');if(!dlg){dlg=document.createElement('dialog');dlg.id='stage-help';dlg.className='tag-admin';document.body.append(dlg)}
+ const head=text('div','','tag-admin-head');const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dlg.close())
+ head.append(text('h2','เกี่ยวกับระยะ'),x)
+ const body=text('div','','tag-admin-form')
+ body.append(text('p','ระบบคิดระยะจากข้อมูลจริง ไม่ได้ตั้งเอง: ขั้นในดีล (CRM) และมีพนักงานตอบแล้วหรือยัง','muted'))
+ const dl=text('dl','','stage-help-list');for(const [,l,c,desc] of STAGES){const dt=document.createElement('dt');dt.append(Object.assign(text('span',l,'tag-chip tag-'+c)));dl.append(dt,text('dd',desc))}
+ body.append(dl,text('p','SLA: เกิน = ลูกค้ารอเกินเวลาที่ตั้งไว้ · ใกล้เกิน = รอเกินครึ่งหนึ่งแล้ว · ปกติ = ไม่มีใครรอ — นับจากข้อความจริง หักช่วง 00:00–06:00','muted'))
+ dlg.replaceChildren(head,body);if(!dlg.open)dlg.showModal()
 }
 
 function renderChannels(){
@@ -874,14 +1160,99 @@ $('message').addEventListener('keydown',e=>{
 //   (รวมทุกเมนูอยู่ tab เดียว ไม่มีแถวหัว "แชท" แยกอีกแถวแล้ว) ต่อท้าย #nav-settings
 //   เพื่อให้ margin-left:auto ของ #nav-settings ดันทั้งคู่ไปชิดขวาด้วยกัน
 function relocateRefreshButton(){
+ // จอกว้างเมนูเป็นแถบข้างซ้ายแล้ว ปุ่มรีเฟรชอยู่ที่หัวรายการแชทตามเดิม · ย้ายเข้าแถบบนเฉพาะมือถือ
+ if(!MOBILE.matches)return
  const btn=$('refresh'),nav=$('app-nav')
  if(btn&&nav)nav.append(btn)
+}
+// ── แถบเมนูซ้าย (แบบ LINE OA Manager) ──────────────────────────────────
+// จอ ≥768: แถบข้างซ้าย กาง 220 / ยุบ 64 (ไอคอนอย่างเดียว) จำสถานะใน localStorage ร่วมทุกหน้า
+// จอแคบยังเป็นแถบบนแบบเดิม — ปุ่มซ่อนเมนู/รายการเสริมถูกซ่อนด้วย CSS
+const NAV_KEY='connect.nav.collapsed'
+const ICON_BROADCAST='M4 10v4h3l5 4V6L7 10zM16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12'
+const ICON_TAG='M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1 1 0 0 1 0 1.4l-6.9 6.9a1 1 0 0 1-1.4 0zM8 8h.01'
+const ICON_COLLAPSE='M4 5h16v14H4zM9 5v14M15.5 9.5 13 12l2.5 2.5'
+const ICON_MENU='M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z'
+const ICON_LOGOUT='M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10'
+function navButton(id,label,path,extra=''){
+ const b=document.createElement('button');b.type='button';b.className='nav-item '+extra;b.id=id;b.title=label;b.setAttribute('aria-label',label)
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','nav-icon');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false')
+ const pa=document.createElementNS('http://www.w3.org/2000/svg','path');pa.setAttribute('d',path);pa.setAttribute('fill','none');pa.setAttribute('stroke','currentColor');pa.setAttribute('stroke-width','1.8');pa.setAttribute('stroke-linecap','round');pa.setAttribute('stroke-linejoin','round')
+ svg.append(pa);b.append(svg,text('span',label,'nav-label'));return b
+}
+function setNavCollapsed(on){
+ document.documentElement.classList.toggle('nav-collapsed',on)
+ try{localStorage.setItem(NAV_KEY,on?'1':'0')}catch{/* โหมดส่วนตัว: จำไม่ได้ก็ไม่เป็นไร */}
+ const t=$('nav-collapse');if(!t)return
+ const label=on?'แสดงเมนู':'ซ่อนเมนู'
+ t.setAttribute('aria-expanded',String(!on));t.title=label;t.setAttribute('aria-label',label);t.querySelector('.nav-label').textContent=label
+}
+function buildSideNav(role){
+ const nav=$('app-nav');if(!nav||$('nav-collapse'))return
+ const stats=$('nav-stats'),settings=$('nav-settings')
+ const bc=navButton('nav-broadcast','ส่งข้อความหลายคน',ICON_BROADCAST,'nav-extra');bc.disabled=true;bc.title='ส่งข้อความหลายคน (เร็ว ๆ นี้)'
+ bc.hidden=!['manager','admin'].includes(role)
+ const tg=navButton('nav-tags','จัดการแท็ก',ICON_TAG,'nav-extra');tg.hidden=!!boot?.user?.test_only
+ tg.addEventListener('click',async()=>{await refreshTags();openTagAdmin()})
+ // ลำดับเหมือน LINE OA: แชท · รายชื่อติดต่อ · ส่งข้อความหลายคน · สถิติ · แท็ก ··· ตั้งค่า · ซ่อนเมนู
+ if(stats)stats.before(bc);else settings?.before(bc)
+ settings?.before(tg)
+ const col=navButton('nav-collapse','ซ่อนเมนู',ICON_COLLAPSE,'nav-extra nav-collapse');col.setAttribute('aria-controls','app-nav')
+ col.addEventListener('click',()=>setNavCollapsed(!document.documentElement.classList.contains('nav-collapsed')))
+ nav.append(col)
+ setNavCollapsed(document.documentElement.classList.contains('nav-collapsed'))
+ // มือถือ: ปุ่ม "เมนู" เปิดหน้าหลักแบบ LINE OA (ไทล์ใหญ่) — สถิติ/ตั้งค่าย้ายเข้าไปอยู่ในนั้น
+ const home=navButton('nav-home','เมนู',ICON_MENU,'nav-mobile');home.setAttribute('aria-haspopup','dialog')
+ home.addEventListener('click',openMobileMenu)
+ ;(settings||col).before(home)
+}
+// หน้าหลักบนมือถือ — ไทล์ทุกเมนูที่ role นี้เห็นในแถบซ้าย กดแล้วทำงานเหมือนกดเมนูเดิมทุกอย่าง
+// (เรียก .click() ของปุ่มเดิม ไม่เขียนพฤติกรรมซ้ำ) · เมนูที่ซ่อน/ปิดอยู่ก็ซ่อน/ปิดในนี้ด้วย
+function openMobileMenu(){
+ let dlg=$('mobile-menu')
+ if(!dlg){dlg=document.createElement('dialog');dlg.id='mobile-menu';dlg.className='mobile-menu';dlg.setAttribute('aria-labelledby','mobile-menu-title');document.body.append(dlg)}
+ const head=text('div','','tag-admin-head');const t=text('h2','เมนู');t.id='mobile-menu-title'
+ const x=text('button','×','icon-btn tag-admin-close');x.type='button';x.setAttribute('aria-label','ปิด');x.addEventListener('click',()=>dlg.close())
+ head.append(t,x)
+ const who=text('p','','mobile-menu-user muted');who.textContent=(boot?.user?.email||'')+(boot?.user?.role?' · '+boot.user.role:'')
+ const grid=text('div','','mobile-menu-grid')
+ const sources=[document.querySelector('.nav-item[data-nav="chat"]'),$('nav-customers'),$('nav-broadcast'),$('nav-stats'),$('nav-tags'),$('nav-settings')]
+ for(const src of sources){
+  if(!src||src.hidden)continue
+  const label=src.querySelector('.nav-label')?.textContent||src.getAttribute('aria-label')||''
+  const tile=text('button','','mobile-tile'+(src.classList.contains('active')?' active':''));tile.type='button';tile.disabled=!!src.disabled
+  const icon=src.querySelector('svg')?.cloneNode(true);if(icon)tile.append(icon)
+  tile.append(text('span',label,'mobile-tile-label'))
+  if(src.disabled)tile.append(text('small','เร็ว ๆ นี้','muted'))
+  const badge=src.querySelector('.nav-badge');if(badge&&!badge.hidden)tile.append(text('span',badge.textContent,'nav-badge mobile-tile-badge'))
+  tile.addEventListener('click',()=>{dlg.close();src.click()})
+  grid.append(tile)
+ }
+ const out=text('button','','mobile-tile mobile-tile-logout');out.type='button'
+ const ov=navButton('x','',ICON_LOGOUT).querySelector('svg');out.append(ov,text('span','ออกจากระบบ','mobile-tile-label'))
+ out.addEventListener('click',()=>{dlg.close();$('logout').click()})
+ grid.append(out)
+ dlg.replaceChildren(head,who,grid)
+ if(!dlg.open)dlg.showModal()
 }
 // เมนูสถิติ/ตั้งค่า — ใช้เงื่อนไข role เดียวกับ #stats-link เดิม (ไม่ได้คิดกฎสิทธิ์ใหม่)
 // "ลูกค้า" ปิดด้วย feature flag เสมอในรอบนี้ — โมดูล CRM ยังไม่ได้สร้าง
 function wireAppNav(role){
  const managerUp=['manager','admin'].includes(role)
  $('nav-stats').hidden=!managerUp
+ buildSideNav(role)
+ // ★ "รายชื่อติดต่อ" เปิดแล้ว (หน้า /contacts) — แต่ก่อนซ่อนไว้รอโมดูล CRM
+ const cust=$('nav-customers')
+ if(cust){
+  cust.hidden=false;cust.disabled=false;cust.title='รายชื่อติดต่อ';cust.setAttribute('aria-label','รายชื่อติดต่อ')
+  const lbl=cust.querySelector('.nav-label');if(lbl)lbl.textContent='รายชื่อติดต่อ'
+  cust.addEventListener('click',()=>{if(!CONTACTS_VIEW)location.href='/contacts'})
+ }
+ if(CONTACTS_VIEW){
+  document.querySelector('.nav-item[data-nav="chat"]')?.classList.remove('active')
+  cust?.classList.add('active');cust?.setAttribute('aria-current','page')
+  document.querySelector('.nav-item[data-nav="chat"]')?.addEventListener('click',()=>{location.href='/'})
+ }
  // ตั้งค่า: สลับการมองเห็นของ header เดิม (แบรนด์/สวิตช์โหมดส่ง/บอท/อีเมล/ออกจากระบบ)
  // ไม่ได้ย้าย element เดิม — กัน id ซ้ำและ event listener หลุด (ดูคอมเมนต์ใน app.css)
  $('nav-settings').addEventListener('click',()=>{
@@ -896,8 +1267,11 @@ function wireAppNav(role){
   if(document.body.classList.contains('chat-open'))setChatOpen(false)
  })
 }
-async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()}
-setInterval(async()=>{if(!boot||busy||polling||document.hidden)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
+async function start(){boot=await api('bootstrap');$('login-panel').hidden=true;$('workspace').hidden=false;await refreshBot();$('user').textContent=boot.user.email;$('stats-link').hidden=!['manager','admin'].includes(boot.user.role);relocateRefreshButton();wireAppNav(boot.user.role);if(CONTACTS_VIEW){await refreshTags();mountContacts();return}renderChannels();$('project').replaceChildren();for(const p of boot.projects){const o=text('option',p.name);o.value=p.id;$('project').append(o)}filter=readFilter();writeFilter();renderFilters();await loadList()
+ // ปุ่ม "เปิดแชท" จากหน้ารายชื่อติดต่อมาที่ /?open=<id> — เปิดเคสแล้วลบพารามิเตอร์ออก รีเฟรชจะได้ไม่เปิดซ้ำ
+ const openId=new URLSearchParams(location.search).get('open')
+ if(openId&&/^[0-9a-f-]{36}$/i.test(openId)){const u=new URL(location.href);u.searchParams.delete('open');history.replaceState(null,'',u);try{await selectCase(openId)}catch(e){note('เปิดบทสนทนาไม่สำเร็จ: '+e.message,true)}}}
+setInterval(async()=>{if(!boot||busy||polling||document.hidden||CONTACTS_VIEW)return;polling=true;const id=selected,seq=sequence;try{await refreshBot();await loadList();if(id){const next=await api('messages',{id});if(id!==selected||seq!==sequence||busy)return;const nearBottom=$('messages').scrollHeight-$('messages').scrollTop-$('messages').clientHeight<80;if(JSON.stringify(next.messages)!==JSON.stringify(detail.messages)){detail.messages=next.messages;renderMessages(next.messages);if(nearBottom)$('messages').scrollTop=$('messages').scrollHeight}detail.conversation=next.conversation;renderDue(next.state||{},next.conversation.status==='resolved');detail.case_status=next.case_status;
  // ★ เตือนเมื่อ "คนอื่น" ตอบแทรกระหว่างที่เรากำลังพิมพ์ — คิวรวมแปลว่าสองคนหยิบเคสเดียวกันได้
  //   เตือนเฉพาะตอนที่ในช่องพิมพ์มีข้อความค้างอยู่ ไม่งั้นจะเด้งรบกวนทุกครั้งที่เพื่อนตอบ
  {const before=detail.last_agent_reply,after=next.last_agent_reply

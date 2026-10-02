@@ -58,3 +58,48 @@ export function tagDiff(before, after) {
   const a = new Set(before), b = new Set(after)
   return { add: [...b].filter(id => !a.has(id)), remove: [...a].filter(id => !b.has(id)) }
 }
+
+// ───────────────────────── หน้ารายชื่อติดต่อ (sql/202610021000_contacts_page.sql)
+// ระยะ = lifecycle ที่ฐานคำนวณจากหลักฐาน (crm.stage + มีคนตอบแล้วหรือยัง) — หน้าจอแปลชื่ออย่างเดียว
+export const STAGES = [
+  ['new', 'ใหม่', 'blue', 'ทักเข้ามาแล้ว ยังไม่มีพนักงานตอบ'],
+  ['talking', 'กำลังคุย', 'teal', 'พนักงานตอบแล้ว ยังไม่มีนัด/จอง'],
+  ['appointment', 'นัดชม', 'purple', 'มีนัดเข้าชมโครงการ หรือ walk-in แล้ว'],
+  ['booking', 'จอง', 'amber', 'มีเอกสารจองในระบบ'],
+  ['sale', 'ปิดการขาย', 'green', 'ปิดการขายแล้ว'],
+  ['lost', 'หลุด', 'grey', 'ปิดเคสพร้อมเหตุผลว่าไม่ซื้อ'],
+]
+export const stageOf = code => STAGES.find(s => s[0] === code) ?? null
+
+// ป้าย SLA มาจาก inbox.case_status ผ่าน contact_sla — ไม่คิดจากเวลาฝั่งเบราว์เซอร์
+export const SLA_LABELS = { over: 'เกิน SLA', near: 'ใกล้เกิน', ok: 'ปกติ' }
+export function slaBadge(sla, waitingMinutes) {
+  const label = SLA_LABELS[sla] ?? SLA_LABELS.ok
+  const tone = sla === 'over' ? 'over' : sla === 'near' ? 'near' : 'ok'
+  const title = Number.isFinite(Number(waitingMinutes)) && waitingMinutes !== null && sla !== 'ok'
+    ? `ลูกค้ารอมา ${waitingMinutes} นาที` : label
+  return { label, tone, title }
+}
+
+export const CHANNELS = [['line', 'LINE'], ['messenger', 'Messenger'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
+
+// สถานะตัวกรองของหน้า → อาร์กิวเมนต์ของ inbox.contacts_list (ตัดค่าว่างทิ้ง ฐานจะได้ไม่ต้องเดา)
+export function contactsQuery(f = {}) {
+  const q = { sort: f.sort === 'asc' ? 'asc' : 'desc', offset: Math.max(0, Number(f.offset) || 0) }
+  for (const k of ['search', 'tag_id', 'stage', 'assignee', 'channel', 'sla']) {
+    const v = String(f[k] ?? '').trim()
+    if (v) q[k] = v
+  }
+  if (f.starred) q.starred = true
+  return q
+}
+
+// ผลการทำทีละหลายแถว (ติดแท็ก/มอบหมาย) → ข้อความสรุปเดียว · บอกสาเหตุที่พลาดตามจริง ไม่รวบว่า "สำเร็จ"
+export function bulkSummary(action, results, reasons = {}) {
+  const ok = results.filter(r => r.ok).length
+  const failed = results.filter(r => !r.ok)
+  if (!failed.length) return `${action}แล้ว ${ok} รายการ`
+  const why = {}
+  for (const r of failed) { const k = reasons[r.code] || r.message || r.code || 'ไม่ทราบสาเหตุ'; why[k] = (why[k] || 0) + 1 }
+  return `${action}แล้ว ${ok} รายการ · ไม่สำเร็จ ${failed.length}: ` + Object.entries(why).map(([k, n]) => `${k} ${n}`).join(', ')
+}

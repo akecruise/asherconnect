@@ -17,7 +17,7 @@ SQL_FILES=("$@")
 APP="${APP:-/opt/asher-inbox/app}"
 BASE=$(dirname "$APP")
 REPO=akecruise/asherconnect
-EXPECT_LIVE="${EXPECT_LIVE:-fc3c2be8a561643fa7d81fb1bf1aa79b747e65bc}"
+EXPECT_LIVE="${EXPECT_LIVE:-c07836f2d9f8a414ef6568eaa1136879fdae8bdd}"
 PORT="${PORT:-3200}"
 STAMP=$(date +%Y%m%d-%H%M%S)
 WORK=/tmp/deploy-$STAMP
@@ -61,7 +61,7 @@ for f in $DRIFT; do
         diff -u "$WORK/live/$f" "$APP/$f" | head -60 || true
         if [ ! -f "$WORK/new/$f" ]; then
           echo "ของใหม่ไม่มีไฟล์นี้ — เก็บของบนเครื่องไว้"; KEEP+=("$f")
-        elif diff3 -m "$APP/$f" "$WORK/live/$f" "$WORK/new/$f" > "$WORK/merged"; then
+        elif diff3 -m -E "$APP/$f" "$WORK/live/$f" "$WORK/new/$f" > "$WORK/merged"; then
           cp "$WORK/merged" "$WORK/new/$f"; echo "รวมกับของใหม่ได้: $f"
         else
           die "$f แก้มือชนกับของใหม่ รวมเองไม่ได้ — ส่งข้อความข้างบนให้คนดูแล ยังไม่ได้แก้อะไร"
@@ -109,7 +109,7 @@ for i in $(seq 1 20); do
   curl -fs -o /dev/null "http://127.0.0.1:$PORT/health" && break
   sleep 3
 done
-for p in / /app.js /case-flags.mjs; do
+for p in / /app.js /app-nav.js /case-flags.mjs /contacts; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$p")
   echo "$p $code"
   [ "$code" = 200 ] || ok=0
