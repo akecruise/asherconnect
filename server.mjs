@@ -1035,6 +1035,45 @@ async function internalRoute(req, res, url) {
     return json(res, 200, await lineQuota({ accessToken: config.access_token }))
   }
 
+  // ★ CRM สั่งแจ้งทีม (escalation เมื่อเลย SLA) — เนื้อหามาจาก CRM ส่งตามตัวอักษร
+  //   BOUNDARIES: CRM สร้างเนื้อหา → ส่งผ่าน bot เดิมของ Connect ไม่ต้องมี token สองที่
+  if (req.method === 'POST' && path === '/internal/notify') {
+    const body = JSON.parse((await readBody(req, 65536)).toString('utf8'))
+    const result = await rpcDirect(service, 'service_notify', {
+      p: {
+        idempotency_key: String(body?.idempotency_key ?? ''),
+        text: String(body?.text ?? ''),
+        channel: body?.channel ?? 'line_group',
+      },
+    })
+    // ★ ไม่ log เนื้อหา — ข้อความแจ้งทีมมีชื่อลูกค้าและยอดเงินได้
+    log.info('service_notify_queued', { job_id: result?.job_id ?? null, reused: result?.reused ?? false })
+    return json(res, 200, result)
+  }
+
+  // ★ CRM สั่งส่งข้อความหาลูกค้า (auto-reply นอกเวลาทำการที่ CRM ตัดสินใจ)
+  //   CRM ตัดสินใจ แต่ token และการยิงจริงอยู่ที่ Connect ที่เดียว
+  const sendMatch = /^\/internal\/contacts\/([0-9a-f-]{36})\/messages$/i.exec(path)
+  if (sendMatch && req.method === 'POST') {
+    const body = JSON.parse((await readBody(req, 262144)).toString('utf8'))
+    // ตรวจรูปข้อความด้วยกฎเดียวกับ broadcast — รูปต้อง https ชนิดต้องรองรับ
+    const messages = validateMessages(body?.messages)
+    if (!messages.ok) throw fail(400, messages.error)
+    const result = await rpcDirect(service, 'service_send_to_contact', {
+      p: {
+        contact_ref: sendMatch[1],
+        idempotency_key: String(body?.idempotency_key ?? ''),
+        messages: body.messages,
+        channel_key: body?.channel_key ?? null,
+      },
+    })
+    log.info('service_message_queued', {
+      conversation_id: result?.conversation_id ?? null, reused: result?.reused ?? false,
+      count: result?.message_ids?.length ?? 0,
+    })
+    return json(res, 200, result)
+  }
+
   // ★ คลังรูปของ Connect — CRM ต้องเลือกรูปมาใส่ bubble ของ campaign
   //   (สเปก CRM ส่วน B ข้อ 3: "รูปจาก media library ของ Connect หรือ URL https")
   //   ลิงก์ที่คืนไปเป็นลิงก์เซ็นชื่อ ใช้ได้โดยไม่ต้องมี session — LINE ดึงรูปเองได้

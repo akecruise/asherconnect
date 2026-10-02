@@ -28,6 +28,7 @@
     "test:testreset": "node --test tests/testreset.db.test.mjs",
     "test:star-follow-tags": "node --test --test-concurrency=1 tests/case-flags.test.mjs tests/case-flags-ui.test.mjs tests/star-follow-tags.db.test.mjs tests/contacts-page.db.test.mjs",
     "test:broadcast": "node --test --test-concurrency=1 tests/broadcast.test.mjs tests/broadcast.db.test.mjs",
-    "test:follow-lead": "node --test --test-concurrency=1 tests/follow-welcome.db.test.mjs"
+    "test:follow-lead": "node --test --test-concurrency=1 tests/follow-welcome.db.test.mjs",
+    "test:service-outbound": "node --test --test-concurrency=1 tests/service-outbound.db.test.mjs"
   }
 }
