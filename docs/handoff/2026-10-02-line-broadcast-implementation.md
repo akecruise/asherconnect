@@ -103,19 +103,25 @@ node sql/run.mjs check                                   → ตรวจผ่�
 
 ครอบคลุมทุกข้อในหัวข้อ Test ของใบงาน: token ผิด/ว่าง/ไม่ตั้ง · idempotency ซ้ำไม่สร้าง job ใหม่ · batching 0/1/500/501/1234 · crash หลัง batch 2 แล้วรันใหม่ (batch 1–2 ไม่ถูกส่งซ้ำ, batch 3 ใช้ retry key เดิม, lease หมดแล้วหยิบใหม่ได้) · 409=sent, 429/5xx/timeout=retry + backoff, เกิน 6 ครั้ง=failed, 400/403=failed · โควตาไม่พอ=ไม่ส่งเลย · dry run ไม่ยิง network (stub fetch แล้ว assert ไม่ถูกเรียก) · recent-messages ไม่คืน is_test · ผลลัพธ์ไม่มี token · สิทธิ์ `authenticated`/`anon` เรียกไม่ได้
 
-### ⚠️ ด่าน `npm test` แดงอยู่ก่อนงานนี้ — ไม่ได้แก้ (ผู้ใช้ตัดสิน 2026-10-02: แก้ `ORDER.txt` อย่างเดียว)
+### ด่าน `npm test` ที่แดงอยู่ก่อนงานนี้ — ★ Phase 0 เก็บไปแล้วเกือบหมด
 
-ยืนยันว่าไม่เกี่ยวกับงานนี้: `providers.mjs` มี 0 บรรทัดที่ถูกลบ (`git diff HEAD` = 1 hunk ต่อท้ายไฟล์) · ไฟล์ที่ล้มทั้งหมดไม่ได้ถูกแก้ในงานนี้
+**ปิดแล้ว** (ดู `docs/handoff/2026-10-02-phase0-audit.md` สำหรับเหตุผลของแต่ละข้อ):
 
-| ไฟล์ | อาการ |
+| ไฟล์ | อาการเดิม | ผล |
+|---|---|---|
+| `tests/profile.test.mjs:121` | `'not_found' !== 'ok'` | ✅ กู้ Conversations fallback ที่ `20a7799` ย้อนรุ่นทิ้ง — 18/18 |
+| `tests/providers.test.mjs:34` | เทสต์คาด `/<account_id>/messages` | ✅ แก้เทสต์ให้ตรงกับ `/me/messages` ที่ตั้งใจ — 41/41 |
+| `tests/media-http.test.mjs` | ไม่มี export `createPublicMediaHandler` | ✅ ลบเทสต์ของท่อที่ตายแล้ว + ลบ `lib/media-public.mjs` ที่กำพร้า — 4/4 |
+| `tests/outbound-media.test.mjs` | ไม่มี export `OUTBOUND_IMAGE_MAX_BYTES` | ✅ เขียนใหม่ให้คลุมตัวเซ็นลิงก์ที่ใช้จริง (เดิมไม่มีเทสต์เลย) — 6/6 |
+| `sql/run.mjs check` | 2 ไฟล์ไม่อยู่ใน `ORDER.txt` | ✅ เติมเข้าทะเบียนแล้ว |
+
+**ยังแดง — ไม่ใช่ปัญหาของโค้ด:**
+
+| ไฟล์ | สาเหตุ |
 |---|---|
-| `tests/profile.test.mjs:121` | `'not_found' !== 'ok'` — Messenger participants fallback (`&&` ของ `npm test` หยุดตรงนี้) |
-| `tests/providers.test.mjs:34` | Instagram ยิง `/me/messages` แต่เทสต์คาด `/17841426509548035/messages` |
-| `tests/media-http.test.mjs` | `lib/media-http.mjs` ไม่ export `createPublicMediaHandler` — อีกหนึ่งของที่หายตอน snapshot `20a7799` |
-| `tests/report.test.mjs` · `outcomes` · `decide` (11 ข้อ) | ข้อมูลใน `supabase-db` ของเครื่อง drift (`ฐานได้ 5 · นับใหม่ได้ 6`) |
+| `tests/report.test.mjs` 8/17 · `tests/outcomes.test.mjs` 11/14 | **ฐาน dev ในเครื่องขาด `012_report_weekly_sla.sql`** — มี `reply_report(date)` รุ่น 009 แทนรุ่น `(date, timestamptz)` · ฐานเป็นของผสมรุ่น ไล่ลงตามลำดับไม่ได้ · **รอผู้ใช้เลือกแผน A/B/C ใน Phase 0 ข้อ 3** |
+| `tests/instagram*.test.mjs` · `conversation-presentation` · `channel-badge-ui` | เทสต์ล้าหลังโค้ด · อยู่นอก `npm test` · การลบ/เขียนใหม่ควรเป็นของเจ้าของฟีเจอร์ |
 | `node tests/http.integration.mjs` | ต้องมี `.env` ในโฟลเดอร์ (ไม่มีในเครื่องนี้) |
-
-`sql/run.mjs check` เดิมก็แดง (`202609270700_line_oa_history_archive.sql`, `202609271000_quick_reply_qualification.sql` ไม่อยู่ใน `ORDER.txt`) — **แก้แล้วในงานนี้** เติมเข้าทะเบียนพร้อมหมายเหตุ
 
 ## ข้อจำกัดที่ต้องเขียนไว้ใน UI ของ CRM
 
@@ -128,7 +134,7 @@ node sql/run.mjs check                                   → ตรวจผ่�
 | # | เรื่อง | ต้องการอะไร |
 |---|---|---|
 | 1 | **รัน SQL + deploy** | `sql/202610021200_line_broadcast.sql` ต้อง backup ก่อนแล้วรันมือบน VPS ตาม `docs/deploy.md` · ยังไม่ได้ทำตามคำสั่ง |
-| 2 | **กู้ `crmPublisherWorker`** | event ที่งานนี้เขียนลง `inbox.crm_publish_outbox` จะไม่ถึง CRM จนกว่าจะกู้ตัวดูดกลับมา (โค้ดเดิมอยู่ที่ `git show 8295043 -- server.mjs`) · ควรเช็คจำนวน `pending` ที่ค้างบน VPS ก่อนเปิด ไม่งั้นจะยิง backlog ทั้งก้อนเข้า CRM ทีเดียว |
+| 2 | **กู้ `crmPublisherWorker`** | event ที่งานนี้เขียนลง `inbox.crm_publish_outbox` จะไม่ถึง CRM จนกว่าจะกู้ตัวดูดกลับมา (โค้ดเดิมอยู่ที่ `git show 8295043 -- server.mjs`) · ★ **query นับ backlog + แผนเคลียร์ 2 แบบ อยู่ใน `docs/handoff/2026-10-02-phase0-audit.md` ข้อ 5** — ต้องนับก่อนเปิด ไม่งั้นจะยิง backlog ทั้งก้อนเข้า CRM ทีเดียว |
 | 3 | **เปิด `LINE_BROADCAST_LIVE=1`** | ยังเป็น dry run · เปิดเมื่อทดสอบ `test:true` กับ allowlist ผ่านแล้วเท่านั้น |
 | 4 | OA ไหน + เพดานต่อครั้ง | ★ โควตา: OA `@wdq0911k` รีช 2,690 แต่ฟรี 300/เดือน → `quotaAllows` จะปฏิเสธทั้งงานถ้าเกิน ต้องให้ CRM แสดงจำนวนเทียบโควตาก่อนกดส่ง |
 | 5 | thumbnail ของ recent-messages | ตอนนี้คืน `media: [{path, mime}]` ไม่ใช่ URL — `/media/<path>` ของ Connect ต้องมี session ของพนักงาน CRM จึงยังดึงรูปตรงไม่ได้ ต้องตัดสินว่าจะทำลิงก์เซ็นชื่อ (แบบ `createOutboundMediaUrl`) หรือให้ CRM ฝัง iframe |
