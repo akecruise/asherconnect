@@ -1035,6 +1035,46 @@ async function internalRoute(req, res, url) {
     return json(res, 200, await lineQuota({ accessToken: config.access_token }))
   }
 
+  if (req.method === 'GET' && path === '/internal/tags') {
+    return json(res, 200, { tags: await rpcDirect(service, 'service_contact_tags', { p: {} }) })
+  }
+
+  const contactFlagsMatch = /^\/internal\/contacts\/([0-9a-f-]{36})\/flags(?:\/(star|tags|follow-note))?$/i.exec(path)
+  if (contactFlagsMatch) {
+    const [, contactRef, action] = contactFlagsMatch
+    if (!action && req.method === 'GET') {
+      return json(res, 200, await rpcDirect(service, 'service_contact_flags', { p: { contact_ref: contactRef } }))
+    }
+    if (action === 'star' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req, 8192)).toString('utf8'))
+      const result = await rpcDirect(service, 'service_contact_star', {
+        p: { contact_ref: contactRef, starred: body?.starred, actor_id: body?.actor_id ?? null },
+      })
+      log.info('crm_contact_star_updated', { contact_ref: contactRef, starred: body?.starred === true })
+      return json(res, 200, result)
+    }
+    if (action === 'follow-note' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req, 8192)).toString('utf8'))
+      const result = await rpcDirect(service, 'service_contact_follow_note', {
+        p: { contact_ref: contactRef, follow_note: body?.follow_note ?? '', actor_id: body?.actor_id ?? null },
+      })
+      log.info('crm_contact_follow_note_updated', { contact_ref: contactRef })
+      return json(res, 200, result)
+    }
+    if (action === 'tags' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req, 16384)).toString('utf8'))
+      const result = await rpcDirect(service, 'service_contact_tags_set', {
+        p: { contact_ref: contactRef, add: body?.add ?? [], remove: body?.remove ?? [], actor_id: body?.actor_id ?? null },
+      })
+      log.info('crm_contact_tags_updated', {
+        contact_ref: contactRef, add_count: Array.isArray(body?.add) ? body.add.length : 0,
+        remove_count: Array.isArray(body?.remove) ? body.remove.length : 0,
+      })
+      return json(res, 200, result)
+    }
+    throw fail(405, 'method_not_allowed')
+  }
+
   // ★ แปลงตัวตนในช่องทาง → contact_ref
   //   CRM เก็บ external_id ไม่ใช่ uuid ของ core.contact จึงเรียก /internal/contacts/<uuid>/...
   //   ตรง ๆ ไม่ได้ · เส้นนี้แปลงจาก tuple ที่ CRM มีอยู่ (ตามคีย์ใน BOUNDARIES)

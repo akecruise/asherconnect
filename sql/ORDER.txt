@@ -342,3 +342,7 @@ _ledger.sql
 #   ข้อความหาลูกค้าวางเป็น inbox.message ของ bot แล้วทริกเกอร์เดิมพาเข้าคิวขาออก
 # ★ ต้องอยู่หลัง 202610021200 (ลำดับเวลา) · เพิ่ม unique index บน connect_private.job
 202610031100_service_outbound.sql
+
+# ── CRM อ่าน/เขียนดาวและ tag ที่ Connect เป็นเจ้าของ ──────────────────
+# ★ ใช้ internal API + CONNECT_SERVICE_TOKEN · ไม่สร้างตาราง tag/ดาวซ้ำใน CRM
+202610031200_crm_contact_flags_service.sql
