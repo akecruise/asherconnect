@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Writable } from 'node:stream'
-import { createMediaHandler, createPublicMediaHandler } from '../lib/media-http.mjs'
-import { buildPublicMediaUrl } from '../lib/media-public.mjs'
+// ★ เคยมีเทสต์ของ createPublicMediaHandler (/media/public/ + lib/media-public.mjs) อยู่ท้ายไฟล์นี้
+//   ท่อนั้นถูกแทนด้วย /outbound-media/ + lib/outbound-media.mjs ไปแล้วตั้งแต่ 20a7799
+//   (ดู tests/outbound-media.test.mjs) — ลบเทสต์ของของที่ไม่มีแล้ว ไม่ใช่กู้ของเก่ากลับมา
+import { createMediaHandler } from '../lib/media-http.mjs'
 
 const path = '11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222.jpg'
 const url = new URL(`https://connect.test/media/${path}`)
@@ -44,22 +46,4 @@ test('active content is downloaded, never executed on the application origin', a
   await t.handler({ method: 'GET', headers: {} }, t.res, url)
   assert.equal(t.headers['Content-Disposition'], 'attachment')
   assert.equal(t.headers['X-Content-Type-Options'], 'nosniff')
-})
-
-test('Messenger public media proxy streams only a valid short-lived URL', async () => {
-  const t = setup()
-  const secret = 'test-only-media-secret'
-  const publicUrl = new URL(buildPublicMediaUrl('https://connect.test', path, secret))
-  const handler = createPublicMediaHandler({
-    secret,
-    fail,
-    fetchObject: async requested => {
-      assert.equal(requested, path)
-      return new Response('image-bytes', { headers: { 'content-type': 'image/jpeg' } })
-    },
-  })
-  await handler({ method: 'GET', headers: {} }, t.res, publicUrl)
-  assert.equal(Buffer.concat(t.chunks).toString(), 'image-bytes')
-  assert.equal(t.headers['Cache-Control'], 'public, max-age=300')
-  await assert.rejects(handler({ method: 'GET', headers: {} }, t.res, new URL(`${publicUrl}?token=bad`)), { status: 404 })
 })
