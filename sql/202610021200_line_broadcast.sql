@@ -27,7 +27,8 @@ begin;
 
 -- ── 0. เปิดทางให้ outbox เดิมพา event ชนิดใหม่ไป CRM ───────────────────
 --
--- inbox.crm_publish_outbox (202609211300) ล็อก event_type ไว้สองค่า
+-- inbox.crm_publish_outbox บน production มี event เดิมสี่ชนิด
+-- (message.*, conversation.created, contact.profile_updated)
 -- ขยายแบบ additive — ของเดิมทุกแถวยังผ่าน check เท่าเดิม
 --
 -- ★★ ตัวดูด outbox (crmPublisherWorker) ไม่อยู่ใน server.mjs แล้ว — หายไปตอน
@@ -37,6 +38,7 @@ begin;
 alter table inbox.crm_publish_outbox drop constraint if exists crm_publish_outbox_event_type_check;
 alter table inbox.crm_publish_outbox add constraint crm_publish_outbox_event_type_check
   check (event_type in ('message.received', 'message.sent',
+                        'conversation.created', 'contact.profile_updated',
                         'channel_identity.follow_changed',
                         'broadcast.batch_result', 'broadcast.completed'));
 
