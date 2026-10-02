@@ -73,6 +73,7 @@ POST /internal/broadcasts/:id/cancel           → {cancelled_batches, status}
 GET  /internal/line/quota?channel_key=         → {limit, used, remaining}
 GET  /internal/contacts/:ref/recent-messages   → ?limit=20 · ไม่คืนเคส is_test
 GET  /internal/contacts/:ref/profile           → avatar / ชื่อ / follow ต่อช่องทาง
+GET  /internal/media-library                  → ?project= &category= &q= &limit= · รูปคลัง + ลิงก์เซ็นชื่อ
 ```
 
 - ด่าน: `CONNECT_SERVICE_TOKEN` เทียบแบบ constant-time · **ไม่ตั้ง = ประตูปิดสนิท** (ไม่ใช่เปิดให้ทุกคน)
@@ -146,7 +147,7 @@ node sql/run.mjs check                                   → ตรวจผ่�
 | 2 | ~~กู้ `crmPublisherWorker`~~ **โค้ดกู้แล้ว** (`e40f1eb`) | เหลือแค่ **เปิดสวิตช์บน VPS** — ปิดไว้จนกว่าจะตั้ง `ASHER_CRM_PUBLISH_ENABLED` · ★ **ต้องนับ backlog ก่อนเปิด** (query ใน `docs/handoff/2026-10-02-phase0-audit.md` ข้อ 5) แล้วเปิดด้วย `ASHER_CRM_PUBLISH_BATCH` ต่ำ ๆ ก่อน — ดูขั้น 6.8 ใน runbook |
 | 3 | **เปิด `LINE_BROADCAST_LIVE=1`** | ยังเป็น dry run · เปิดเมื่อทดสอบ `test:true` กับ allowlist ผ่านแล้วเท่านั้น |
 | 4 | OA ไหน + เพดานต่อครั้ง | ★ โควตา: OA `@wdq0911k` รีช 2,690 แต่ฟรี 300/เดือน → `quotaAllows` จะปฏิเสธทั้งงานถ้าเกิน ต้องให้ CRM แสดงจำนวนเทียบโควตาก่อนกดส่ง |
-| 5 | thumbnail ของ recent-messages | ตอนนี้คืน `media: [{path, mime}]` ไม่ใช่ URL — `/media/<path>` ของ Connect ต้องมี session ของพนักงาน CRM จึงยังดึงรูปตรงไม่ได้ ต้องตัดสินว่าจะทำลิงก์เซ็นชื่อ (แบบ `createOutboundMediaUrl`) หรือให้ CRM ฝัง iframe |
+| 5 | ~~thumbnail ของ recent-messages~~ **ปิดแล้ว** (`95b0423`) | `recent-messages` เติม `media[].url` เป็นลิงก์เซ็นชื่อ (`createOutboundMediaUrl`) CRM เปิดได้โดยไม่ต้องมี session · **เพิ่ม `GET /internal/media-library`** ให้ CRM เลือกรูปมาใส่ bubble ของ campaign (สเปก CRM ส่วน B ข้อ 3) คืนชื่อฟิลด์ `originalContentUrl`/`previewImageUrl` ตรงกับที่ LINE ต้องการ |
 | 6 | `contact_ref` คืออะไรแน่ | งานนี้ใช้ `core.contact.id` (uuid) — ต้องยืนยันกับฝั่ง CRM ว่าตรงกับที่ CRM เก็บไว้จาก event |
 | 7 | เปิดปุ่มใน UI ของ Connect? | `narrowcastBlocked()` ยังปิดอยู่ตามเดิม — ตาม BOUNDARIES หน้าจอ campaign เป็นของ CRM จึงไม่ได้แตะ ถ้าต้องการปุ่มใน Connect ต้องตัดสินใหม่ |
 | 8 | `docs/handoff/2026-09-30-release-gates.md` | ใบงานสั่งให้อ่าน แต่ไฟล์ไม่มีในรีโป |

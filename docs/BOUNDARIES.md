@@ -76,3 +76,15 @@ report ที่ต้องใช้ข้อมูลทั้งสองฝ�
 
 - `asher-connect/docs/handoff/2026-10-01-star-follow-tags.md`: ทำตาม spec เดิมทั้งหมด **ดาว + tag อยู่ที่ Connect** (เอกสารฉบับแรกของ BOUNDARIES เขียนว่าย้ายไป CRM — ยกเลิกแล้ว ดูหัวข้อ "ข้อยกเว้น" ข้างบน)
 - `asher-connect/docs/handoff/2026-10-02-line-broadcast-sender.md` ข้อ 5 (เรียก CRM `/flags` แทนของเดิม): **ยกเลิก** — ของเดิมขึ้น production แล้วและมีข้อมูลใช้งานจริงอยู่
+
+### ⚠️ สเปกฝั่ง CRM ยังขัดกับข้อนี้อยู่ — ต้องแก้ก่อนลงมือ
+
+`asher-crm/docs/handoff/2026-10-02-customer360-and-line-broadcast.md` (อ่านเมื่อ 2026-10-02) **ส่วน A › Backend** ยังสั่งให้:
+
+| บรรทัด | สิ่งที่สั่ง | ปัญหา |
+|---|---|---|
+| 44 | เพิ่ม `crm_contact_tags` + `crm_contact_flags(starred)` แล้ว migrate `crm_lead_tags` มา | **= สร้างระบบ tag/ดาว ชุดที่สอง** ขนานกับ `connect_private.tag` / `contact_tag` / `contact_flag` ที่ขึ้น production แล้วและมีข้อมูลจริง |
+| 45 | ทำ `GET /api/crm/contacts/by-connect/{ref}/flags` · `POST .../tags` · `POST .../star` ให้ Connect เรียก | **ทิศกลับด้าน** — ของจริงอยู่ที่ Connect แล้ว CRM ควรเป็นฝ่าย*อ่าน*จาก Connect ไม่ใช่ให้ Connect มาอ่านจาก CRM |
+
+**ทำตามนี้แทน:** CRM อ่าน/เขียน tag-ดาว ผ่าน Connect · ถ้า Customer 360 ต้องโชว์ชิป tag ให้เพิ่ม endpoint ฝั่ง Connect (ยังไม่มี — เป็นงานที่ต้องทำ ไม่ใช่สร้างตารางใหม่ที่ CRM)
+ส่วนที่เหลือของสเปก CRM ฉบับนั้น **ตรงกับของที่ Connect ทำไว้แล้วทุกข้อ**: `POST /internal/broadcasts` (idempotency = campaign id + version), event `broadcast.batch_result` / `broadcast.completed`, `GET /internal/contacts/{ref}/recent-messages`, โควตาจาก Connect, และรูปจากคลังของ Connect
