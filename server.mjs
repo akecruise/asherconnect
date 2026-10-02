@@ -973,6 +973,33 @@ function internalRateLimit() {
 
 const lineChannel = key => activeChannels.find(c => c.key === key && c.channel === 'line') ?? null
 
+/**
+ * ลิงก์รูปที่คนนอกเปิดได้ โดยไม่ต้องมี session ของพนักงาน
+ *
+ * ใช้ตัวเซ็นชื่อตัวเดียวกับที่ส่งรูปให้ LINE/Messenger อยู่แล้ว (lib/outbound-media.mjs)
+ * ★ ไม่สร้างกลไกเซ็นชื่อชุดที่สอง — path ที่ไม่ผ่าน safeOutboundPath คืน null
+ *   จึงไม่มีทางหลุดเป็นลิงก์ของไฟล์นอกคลัง
+ * ★ ถ้า origin ไม่ใช่ https (เช่นตอน dev) ลิงก์จะเป็น http แล้ว validateMessages
+ *   จะปฏิเสธเองตอนเอาไปใส่ broadcast — ถูกต้องแล้ว LINE ไม่รับ http
+ */
+const signedMediaUrl = path =>
+  path ? createOutboundMediaUrl(origin, path, outboundMediaSigningKey) : null
+
+// แปลงแถวจาก inbox.media_list ให้ CRM ใช้ได้ — ตัดฟิลด์ที่เป็นเรื่องภายในของ Connect ออก
+const mediaForCrm = a => ({
+  id: a?.id ?? null,
+  title: a?.title ?? null,
+  project: a?.project ?? null,
+  category: a?.category ?? null,
+  mime: a?.mime ?? null,
+  width: a?.width ?? null,
+  height: a?.height ?? null,
+  bytes: a?.bytes ?? null,
+  // ชื่อฟิลด์ตรงกับที่ LINE ต้องการใน message type image เพื่อให้ CRM ยกไปใส่ได้ตรง ๆ
+  originalContentUrl: signedMediaUrl(a?.storage_path),
+  previewImageUrl: signedMediaUrl(a?.preview_path ?? a?.storage_path),
+})
+
 async function internalRoute(req, res, url) {
   requireServiceToken(req)
   internalRateLimit()
@@ -1002,6 +1029,20 @@ async function internalRoute(req, res, url) {
     return json(res, 200, await lineQuota({ accessToken: config.access_token }))
   }
 
+  // ★ คลังรูปของ Connect — CRM ต้องเลือกรูปมาใส่ bubble ของ campaign
+  //   (สเปก CRM ส่วน B ข้อ 3: "รูปจาก media library ของ Connect หรือ URL https")
+  //   ลิงก์ที่คืนไปเป็นลิงก์เซ็นชื่อ ใช้ได้โดยไม่ต้องมี session — LINE ดึงรูปเองได้
+  if (req.method === 'GET' && path === '/internal/media-library') {
+    const assets = await rpcDirect(service, 'media_list', {
+      p_project: url.searchParams.get('project') || null,
+      p_category: url.searchParams.get('category') || null,
+      p_query: url.searchParams.get('q') || null,
+      p_sort: 'recent', p_conversation_id: null, p_scope: 'library',
+    })
+    const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') || 50), 200))
+    return json(res, 200, { items: (Array.isArray(assets) ? assets : []).slice(0, limit).map(mediaForCrm) })
+  }
+
   const contactMatch = /^\/internal\/contacts\/([0-9a-f-]{36})\/(recent-messages|profile)$/i.exec(path)
   if (contactMatch && req.method === 'GET') {
     const [, ref, kind] = contactMatch
@@ -1012,7 +1053,17 @@ async function internalRoute(req, res, url) {
       p: { contact_ref: ref, limit: Number(url.searchParams.get('limit') || 20),
            include_test: url.searchParams.get('include_test') === '1' },
     })
-    return json(res, 200, { messages })
+    // ★ ฐานคืนมาเป็น path เพราะมันไม่รู้ origin และไม่ควรรู้กุญแจเซ็นชื่อ
+    //   เติมลิงก์ที่ใช้ได้จริงที่ชั้นนี้ — CRM เอาไปโชว์ thumbnail ได้โดยไม่ต้องมี session ของเรา
+    //   (ปิดข้อค้างข้อ 5 ของ handoff: เดิมคืนแต่ path ซึ่ง CRM เปิดไม่ได้)
+    return json(res, 200, {
+      messages: (Array.isArray(messages) ? messages : []).map(m => ({
+        ...m,
+        media: (Array.isArray(m?.media) ? m.media : []).map(entry => ({
+          ...entry, url: signedMediaUrl(entry?.path),
+        })),
+      })),
+    })
   }
 
   throw fail(404, 'not_found')

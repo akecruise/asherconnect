@@ -11,6 +11,7 @@ import {
   MULTICAST_MAX, RETRY_MAX,
 } from '../lib/broadcast.mjs'
 import { sendMulticast, lineQuota } from '../providers.mjs'
+import { createOutboundMediaUrl, verifyOutboundMedia } from '../lib/outbound-media.mjs'
 
 // ───────────────────────────────────────────── token ของ /internal/*
 
@@ -230,4 +231,55 @@ test('dry run: ตัวส่งไม่ถูกเรียกเลย', as
 
   assert.equal(fetches, 0, 'dry run ห้ามยิง network')
   assert.equal(verdict.outcome, 'sent')
+})
+
+// ───────────────────────────────────────────── ลิงก์รูปที่ส่งให้ CRM
+//
+// ★ server.mjs ประกอบลิงก์ด้วย createOutboundMediaUrl ตัวเดียวกับที่ใช้ส่งรูปให้ LINE
+//   เทสต์นี้ยืนยัน "สัญญา" สองข้อที่ CRM พึ่งอยู่: ลิงก์เปิดได้โดยไม่มี session
+//   และ path นอกคลังต้องไม่กลายเป็นลิงก์
+
+test('ลิงก์รูปของคลังเซ็นชื่อได้ และ path นอกคลังไม่ได้ลิงก์', () => {
+  const KEY = 'k'
+  const ORIGIN = 'https://inbox.example.com'
+  // รูปแบบ path ของคลังรูป: <LIBRARY_FOLDER>/<id>.<ext> (lib/media-library.mjs)
+  const libraryPath = '6f1c2a7e-3b1d-4d8e-9a55-5c0de1ba1b00/11111111-1111-1111-1111-111111111111.jpg'
+  const previewPath = '6f1c2a7e-3b1d-4d8e-9a55-5c0de1ba1b00/11111111-1111-1111-1111-111111111111-2.jpg'
+
+  const sign = p => (p ? createOutboundMediaUrl(ORIGIN, p, KEY) : null)
+  const original = sign(libraryPath)
+  const preview = sign(previewPath)
+
+  // ★ LINE จะดึงรูปเอง ลิงก์จึงต้องเป็น https และตรวจผ่านโดยไม่ต้องมีคุกกี้
+  for (const link of [original, preview]) {
+    const u = new URL(link)
+    assert.equal(u.protocol, 'https:')
+    assert.equal(verifyOutboundMedia(u.pathname.slice('/outbound-media/'.length),
+                                     u.searchParams.get('expires'),
+                                     u.searchParams.get('signature'), KEY), true)
+  }
+  assert.notEqual(original, preview)
+
+  // path นอกคลัง / ไฟล์ที่ไม่ใช่รูป ต้องไม่ได้ลิงก์เลย
+  for (const bad of ['../secrets.jpg', 'qr/promo.svg', 'random/x.jpg', '', null, undefined]) {
+    assert.equal(sign(bad), null, `ต้องไม่เซ็น ${JSON.stringify(bad)}`)
+  }
+})
+
+test('ชื่อฟิลด์ที่ส่งให้ CRM ตรงกับที่ LINE ต้องการ', () => {
+  // CRM ยกค่าจาก /internal/media-library ไปใส่ messages[] ตรง ๆ ได้
+  // จึงต้องผ่าน validateMessages ของเราเองด้วย
+  const item = {
+    originalContentUrl: createOutboundMediaUrl('https://inbox.example.com',
+      '6f1c2a7e-3b1d-4d8e-9a55-5c0de1ba1b00/11111111-1111-1111-1111-111111111111.jpg', 'k'),
+    previewImageUrl: createOutboundMediaUrl('https://inbox.example.com',
+      '6f1c2a7e-3b1d-4d8e-9a55-5c0de1ba1b00/11111111-1111-1111-1111-111111111111-2.jpg', 'k'),
+  }
+  assert.equal(validateMessages([{ type: 'image', ...item }]).ok, true)
+
+  // ★ origin ที่ไม่ใช่ https (dev) ต้องถูกปฏิเสธ ไม่ใช่หลุดไปถึง LINE แล้วรูปแตก
+  const devUrl = createOutboundMediaUrl('http://localhost:3200',
+    '6f1c2a7e-3b1d-4d8e-9a55-5c0de1ba1b00/11111111-1111-1111-1111-111111111111.jpg', 'k')
+  assert.equal(validateMessages([{ type: 'image', originalContentUrl: devUrl, previewImageUrl: devUrl }]).error,
+               'image_url_must_be_https')
 })
